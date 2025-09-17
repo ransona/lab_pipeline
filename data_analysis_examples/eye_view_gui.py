@@ -194,6 +194,12 @@ class VideoAnalysisApp(QMainWindow):
         cap.release()
         if ret:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = frame[:,:,0]
+            frame[frame >= np.percentile(frame, 70)] = np.percentile(frame, 70)
+            min_val = np.min(frame)
+            max_val = np.max(frame)
+            frame = (frame - min_val) / (max_val - min_val) * 255
+            frame = np.stack((frame,) * 3, axis=-1).astype(np.uint8)
             frame = self.overlay_plot(frame, frame_position, eyedat)
             return frame
         return None
