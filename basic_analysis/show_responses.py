@@ -25,6 +25,10 @@ class MyWindow(QWidget):
     def __init__(self):
         super(MyWindow, self).__init__()
         self.data = {}
+        #activity_types = ['dF','F','spikes','oasis_spikes','oasis_dF']
+        self.data['activity_type'] = 'dF'
+
+
         self.meta = {}
         self.meta['total_cells'] = np.nan
         self.meta['current_cell'] = np.nan
@@ -50,8 +54,16 @@ class MyWindow(QWidget):
         self.user_lbl = QLabel('Username')
         self.user_txt = QComboBox()
         self.exp_lbl = QLabel('ExpID')
-        self.exp_txt = QLineEdit('2024-04-24_09_ESMT169')    
+        self.exp_txt = QLineEdit('')    
         self.ch_lbl = QLabel('Channel')
+
+        self.activity_lbl = QLabel('Activity type')
+        self.activity_combo = QComboBox()
+        activity_types = ['dF', 'F', 'spikes', 'oasis_spikes', 'oasis_dF']
+        self.activity_combo.addItems(activity_types)
+        self.activity_combo.setCurrentText('dF')  # default
+        self.activity_combo.currentIndexChanged.connect(self.activity_type_changed)
+
         self.ch_txt = QLineEdit('0')            
         self.load_button = QPushButton('Load')
         self.stim_combo = QComboBox()
@@ -144,6 +156,12 @@ class MyWindow(QWidget):
 
         controls_grp_layout.addLayout(ch_layout, current_row, 0, 1, 4)
         current_row += 1
+
+        # Add Activity type selection
+        controls_grp_layout.addWidget(self.activity_lbl, current_row, 0, 1, 2)
+        controls_grp_layout.addWidget(self.activity_combo, current_row, 2, 1, 2)
+        current_row += 1
+
 
         # Add Start and End time controls
         start_end_layout = QHBoxLayout()
@@ -260,6 +278,10 @@ class MyWindow(QWidget):
             name_without_ext = os.path.splitext(name)[0]
             self.user_txt.addItem(name_without_ext)
 
+    def activity_type_changed(self):
+        self.data['activity_type'] = self.activity_combo.currentText()
+        print(f"Activity type set to: {self.data['activity_type']}")
+            
     def update_cell_display(self):
         # display currently selected conditions of currently selected cell
         # parse text in current conditions box to convert to a list of numbers
@@ -359,7 +381,23 @@ class MyWindow(QWidget):
         exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
         exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')
         try:
-            with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_dF_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            # load data, with type dependent on variable above (eg dF, F or spikes)
+            if self.data['activity_type'] == 'dF':
+                with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_dF_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            elif self.data['activity_type'] == 'F':
+                with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_F_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            elif self.data['activity_type'] == 'spikes':
+                with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_spikes_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            elif self.data['activity_type'] == 'oasis_spikes':
+                with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_oasis_spikes_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            elif self.data['activity_type'] == 'oasis_dF':
+                with open(os.path.join(exp_dir_processed_cut,'s2p_ch'+ch+'_oasis_dF_cut.pickle'), "rb") as file: self.data['s2p_dF_cut'] = pickle.load(file)
+            else:
+                print('Activity type not recognised')
+
+            # ensure the activity data is always in a field called dF for consistency downstream
+            activity_key = [key for key in self.data['s2p_dF_cut'] if key != 't']
+            self.data['s2p_dF_cut']['dF'] = self.data['s2p_dF_cut'].pop(activity_key[0]).astype(np.float32)
             self.data['all_trials'] = read_csv(os.path.join(exp_dir_processed, expID + '_all_trials.csv'))
             self.meta['stim_type_count'] = self.data['all_trials']['stim'].unique().shape[0]
             # organise some meta data
@@ -548,7 +586,24 @@ class MyWindow(QWidget):
         self.canvas.draw()
         ax_2d = self.fig.subplots(plot_rows, plot_cols)
         ax = np.ravel(ax_2d) #, sharex=True, sharey=True))
-        self.meta['ax'] = ax        
+        self.meta['ax'] = ax  
+
+        # Stack all images for percentile computation
+        all_heatmaps = []
+
+        for stim_id in self.meta['current_cond']:
+            heat = self.meta['trial_av_resp_heat'][:, :, stim_id - 1]
+            all_heatmaps.append(heat)
+
+        # Concatenate and flatten, ignoring NaNs
+        all_pixels = np.concatenate([h.flatten() for h in all_heatmaps])
+        all_pixels = all_pixels[~np.isnan(all_pixels)]
+
+        # Compute contrast range from 20th to 80th percentile
+        vmin = np.percentile(all_pixels, 5)
+        vmax = np.percentile(all_pixels[all_pixels>0], 80)
+        
+
         # cycle through conditions displaying traces of each
         for i, stim_id in enumerate(self.meta['current_cond']):
             trial_indices = self.data['all_trials'].loc[(self.data['all_trials']['stim'] == stim_id)].index
@@ -567,7 +622,7 @@ class MyWindow(QWidget):
                 end_time = self.data['s2p_dF_cut']['t'][index]
                 ax[i].imshow(self.meta['trial_av_resp_heat'][:,0:index,stim_id-1],
                              extent=[start_time,end_time,0,self.meta['total_cells']],
-                             aspect='auto', vmin=0, vmax=1,cmap='gray')
+                             aspect='auto', vmin=vmin, vmax=vmax,cmap='gray')
                 # Ensure y-axis ticks are integers
                 ax[i].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))                
                 if len(self.meta['stim_labels'])>=stim_id:

@@ -4,6 +4,11 @@ import re
 import sys
 from datetime import datetime, timedelta
 
+# NAS must first be mounted using (fill in password):
+# sudo mount -t cifs //158.109.209.238/DataServer /mnt/nas2 -o username=nas_clear,password='XXX',vers=1.0
+# after unmount:
+# sudo umount /mnt/nas2
+
 # Configuration
 nas_path = '/mnt/nas2/Remote_Repository/'       # Source (NAS)
 server_path = '/data/Remote_Repository/'               # Destination (Server)
@@ -16,6 +21,7 @@ exclude_folders = [
     "refz",                  # always excluded
     "roi_data",              # always excluded
     "widefield",             # always excluded
+    "habituation"
 ]
 
 # Regex for rsync %M timestamp

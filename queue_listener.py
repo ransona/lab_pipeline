@@ -250,7 +250,6 @@ try:
                     print('Run time: ' + str(round((time.time()-start_time) / 60,2)) + ' mins')
                     print('#####################')
 
-
                     scheduler.add_runtime(round((time.time()-start_time) / 60,2), queued_command['userID'])  
 
                     matrix_msg.main(queued_command['userID'],'Complete ' + prioritised_jobs[ijob] + ' without errors')
