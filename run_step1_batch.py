@@ -12,6 +12,7 @@ def run_step1_batch(step1_config):
     runs2p      = step1_config['runs2p']
     rundlc      = step1_config['rundlc']
     runfitpupil = step1_config['runfitpupil']
+    runhabituate = step1_config.get('runhabituate',False)
     settings = step1_config.get('settings',False)
     jump_queue = step1_config.get('jump_queue', False)
 
@@ -23,7 +24,7 @@ def run_step1_batch(step1_config):
         raise ValueError("You are not permitted to execute a job on the pipeline which will write to another users data folder")
 
     config_path = os.path.join('/data/common/configs/s2p_configs',userID,suite2p_config)
-    if not os.path.exists(config_path):
+    if not os.path.exists(config_path) and rundlc == True:
         raise FileNotFoundError('The suite2p config file does not exist: ' + config_path)
 
     for expID in expIDs:
@@ -49,9 +50,12 @@ def run_step1_batch(step1_config):
             queued_command['config']['runs2p'] = runs2p
             queued_command['config']['rundlc'] = rundlc
             queued_command['config']['runfitpupil'] = runfitpupil
+            queued_command['config']['runhabituation'] = runfitpupil
             queued_command['config']['suite2p_config'] = suite2p_config
-            queued_command['config']['settings'] = settings
+            queued_command['config']['runhabituate'] = runhabituate
 
+            queued_command['config']['settings'] = settings
+            
             if 'suite2p_env' in step1_config:
                 queued_command['config']['suite2p_env'] = step1_config['suite2p_env']
 
