@@ -92,6 +92,7 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
     all_tokenised_dF_spikes = {}  
 
     allDepths = {}
+    allOriginalSuite2pCellIDs = {}
     allRoiPix = {}
     allRoiMaps = {}
     allFOV = {}
@@ -434,6 +435,7 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
                     allBaseline[iCh] = [Baseline_resampled]
                     allSpikes[iCh] = [Spks_resampled]
                     allDepths[iCh] = [np.tile(iDepth, (np.sum(cellValid[:]).astype(int), 1))]
+                    allOriginalSuite2pCellIDs[iCh] = [validCellIDs.reshape(-1, 1)]
                     all_tokenised_dF_spikes[iCh] = [tokenised_dF_spikes]
                     dF_spikes
                 else:
@@ -442,6 +444,7 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
                     allBaseline[iCh].append(Baseline_resampled)
                     allSpikes[iCh].append(Spks_resampled)
                     allDepths[iCh].append(np.tile(iDepth, (np.sum(cellValid[:]).astype(int), 1)))
+                    allOriginalSuite2pCellIDs[iCh].append(validCellIDs.reshape(-1, 1))
                     all_tokenised_dF_spikes[iCh].append(tokenised_dF_spikes)
 
                     del dF_resampled, F_resampled, Baseline_resampled, Spks_resampled
@@ -462,6 +465,7 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
         allBaseline[iCh] = np.concatenate(allBaseline[iCh], axis=0)
         allSpikes[iCh] = np.concatenate(allSpikes[iCh], axis=0)
         allDepths[iCh] = np.concatenate(allDepths[iCh], axis=0)
+        allOriginalSuite2pCellIDs[iCh] = np.concatenate(allOriginalSuite2pCellIDs[iCh], axis=0)
         all_tokenised_dF_spikes[iCh] = np.concatenate(all_tokenised_dF_spikes[iCh], axis=0)
 
     print('Saving 2-photon data...')
@@ -485,6 +489,7 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
         
         # other data
         ca_data['Depths']       = allDepths[iCh]
+        ca_data['OriginalSuite2pCellIDs'] = allOriginalSuite2pCellIDs[iCh]
         ca_data['AllRoiPix']    = allRoiPix[iCh]
         ca_data['AllRoiMaps']   = allRoiMaps[iCh]
         ca_data['AllFOV']       = allFOV[iCh]

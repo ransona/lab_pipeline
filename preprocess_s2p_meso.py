@@ -80,6 +80,7 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
     allF = {}
     allSpikes = {}
     allDepths = {}
+    allOriginalSuite2pCellIDs = {}
     allScanpaths = {}
     allSIRois = {}
 
@@ -336,6 +337,8 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
                             allSpikes[iCh] = Spks_resampled
                             # store which scanpath the neurons come from
                             allScanpaths[iCh] = np.tile(scanpath_number, (np.sum(cellValid[:]).astype(int), 1))
+                            # store the original suite2p ROI index for each kept neuron
+                            allOriginalSuite2pCellIDs[iCh] = validCellIDs.reshape(-1, 1)
                             # store which scanimage multi roi each neuron comes from
                             allSIRois[iCh] = np.tile(i_roi+1, (np.sum(cellValid[:]).astype(int), 1))
                             # store which depth each neuron comes from
@@ -346,6 +349,7 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
                             allF[iCh] = np.concatenate((allF[iCh],F_resampled),axis=0)
                             allSpikes[iCh] = np.concatenate((allSpikes[iCh],Spks_resampled),axis=0)
                             allScanpaths[iCh] = np.concatenate([allScanpaths[iCh], np.tile(scanpath_number, (np.sum(cellValid[:]).astype(int), 1))],axis=0)
+                            allOriginalSuite2pCellIDs[iCh] = np.concatenate([allOriginalSuite2pCellIDs[iCh], validCellIDs.reshape(-1, 1)],axis=0)
                             allSIRois[iCh] = np.concatenate([allSIRois[iCh], np.tile(i_roi+1, (np.sum(cellValid[:]).astype(int), 1))],axis=0)
                             allDepths[iCh] = np.concatenate([allDepths[iCh], np.tile(iDepth+1, (np.sum(cellValid[:]).astype(int), 1))],axis=0)
 
@@ -368,6 +372,7 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
         ca_data['F']            = allF[iCh]
         ca_data['Spikes']       = allSpikes[iCh]
         ca_data['Depths']       = allDepths[iCh]
+        ca_data['OriginalSuite2pCellIDs'] = allOriginalSuite2pCellIDs[iCh]
         ca_data['AllRoiPix']    = allRoiPix[iCh]
         ca_data['AllRoiMaps']   = allRoiMaps[iCh]
         ca_data['AllFOV']       = allFOV[iCh]
