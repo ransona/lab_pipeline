@@ -5,7 +5,7 @@ from scipy.ndimage import median_filter
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QPushButton,
     QSlider, QFileDialog, QHBoxLayout, QLineEdit, QComboBox, QProgressBar,
-    QGridLayout, QCheckBox, QSpinBox
+    QGridLayout, QCheckBox, QSpinBox, QSizePolicy, QGroupBox
 )
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen
 from PyQt5.QtCore import Qt, QTimer
@@ -14,8 +14,8 @@ from PyQt5.QtCore import Qt, QTimer
 class VideoViewer(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Suite2p Binary Viewer (Final Version)")
-        self.resize(900, 1000)
+        self.setWindowTitle("Suite2p Binary Viewer")
+        self.resize(1400, 900)
 
         # Assumed per-plane frame size
         self.width, self.height = 512, 512
@@ -24,6 +24,8 @@ class VideoViewer(QWidget):
         self.datas = []              # list of memmaps, one per plane
         self.total_frames = 0
         self.planes = []
+        self.channel = 0
+        self.loaded_paths = []
         self.frame_idx = 0
         self.playing = False
         self.showing_mean = False
@@ -36,7 +38,21 @@ class VideoViewer(QWidget):
         self.autos_vmin = []
         self.autos_vmax = []
 
-        layout = QVBoxLayout()
+        root_layout = QHBoxLayout()
+        controls_panel = QWidget()
+        controls_panel.setMaximumWidth(330)
+        controls_panel.setMinimumWidth(280)
+        controls_layout = QVBoxLayout()
+        controls_layout.setContentsMargins(8, 8, 8, 8)
+        controls_layout.setSpacing(6)
+        controls_panel.setLayout(controls_layout)
+
+        viewer_layout = QVBoxLayout()
+        viewer_layout.setContentsMargins(8, 8, 8, 8)
+        viewer_layout.setSpacing(6)
+
+        root_layout.addWidget(controls_panel, 3)
+        root_layout.addLayout(viewer_layout, 7)
 
         # --- user directory ---
         ul = QHBoxLayout()
@@ -44,79 +60,110 @@ class VideoViewer(QWidget):
         self.user_combo = QComboBox()
         self.populate_users()
         ul.addWidget(self.user_combo)
-        layout.addLayout(ul)
+        controls_layout.addLayout(ul)
 
         # --- expID and planes ---
         el = QHBoxLayout()
         el.addWidget(QLabel("ExpID:"))
         self.exp_edit = QLineEdit()
         el.addWidget(self.exp_edit)
-        layout.addLayout(el)
+        controls_layout.addLayout(el)
 
         pl = QHBoxLayout()
         pl.addWidget(QLabel("Planes:"))
         self.plane_edit = QLineEdit()
         self.plane_edit.setPlaceholderText("e.g., 0 or 0,1,2")
         pl.addWidget(self.plane_edit)
-        layout.addLayout(pl)
+        controls_layout.addLayout(pl)
+
+        # --- channel ---
+        cl = QHBoxLayout()
+        cl.addWidget(QLabel("Channel:"))
+        self.channel_combo = QComboBox()
+        self.channel_combo.addItems(["0", "1"])
+        cl.addWidget(self.channel_combo)
+        controls_layout.addLayout(cl)
 
         # --- pixel stride ---
         sl = QHBoxLayout()
         sl.addWidget(QLabel("Pixel stride:"))
         self.stride_edit = QLineEdit("1")
         sl.addWidget(self.stride_edit)
-        layout.addLayout(sl)
+        controls_layout.addLayout(sl)
 
         # --- filter mode + sizes ---
-        fl = QHBoxLayout()
-        fl.addWidget(QLabel("Median filter:"))
-        self.filter_mode = QComboBox()
-        self.filter_mode.addItems(["None", "Time", "Space"])
-        fl.addWidget(self.filter_mode)
+        filter_group = QGroupBox("Median Filter")
+        fl = QGridLayout()
+        filter_group.setLayout(fl)
+        self.time_filter_cb = QCheckBox("Time")
+        self.time_filter_cb.setToolTip("Apply a per-pixel median across nearby frames.")
+        self.time_filter_cb.stateChanged.connect(self.on_filter_mode_changed)
+        fl.addWidget(self.time_filter_cb, 0, 0)
 
-        fl.addWidget(QLabel("Time window:"))
+        self.space_filter_cb = QCheckBox("Space")
+        self.space_filter_cb.setToolTip("Apply a 2D median filter within each frame.")
+        self.space_filter_cb.stateChanged.connect(self.on_filter_mode_changed)
+        fl.addWidget(self.space_filter_cb, 0, 1)
+
+        self.time_win_label = QLabel("Time frames")
+        fl.addWidget(self.time_win_label, 1, 0)
         self.time_win = QSpinBox()
         self.time_win.setRange(3, 25)
         self.time_win.setSingleStep(2)
         self.time_win.setValue(3)
-        fl.addWidget(self.time_win)
+        self.time_win.setToolTip("Odd number of frames used for the temporal median around the current frame.")
+        self.time_win.valueChanged.connect(self.on_filter_mode_changed)
+        fl.addWidget(self.time_win, 1, 1)
 
-        fl.addWidget(QLabel("Space kernel:"))
+        self.space_k_label = QLabel("Space px")
+        fl.addWidget(self.space_k_label, 2, 0)
         self.space_k = QSpinBox()
         self.space_k.setRange(3, 15)
         self.space_k.setSingleStep(2)
         self.space_k.setValue(3)
-        fl.addWidget(self.space_k)
-        layout.addLayout(fl)
+        self.space_k.setToolTip("Odd pixel width of the 2D median kernel applied to each frame.")
+        self.space_k.valueChanged.connect(self.on_filter_mode_changed)
+        fl.addWidget(self.space_k, 2, 1)
+        self.filter_state_label = QLabel("")
+        self.filter_state_label.setWordWrap(True)
+        fl.addWidget(self.filter_state_label, 3, 0, 1, 2)
+        controls_layout.addWidget(filter_group)
 
         # --- load + mean ---
-        bl = QHBoxLayout()
+        bl = QGridLayout()
         self.load_btn = QPushButton("Load")
         self.load_btn.clicked.connect(self.load_files)
-        bl.addWidget(self.load_btn)
+        bl.addWidget(self.load_btn, 0, 0)
 
-        self.mean_btn = QPushButton("Mean Projection (≤1000 per plane)")
+        self.load_bin_btn = QPushButton("Load Bin...")
+        self.load_bin_btn.clicked.connect(self.load_bin_files)
+        bl.addWidget(self.load_bin_btn, 0, 1)
+
+        self.mean_btn = QPushButton("Mean Projection")
         self.mean_btn.setEnabled(False)
         self.mean_btn.clicked.connect(self.show_mean_projection)
-        bl.addWidget(self.mean_btn)
+        bl.addWidget(self.mean_btn, 1, 0)
 
-        self.back_btn = QPushButton("Back to Video")
+        self.back_btn = QPushButton("Back")
         self.back_btn.setEnabled(False)
         self.back_btn.clicked.connect(self.show_video)
-        bl.addWidget(self.back_btn)
-        layout.addLayout(bl)
+        bl.addWidget(self.back_btn, 1, 1)
+        controls_layout.addLayout(bl)
 
         # --- progress + status ---
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        controls_layout.addWidget(self.progress_bar)
         self.status_label = QLabel("")
-        layout.addWidget(self.status_label)
+        self.status_label.setWordWrap(True)
+        controls_layout.addWidget(self.status_label)
 
         # --- image display ---
         self.label = QLabel("No video loaded")
         self.label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.label)
+        self.label.setMinimumSize(700, 650)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        viewer_layout.addWidget(self.label, 1)
 
         # --- frame slider ---
         fl2 = QHBoxLayout()
@@ -131,30 +178,36 @@ class VideoViewer(QWidget):
         self.frame_label.setFixedWidth(80)
         fl2.addWidget(self.frame_label)
 
-        layout.addLayout(fl2)
+        viewer_layout.addLayout(fl2)
 
 
         # --- autoscale + min/max sliders ---
-        al = QHBoxLayout()
+        al = QGridLayout()
         self.autoscale_cb = QCheckBox("Autoscale per plane")
         self.autoscale_cb.setChecked(True)
-        self.autoscale_cb.stateChanged.connect(self.update_display)
-        al.addWidget(self.autoscale_cb)
+        self.autoscale_cb.stateChanged.connect(self.on_autoscale_changed)
+        al.addWidget(self.autoscale_cb, 0, 0, 1, 2)
 
-        al.addWidget(QLabel("Min"))
+        al.addWidget(QLabel("Min"), 1, 0)
         self.min_slider = QSlider(Qt.Horizontal)
         self.min_slider.setRange(-32768, 32767)
         self.min_slider.setValue(0)
-        self.min_slider.valueChanged.connect(self.update_display)
-        al.addWidget(self.min_slider)
+        self.min_slider.valueChanged.connect(self.on_intensity_slider_changed)
+        al.addWidget(self.min_slider, 1, 1)
+        self.min_value_label = QLabel("0")
+        self.min_value_label.setFixedWidth(52)
+        al.addWidget(self.min_value_label, 1, 2)
 
-        al.addWidget(QLabel("Max"))
+        al.addWidget(QLabel("Max"), 2, 0)
         self.max_slider = QSlider(Qt.Horizontal)
         self.max_slider.setRange(-32768, 32767)
         self.max_slider.setValue(2000)
-        self.max_slider.valueChanged.connect(self.update_display)
-        al.addWidget(self.max_slider)
-        layout.addLayout(al)
+        self.max_slider.valueChanged.connect(self.on_intensity_slider_changed)
+        al.addWidget(self.max_slider, 2, 1)
+        self.max_value_label = QLabel("2000")
+        self.max_value_label.setFixedWidth(52)
+        al.addWidget(self.max_value_label, 2, 2)
+        controls_layout.addLayout(al)
 
         # --- zoom / pan controls ---
         grid = QGridLayout()
@@ -164,7 +217,7 @@ class VideoViewer(QWidget):
         self.btn_right = QPushButton("→"); self.btn_right.clicked.connect(lambda: self.pan(50, 0))
         self.btn_zoom_in = QPushButton("+"); self.btn_zoom_in.clicked.connect(lambda: self.zoom_by(1.2))
         self.btn_zoom_out = QPushButton("−"); self.btn_zoom_out.clicked.connect(lambda: self.zoom_by(1/1.2))
-        self.btn_reset = QPushButton("Reset View"); self.btn_reset.clicked.connect(self.reset_view)
+        self.btn_reset = QPushButton("Reset View"); self.btn_reset.clicked.connect(lambda: self.reset_view(redraw=True))
 
         grid.addWidget(self.btn_zoom_in, 0, 0)
         grid.addWidget(self.btn_up, 0, 1)
@@ -173,16 +226,18 @@ class VideoViewer(QWidget):
         grid.addWidget(self.btn_reset, 1, 1)
         grid.addWidget(self.btn_right, 1, 2)
         grid.addWidget(self.btn_down, 2, 1)
-        layout.addLayout(grid)
+        controls_layout.addLayout(grid)
 
         # --- play/pause ---
         self.play_btn = QPushButton("Play")
         self.play_btn.clicked.connect(self.toggle_play)
-        layout.addWidget(self.play_btn)
+        controls_layout.addWidget(self.play_btn)
+        controls_layout.addStretch(1)
 
-        self.setLayout(layout)
+        self.setLayout(root_layout)
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
+        self.on_filter_mode_changed()
 
     # -----------------------------------------------------
     def populate_users(self):
@@ -198,20 +253,126 @@ class VideoViewer(QWidget):
         except Exception:
             return [0]
 
-    def build_paths(self, planes):
+    def parse_channel(self):
+        try:
+            return int(self.channel_combo.currentText())
+        except ValueError:
+            return 0
+
+    def get_exp_dir(self):
         user = self.user_combo.currentText()
         expID = self.exp_edit.text().strip()
         if not expID or len(expID) < 15:
-            return None, "Invalid expID."
+            return os.path.join("/home", user)
         animalID = expID[14:]
-        base = os.path.join("/home", user, "data", "Repository", animalID, expID, "suite2p")
-        return [os.path.join(base, f"plane{p}", "data.bin") for p in planes], None
+        return os.path.join("/home", user, "data", "Repository", animalID, expID)
+
+    def get_default_bin_dir(self):
+        exp_dir = self.get_exp_dir()
+        if not os.path.isdir(exp_dir):
+            return os.path.dirname(exp_dir) if os.path.isdir(os.path.dirname(exp_dir)) else exp_dir
+
+        channel = self.parse_channel()
+        suite2p_dir = os.path.join(exp_dir, "suite2p")
+        if channel == 1:
+            ch2_dir = os.path.join(exp_dir, "ch2", "suite2p")
+            if os.path.isdir(ch2_dir):
+                return ch2_dir
+        if os.path.isdir(suite2p_dir):
+            return suite2p_dir
+        return exp_dir
+
+    def build_paths(self, planes):
+        expID = self.exp_edit.text().strip()
+        if not expID or len(expID) < 15:
+            return None, "Invalid expID."
+        exp_dir = self.get_exp_dir()
+        if not os.path.isdir(exp_dir):
+            return None, "Invalid expID."
+        if self.channel == 0:
+            suite2p_dir = os.path.join(exp_dir, "suite2p")
+            bin_candidates = ["data.bin"]
+        else:
+            suite2p_dir = os.path.join(exp_dir, "ch2", "suite2p")
+            bin_candidates = ["data.bin", "data_chan2.bin"]
+
+        paths = []
+        for plane in planes:
+            plane_dir = os.path.join(suite2p_dir, f"plane{plane}")
+            for bin_name in bin_candidates:
+                path = os.path.join(plane_dir, bin_name)
+                if os.path.exists(path):
+                    paths.append(path)
+                    break
+            else:
+                tried = ", ".join(os.path.join(plane_dir, name) for name in bin_candidates)
+                return None, f"Missing channel {self.channel} binary. Tried: {tried}"
+        return paths, None
     
     def update_frame_label(self):
         if self.total_frames > 0:
             self.frame_label.setText(f"{self.frame_idx+1} / {self.total_frames}")
         else:
             self.frame_label.setText("0 / 0")
+
+    def set_intensity_sliders(self, vmin, vmax):
+        vmin = int(np.clip(round(vmin), self.min_slider.minimum(), self.min_slider.maximum()))
+        vmax = int(np.clip(round(vmax), self.max_slider.minimum(), self.max_slider.maximum()))
+        if vmax <= vmin:
+            vmax = min(self.max_slider.maximum(), vmin + 1)
+
+        self.min_slider.blockSignals(True)
+        self.max_slider.blockSignals(True)
+        self.autoscale_cb.blockSignals(True)
+        self.min_slider.setValue(vmin)
+        self.max_slider.setValue(vmax)
+        self.autoscale_cb.blockSignals(False)
+        self.min_slider.blockSignals(False)
+        self.max_slider.blockSignals(False)
+        self.update_intensity_labels()
+
+    def update_autoscale_slider_values(self):
+        if not self.autos_vmin or not self.autos_vmax:
+            return
+        self.set_intensity_sliders(min(self.autos_vmin), max(self.autos_vmax))
+
+    def update_intensity_labels(self):
+        self.min_value_label.setText(str(self.min_slider.value()))
+        self.max_value_label.setText(str(self.max_slider.value()))
+
+    def on_intensity_slider_changed(self):
+        if self.autoscale_cb.isChecked():
+            self.autoscale_cb.blockSignals(True)
+            self.autoscale_cb.setChecked(False)
+            self.autoscale_cb.blockSignals(False)
+        self.update_intensity_labels()
+        self.update_display()
+
+    def on_autoscale_changed(self):
+        if self.autoscale_cb.isChecked():
+            self.update_autoscale_slider_values()
+        self.update_display()
+
+    def on_filter_mode_changed(self, *args):
+        using_time = self.time_filter_cb.isChecked()
+        using_space = self.space_filter_cb.isChecked()
+
+        self.time_win_label.setEnabled(using_time)
+        self.time_win.setEnabled(using_time)
+        self.space_k_label.setEnabled(using_space)
+        self.space_k.setEnabled(using_space)
+
+        parts = []
+        if using_time:
+            parts.append(f"Temporal median: {self.time_win.value()} frames")
+        if using_space:
+            parts.append(f"Spatial median: {self.space_k.value()} px kernel")
+        if parts:
+            self.filter_state_label.setText(" + ".join(parts))
+        else:
+            self.filter_state_label.setText("Off")
+
+        self.update_display()
 
 
     # -----------------------------------------------------
@@ -220,12 +381,34 @@ class VideoViewer(QWidget):
         QApplication.processEvents()
 
         self.planes = self.parse_planes()
+        self.channel = self.parse_channel()
         paths, err = self.build_paths(self.planes)
         if err:
             self.status_label.setText(err)
             return
 
+        self.load_paths(paths, f"channel {self.channel}")
+
+    def load_bin_files(self):
+        self.channel = self.parse_channel()
+        start_dir = self.get_default_bin_dir()
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Suite2p binary file(s)",
+            start_dir,
+            "Binary files (*.bin);;All files (*)",
+        )
+        if not paths:
+            return
+        self.planes = list(range(len(paths)))
+        self.load_paths(paths, "selected bin file")
+
+    def load_paths(self, paths, source_label):
+        self.status_label.setText("Mapping files...")
+        QApplication.processEvents()
+
         self.datas.clear()
+        self.loaded_paths.clear()
         self.autos_vmin.clear()
         self.autos_vmax.clear()
 
@@ -234,6 +417,7 @@ class VideoViewer(QWidget):
                 self.status_label.setText(f"Missing: {path}")
                 return
             self.datas.append(np.memmap(path, dtype=np.int16, mode="r"))
+            self.loaded_paths.append(path)
 
         frame_size = self.width * self.height
         totals = [d.size // frame_size for d in self.datas]
@@ -253,6 +437,8 @@ class VideoViewer(QWidget):
             self.progress_bar.setValue(int((i + 1) / len(self.datas) * 100))
             QApplication.processEvents()
         self.progress_bar.setVisible(False)
+        if self.autoscale_cb.isChecked():
+            self.update_autoscale_slider_values()
 
         self.frame_slider.setRange(0, self.total_frames - 1)
         self.frame_slider.setEnabled(True)
@@ -261,8 +447,12 @@ class VideoViewer(QWidget):
         self.back_btn.setEnabled(False)
         self.showing_mean = False
         self.frame_idx = 0
-        self.reset_view()
-        self.status_label.setText(f"Loaded {len(self.datas)} plane(s); {self.total_frames} frames.")
+        self.reset_view(redraw=False)
+        first_path = self.loaded_paths[0] if self.loaded_paths else ""
+        self.status_label.setText(
+            f"Loaded {source_label}, {len(self.datas)} file(s); "
+            f"{self.total_frames} frames from {os.path.dirname(first_path)}"
+        )
         self.update_display()
         self.update_frame_label()
 
@@ -277,15 +467,14 @@ class VideoViewer(QWidget):
 
     def get_filtered_frame(self, pidx, idx):
         frame = self.get_raw_frame(pidx, idx)
-        mode = self.filter_mode.currentText()
-        if mode == "Time":
+        if self.time_filter_cb.isChecked():
             w = max(3, self.time_win.value() | 1)
             half = w // 2
             i0 = max(0, idx - half)
             i1 = min(self.total_frames - 1, idx + half)
             imgs = [self.get_raw_frame(pidx, i) for i in range(i0, i1 + 1)]
             frame = np.median(np.stack(imgs, axis=0), axis=0)
-        elif mode == "Space":
+        if self.space_filter_cb.isChecked():
             k = max(3, self.space_k.value() | 1)
             frame = median_filter(frame, size=k)
         try:
@@ -297,10 +486,13 @@ class VideoViewer(QWidget):
         return frame
 
     # -----------------------------------------------------
-    def reset_view(self):
+    def reset_view(self, redraw=True):
         self.zoom = 1.0
         self.view_x = 0
         self.view_y = 0
+        self.clamp_view()
+        if redraw:
+            self.update_display()
 
     def zoom_by(self, factor):
         self.zoom = np.clip(self.zoom * factor, 1.0, 16.0)
