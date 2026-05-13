@@ -6,8 +6,32 @@ import suite2p
 import organise_paths
 import numpy as np
 import os
+import shutil
 
-def s2p_launcher_run(userID,expID,tif_path,config_path,save_path):
+
+def fix_binary_permissions(save_root):
+    """Ensure moved Suite2p binary files remain group-writable."""
+    for dirpath, _, filenames in os.walk(save_root):
+        for filename in filenames:
+            if filename in {"data.bin", "data_chan2.bin"}:
+                path = os.path.join(dirpath, filename)
+                mode = os.stat(path).st_mode & 0o777
+                os.chmod(path, mode | 0o020)
+
+def apply_stage_overrides(ops, stage):
+    """Force rigid-only or final non-rigid settings from one base config."""
+    if stage == 'rigid':
+        ops['nonrigid'] = False
+        ops['roidetect'] = False
+    elif stage == 'final':
+        ops['nonrigid'] = True
+        ops['roidetect'] = True
+    elif stage != 'default':
+        raise ValueError(f'Unknown stage: {stage}')
+    return ops
+
+
+def s2p_launcher_run(userID,expID,tif_path,config_path,save_path,stage='default'):
     # determine if several experiments are being run together or not:
 
     # # remove any existing data
@@ -21,40 +45,47 @@ def s2p_launcher_run(userID,expID,tif_path,config_path,save_path):
     allExpIDs = expID.split(',')
     print('ExpID = ' + expID)
     animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = organise_paths.find_paths(userID, allExpIDs[0])       
+    fast_disk_root = '/data/fast/s2p'
+    if os.path.exists(fast_disk_root):
+        shutil.rmtree(fast_disk_root)
+    os.makedirs(fast_disk_root)
     # load the saved config
     ops = np.load(config_path,allow_pickle=True)
     ops = ops.item()
+    ops = apply_stage_overrides(ops, stage)
     ops['save_mat'] = False
+    ops['reg_tif'] = False
+    ops['reg_tif_chan2'] = False
     if ops['functional_chan']==3:
         # then we are running on 2 functional channels (this is a hack to encode this info)
         db = {
             'data_path': allTifPaths,
-            'save_path0': save_path
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+            'save_path0': save_path,
+            'fast_disk': fast_disk_root,
             }
         ops['functional_chan']=1
-        suite2p.run_s2p(ops=ops, db=db)  
+        suite2p.run_s2p(ops=ops, db=db)
+        fix_binary_permissions(save_path)
         # run red ch
         # can be improved to avoid registering twice and making two copies of data!
         db = {
             'data_path': allTifPaths,
-            'save_path0': os.path.join(save_path,'ch2')
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+            'save_path0': os.path.join(save_path,'ch2'),
+            'fast_disk': fast_disk_root,
             }
         ops['functional_chan']=2
-        suite2p.run_s2p(ops=ops, db=db)    
+        suite2p.run_s2p(ops=ops, db=db)
+        fix_binary_permissions(os.path.join(save_path, 'ch2'))
     else:
         # then we are running on 1 functional channel (this is a hack to encode this info)
         # run green ch
         db = {
             'data_path': allTifPaths,
-            'save_path0': os.path.join(save_path)
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+            'save_path0': os.path.join(save_path),
+            'fast_disk': fast_disk_root,
             }
-        suite2p.run_s2p(ops=ops, db=db)  
+        suite2p.run_s2p(ops=ops, db=db)
+        fix_binary_permissions(save_path)
             
 
 # for debugging:
@@ -67,6 +98,10 @@ def main():
         tif_path = sys.argv[3]
         config_path = sys.argv[4]
         final_save_path = sys.argv[5]
+        try:
+            stage = sys.argv[6]
+        except IndexError:
+            stage = 'default'
     except:
         # debug mode
         expID = '2023-02-28_13_ESMT116'
@@ -77,7 +112,7 @@ def main():
         tif_path = '/data/Remote_Repository/ESMT116/2023-02-28_13_ESMT116,/data/Remote_Repository/ESMT116/2023-02-28_14_ESMT116'
         config_path = os.path.join('/home',userID,'data/configs/s2p_configs','ch_1_depth_1.npy')
 
-    s2p_launcher_run(userID,expID,tif_path,config_path,final_save_path)
+    s2p_launcher_run(userID,expID,tif_path,config_path,final_save_path,stage)
 
 if __name__ == "__main__":
     main()

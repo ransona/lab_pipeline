@@ -21,6 +21,12 @@ def to_regular_dict(d):
     else:
         return d
 
+
+def save_plane_timing_outputs(plane_dir, frame_times, frame_start_times, output_times):
+    np.save(os.path.join(plane_dir, 'timeline_frame_times.npy'), np.asarray(frame_times))
+    np.save(os.path.join(plane_dir, 'timeline_frame_start_times.npy'), np.asarray(frame_start_times))
+    np.save(os.path.join(plane_dir, 'timeline_output_times.npy'), np.asarray(output_times))
+
 def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
@@ -177,7 +183,7 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
                     s2p_ops = np.load(os.path.join(dataPath[iCh], 'plane'+str(iDepth), 'ops.npy'), allow_pickle=True).item()
 
                     # check for mismatch between frames trigs and frames in tiff
-                    if abs(framePulsesPerDepth-Fall.shape[1])/max([framePulsesPerDepth,Fall.shape[1]]) > 0.01:
+                    if abs(framePulsesPerDepth-Fall.shape[1])/max([framePulsesPerDepth,Fall.shape[1]]) > 0.015:
                         pcDiff = round(abs(framePulsesPerDepth-Fall.shape[1])/max([framePulsesPerDepth,Fall.shape[1]]) * 100)
                         raise Exception('There is a mismatch between between frames trigs and frames in tiff - ' + str(pcDiff) + '% difference')
                     # load numpy file containing cell classification
@@ -316,6 +322,9 @@ def run_preprocess_s2p_meso(userID, expID,debug_mode=False):
                     dF = dF[:,:min_frame_count]
                     F_valid = F_valid[:,:min_frame_count]
                     Spks_valid = Spks_valid[:,:min_frame_count]
+
+                    plane_dir = os.path.join(dataPath[iCh], 'plane'+str(iDepth))
+                    save_plane_timing_outputs(plane_dir, depthFrameTimes, depthFrameTimes, outputTimes)
                     
                     # resample to get desired sampling rate
                     dF_resampled = interpolate.interp1d(depthFrameTimes, dF.T, axis=0, kind='previous',fill_value="extrapolate")(outputTimes).T

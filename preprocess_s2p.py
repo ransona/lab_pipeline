@@ -19,6 +19,13 @@ from joblib import Parallel, delayed
 import gc
 import os
 
+
+def save_plane_timing_outputs(plane_dir, frame_times, frame_start_times, output_times):
+    np.save(os.path.join(plane_dir, 'timeline_frame_times.npy'), np.asarray(frame_times))
+    np.save(os.path.join(plane_dir, 'timeline_frame_start_times.npy'), np.asarray(frame_start_times))
+    np.save(os.path.join(plane_dir, 'timeline_output_times.npy'), np.asarray(output_times))
+
+
 # info:
 # spike deconvolution:
 # this is performed when suite2p runs but it produces a spike vector which is proportional to the F signal, not dF/F.
@@ -365,6 +372,9 @@ def run_preprocess_s2p(userID, expID, neuropil_coeff_config = np.nan):
             dF = dF[:,:min_frame_count]
             dF_spikes = dF_spikes[:,:min_frame_count]
             F_valid = F_valid[:,:min_frame_count]
+
+            plane_dir = os.path.join(dataPath[iCh], 'plane'+str(iDepth))
+            save_plane_timing_outputs(plane_dir, depthFrameTimes, depth_frame_start_times, outputTimes)
 
             # resample to get desired sampling rate. note '.T' is the transpose to get matrix orientation correct for interpolation
             print("Resampling to desired output frequency...")
