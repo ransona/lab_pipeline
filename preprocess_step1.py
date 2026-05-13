@@ -40,7 +40,20 @@ def run_preprocess_step1(jobID,userID, expID, suite2p_config, runs2p, rundlc, ru
     if runs2p:
         # run suite2p
         tif_path = exp_dir_raw
-        config_path = os.path.join('/data/common/configs/s2p_configs',userID,suite2p_config)
+        if isinstance(suite2p_config, str):
+            suite2p_configs = [suite2p_config]
+        elif isinstance(suite2p_config, (list, tuple)):
+            suite2p_configs = list(suite2p_config)
+        else:
+            raise TypeError("suite2p_config must be a string or a list/tuple of config filenames")
+
+        if len(suite2p_configs) not in [1, 2]:
+            raise ValueError("suite2p_config must contain either 1 config or 2 configs (for ch1/ch2)")
+
+        config_path = ','.join(
+            os.path.join('/data/common/configs/s2p_configs', userID, config_name)
+            for config_name in suite2p_configs
+        )
         s2p_launcher = os.path.join('/home','adamranson', 'code/preprocess_py/s2p_launcher.py')
         #cmd = 'conda run --no-capture-output --name suite2p python '+ s2p_launcher +' "' + userID + '" "' + expID + '" "' + tif_path + '" "' + config_path + '"'
         # cmd = ['conda','run' , '--no-capture-output','--name','suite2p','python',s2p_launcher,userID,expID,tif_path,config_path]

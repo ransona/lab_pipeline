@@ -21,40 +21,57 @@ def s2p_launcher_run(userID,expID,tif_path,config_path):
     allExpIDs = expID.split(',')
     print('ExpID = ' + expID)
     animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = organise_paths.find_paths(userID, allExpIDs[0])       
-    # load the saved config
-    ops = np.load(config_path,allow_pickle=True)
-    ops = ops.item()
-    ops['save_mat'] = False
-    if ops['functional_chan']==3:
-        # then we are running on 2 functional channels (this is a hack to encode this info)
-        db = {
-            'data_path': allTifPaths,
-            'save_path0': exp_dir_processed,
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+    config_paths = config_path.split(',')
+
+    if len(config_paths) == 2:
+        # Two configs means explicit per-channel control: first config is ch1, second is ch2.
+        for i_ch, current_config_path in enumerate(config_paths, start=1):
+            ops = np.load(current_config_path, allow_pickle=True).item()
+            ops['save_mat'] = False
+            ops['functional_chan'] = i_ch
+
+            db = {
+                'data_path': allTifPaths,
+                'save_path0': exp_dir_processed if i_ch == 1 else os.path.join(exp_dir_processed, 'ch2')
+                #'save_disk': exp_dir_processed, # where bin is moved after processing
+                #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
             }
-        ops['functional_chan']=1
-        suite2p.run_s2p(ops=ops, db=db)  
-        # run red ch
-        # can be improved to avoid registering twice and making two copies of data!
-        db = {
-            'data_path': allTifPaths,
-            'save_path0': os.path.join(exp_dir_processed,'ch2')
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
-            }
-        ops['functional_chan']=2
-        suite2p.run_s2p(ops=ops, db=db)    
+            suite2p.run_s2p(ops=ops, db=db)
     else:
-        # then we are running on 1 functional channel (this is a hack to encode this info)
-        # run green ch
-        db = {
-            'data_path': allTifPaths,
-            'save_path0': exp_dir_processed,
-            #'save_disk': exp_dir_processed, # where bin is moved after processing
-            #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
-            }
-        suite2p.run_s2p(ops=ops, db=db)  
+        # load the saved config
+        ops = np.load(config_paths[0],allow_pickle=True)
+        ops = ops.item()
+        ops['save_mat'] = False
+        if ops['functional_chan']==3:
+            # then we are running on 2 functional channels (this is a hack to encode this info)
+            db = {
+                'data_path': allTifPaths,
+                'save_path0': exp_dir_processed,
+                #'save_disk': exp_dir_processed, # where bin is moved after processing
+                #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+                }
+            ops['functional_chan']=1
+            suite2p.run_s2p(ops=ops, db=db)  
+            # run red ch
+            # can be improved to avoid registering twice and making two copies of data!
+            db = {
+                'data_path': allTifPaths,
+                'save_path0': os.path.join(exp_dir_processed,'ch2')
+                #'save_disk': exp_dir_processed, # where bin is moved after processing
+                #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+                }
+            ops['functional_chan']=2
+            suite2p.run_s2p(ops=ops, db=db)    
+        else:
+            # then we are running on 1 functional channel (this is a hack to encode this info)
+            # run green ch
+            db = {
+                'data_path': allTifPaths,
+                'save_path0': exp_dir_processed,
+                #'save_disk': exp_dir_processed, # where bin is moved after processing
+                #'fast_disk': os.path.join('/data/fast',userID, animalID, allExpIDs[0]),
+                }
+            suite2p.run_s2p(ops=ops, db=db)  
             
 
 # for debugging:
