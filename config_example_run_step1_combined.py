@@ -9,6 +9,7 @@ step1_config = {}
 username = getpass.getuser()
 step1_config['userID'] = username # defines where processed data will be stored and subsequently sought
 step1_config['expIDs'] = [['2023-02-28_13_ESMT116','2023-02-28_14_ESMT116']]
+# suite2p_config can be a single config filename or [ch1_config, ch2_config]
 step1_config['suite2p_config'] = 'ch_1_depth_1.npy'
 step1_config['runs2p'] = True 
 step1_config['rundlc'] = True

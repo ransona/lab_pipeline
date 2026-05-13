@@ -23,9 +23,20 @@ def run_step1_batch(step1_config):
     if username != userID:
         raise ValueError("You are not permitted to execute a job on the pipeline which will write to another users data folder")
 
-    config_path = os.path.join('/data/common/configs/s2p_configs',userID,suite2p_config)
-    if not os.path.exists(config_path) and rundlc == True:
-        raise FileNotFoundError('The suite2p config file does not exist: ' + config_path)
+    if isinstance(suite2p_config, str):
+        suite2p_configs = [suite2p_config]
+    elif isinstance(suite2p_config, (list, tuple)):
+        suite2p_configs = list(suite2p_config)
+    else:
+        raise TypeError("suite2p_config must be a string or a list/tuple of config filenames")
+
+    if len(suite2p_configs) not in [1, 2]:
+        raise ValueError("suite2p_config must contain either 1 config or 2 configs (for ch1/ch2)")
+
+    for config_name in suite2p_configs:
+        config_path = os.path.join('/data/common/configs/s2p_configs', userID, config_name)
+        if not os.path.exists(config_path) and rundlc == True:
+            raise FileNotFoundError('The suite2p config file does not exist: ' + config_path)
 
     for expID in expIDs:
         if type(expID) is str:
@@ -41,8 +52,11 @@ def run_step1_batch(step1_config):
                 command_filename = now.strftime("%Y_%m_%d_%H_%M_%S") + '_' + userID + '_' + expID + '.pickle'
             # add to queue by making a file with t
             queued_command = {}
-            queued_command['command'] = 'preprocess_step1.run_preprocess_step1("' + command_filename + '","' + userID + '","' + expID + '","' \
-                + suite2p_config + '",' + str(runs2p)+ ',' + str(rundlc)+ ',' + str(runfitpupil) +')'
+            queued_command['command'] = (
+                'preprocess_step1.run_preprocess_step1("'
+                + command_filename + '","' + userID + '","' + expID + '",'
+                + repr(suite2p_config) + ',' + str(runs2p)+ ',' + str(rundlc)+ ',' + str(runfitpupil) +')'
+            )
             
             queued_command['userID'] = userID
             queued_command['expID'] = expID
@@ -94,8 +108,11 @@ def run_step1_batch(step1_config):
             # add to queue by making a file with t
             queued_command = {}
             # run pipeline on all expIDs together but without DLC or fit pupil (i.e. just suite2p)
-            queued_command['command'] = 'preprocess_step1.run_preprocess_step1("' + command_filename + '","' + userID + '","' + allExpIds + '","' \
-                + suite2p_config + '",' + str(runs2p)+ ',' + 'False' + ',' + 'False' +')'
+            queued_command['command'] = (
+                'preprocess_step1.run_preprocess_step1("'
+                + command_filename + '","' + userID + '","' + allExpIds + '",'
+                + repr(suite2p_config) + ',' + str(runs2p)+ ',' + 'False' + ',' + 'False' +')'
+            )
             
             queued_command['userID'] = userID
             queued_command['expID'] = expID
@@ -136,8 +153,11 @@ def run_step1_batch(step1_config):
                 # add to queue by making a file with t
                 queued_command = {}
                 # run pipeline for each experiment seperately but not running suite2p
-                queued_command['command'] = 'preprocess_step1.run_preprocess_step1("' + command_filename + '","' + userID + '","' + expIDsub + '","' \
-                    + suite2p_config + '",' + 'False'+ ',' + str(rundlc)+ ',' + str(runfitpupil) +')'
+                queued_command['command'] = (
+                    'preprocess_step1.run_preprocess_step1("'
+                    + command_filename + '","' + userID + '","' + expIDsub + '",'
+                    + repr(suite2p_config) + ',' + 'False'+ ',' + str(rundlc)+ ',' + str(runfitpupil) +')'
+                )
                 
                 queued_command['userID'] = userID
                 queued_command['expID'] = expIDsub
