@@ -35,7 +35,7 @@ def run_step1_batch(step1_config):
 
     for config_name in suite2p_configs:
         config_path = os.path.join('/data/common/configs/s2p_configs', userID, config_name)
-        if not os.path.exists(config_path) and rundlc == True:
+        if not os.path.exists(config_path) and runs2p == True:
             raise FileNotFoundError('The suite2p config file does not exist: ' + config_path)
 
     for expID in expIDs:
