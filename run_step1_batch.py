@@ -20,7 +20,7 @@ def run_step1_batch(step1_config):
     # check if the user who is adding the job has the same username as the directory where the job will be writing to.
     # if not stop (to avoid people overwriting each other data accidently!)
     username = getpass.getuser()
-    if username != userID:
+    if userID != 'machine-pipeline-access' and username != userID:
         raise ValueError("You are not permitted to execute a job on the pipeline which will write to another users data folder")
 
     if isinstance(suite2p_config, str):
