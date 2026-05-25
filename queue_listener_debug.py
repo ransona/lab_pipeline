@@ -5,6 +5,7 @@ import pickle
 import shutil
 import preprocess_step1
 import preprocess_step1_meso
+import preprocess_step1_universal
 import matrix_msg
 import time
 import organise_paths
@@ -12,10 +13,23 @@ import grp
 import stat
 import file_check_verify
 from datetime import datetime
-import tensorflow as tf
-import numpy as np
 
-from datetime import datetime
+
+def detect_gpus():
+    try:
+        import torch
+    except Exception as e:
+        return 0, [], f'Unable to import torch: {e}'
+
+    try:
+        if not torch.cuda.is_available():
+            return 0, [], 'torch.cuda.is_available() returned False'
+
+        ngpus = torch.cuda.device_count()
+        gpu_names = [torch.cuda.get_device_name(i) for i in range(ngpus)]
+        return ngpus, gpu_names, None
+    except Exception as e:
+        return 0, [], f'PyTorch GPU detection failed: {e}'
 
 class JobScheduler:
     def __init__(self):
@@ -225,13 +239,16 @@ while True:
                 matrix_msg.main(queued_command['userID'],'Starting ' + expID)
                 matrix_msg.main('adamranson','Starting ' + expID,'Server queue notifications')
                 
-                ngpus = len(tf.config.list_physical_devices('GPU'))
+                ngpus, gpu_names, gpu_error = detect_gpus()
 
-                try:
-                    assert ngpus > 0
-                except:
-                    print(f'GPU problems: expecting at least 1 GPU, found {ngpus}')
-                    matrix_msg.main(queued_command['userID'],'GPU problems: expecting at least 1 GPU, found ' + str(ngpus))
+                if ngpus > 0:
+                    print(f'PyTorch detected {ngpus} GPU(s): {", ".join(gpu_names)}')
+                else:
+                    gpu_message = f'GPU problems: expecting at least 1 GPU, found {ngpus}'
+                    if gpu_error:
+                        gpu_message += f' ({gpu_error})'
+                    print(gpu_message)
+                    matrix_msg.main(queued_command['userID'], gpu_message)
 
                 # make the output directory if it doesn't already exist (will be first expID if several are being run through suite2p together)
                 animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = organise_paths.find_paths(queued_command['userID'], allExps[0])
