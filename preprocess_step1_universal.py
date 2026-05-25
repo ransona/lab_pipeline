@@ -185,8 +185,8 @@ def _run_suite2p_plan(job_id, user_id, exp_id, queued_command):
 
 
 def _run_dlc(job_id, user_id, exp_id, topology):
-    launcher_name = 'dlc_launcher_meso.py' if topology == 'meso' else 'dlc_launcher.py'
-    env_name = 'DLC2' if topology == 'meso' else 'DLC_05_02_2026'
+    launcher_name = 'dlc_launcher_universal.py'
+    env_name = 'DLC_05_02_2026'
     launcher = os.path.join(SCRIPT_ROOT, launcher_name)
     cmd = ['/opt/scripts/conda-run.sh', env_name, 'python', launcher, user_id, exp_id]
     _stream_subprocess(cmd, _log_path_for_job(job_id))
