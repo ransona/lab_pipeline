@@ -165,6 +165,39 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
     return ops
 
 
+def write_empty_detection_outputs(plane_save_dir, plane_ops):
+    """Write GUI-loadable placeholder Suite2p outputs for planes where no ROIs were detected."""
+    nframes = int(plane_ops.get("nframes", 0))
+    ypix = np.array([0], dtype=np.int32)
+    xpix = np.array([0], dtype=np.int32)
+    med = np.array([0.0, 0.0], dtype=np.float32)
+    dummy_stat = np.array(
+        [
+            {
+                "ypix": ypix,
+                "xpix": xpix,
+                "lam": np.array([0.0], dtype=np.float32),
+                "med": med,
+                "npix": 1,
+                "radius": 0.0,
+                "aspect_ratio": 1.0,
+                "compact": 0.0,
+                "footprint": 0.0,
+                "skew": 0.0,
+                "std": 0.0,
+                "overlap": np.array([False]),
+            }
+        ],
+        dtype=object,
+    )
+    np.save(os.path.join(plane_save_dir, "stat.npy"), dummy_stat)
+    np.save(os.path.join(plane_save_dir, "F.npy"), np.zeros((1, nframes), dtype=np.float32))
+    np.save(os.path.join(plane_save_dir, "Fneu.npy"), np.zeros((1, nframes), dtype=np.float32))
+    np.save(os.path.join(plane_save_dir, "iscell.npy"), np.array([[0.0, 0.0]], dtype=np.float32))
+    np.save(os.path.join(plane_save_dir, "spks.npy"), np.zeros((1, nframes), dtype=np.float32))
+    np.save(plane_ops["ops_path"], plane_ops)
+
+
 def run_shared_registration(all_tif_paths, exp_dir_processed, registration_config_path):
     """Register once on ch1 and write canonical binaries for both channels."""
     ops = load_ops_with_inferred_nplanes(registration_config_path, all_tif_paths)
@@ -230,7 +263,14 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, func
             if key in plane_ops:
                 del plane_ops[key]
 
-        plane_ops = run_plane(plane_ops)
+        try:
+            plane_ops = run_plane(plane_ops)
+        except ValueError as exc:
+            if "no ROIs were found" not in str(exc):
+                raise
+            print(f"No ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
+            write_empty_detection_outputs(plane_save_dir, plane_ops)
+            continue
 
         plane_ops["nchannels"] = 1
         plane_ops["functional_chan"] = 1

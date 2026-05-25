@@ -1,4 +1,5 @@
 # from conceivable import thread_limit
+import glob
 import os
 import organise_paths
 import sys 
@@ -14,13 +15,20 @@ def crop_vids(userID, expID):
         exp_dir_raw = organise_paths.find_paths(userID, expID)
     # Decide which input file to use:
     # - Habituation setup (single eye): {expID}_habit.mp4
+    # - Habituation setup variant:      {expID}_Setup_*_habit.mp4
     # - Standard setup (two eyes):      {expID}_eye1.mp4
-    habit_video = os.path.join(exp_dir_raw, (expID + '_habit.mp4'))
+    habit_video = os.path.join(exp_dir_raw, expID + '_habit.mp4')
+    habit_video_pattern = os.path.join(exp_dir_raw, expID + '_Setup_*_habit.mp4')
+    habit_video_matches = sorted(glob.glob(habit_video_pattern))
     two_eye_video = os.path.join(exp_dir_raw, (expID + '_eye1.mp4'))
 
-    # Selection logic: prefer habit if it exists, otherwise fall back to two-eye.
+    # Selection logic: prefer the canonical habituation filename, otherwise a
+    # setup-specific habituation file, otherwise fall back to the two-eye file.
     if os.path.exists(habit_video):
         eye_video_to_crop = habit_video
+        is_habit = True
+    elif habit_video_matches:
+        eye_video_to_crop = habit_video_matches[0]
         is_habit = True
     else:
         eye_video_to_crop = two_eye_video
