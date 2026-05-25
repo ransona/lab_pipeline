@@ -57,6 +57,10 @@ def _discover_work_unit_ids(exp_dir_raw):
         scanpath_root = os.path.join(exp_dir_raw, scanpath)
         if not scanpath.startswith('P') or not os.path.isdir(scanpath_root):
             continue
+        if scanpath not in {'P1', 'P2'}:
+            raise ValueError(
+                f'Universal pipeline currently supports only P1/P2 mesoscope scanpaths, found {scanpath}'
+            )
         for roi in sorted(os.listdir(scanpath_root)):
             roi_root = os.path.join(scanpath_root, roi)
             if roi.startswith('R') and os.path.isdir(roi_root):
@@ -64,6 +68,21 @@ def _discover_work_unit_ids(exp_dir_raw):
     if not work_unit_ids:
         raise ValueError(f'No mesoscope ROI folders found in {exp_dir_raw}')
     return 'meso', work_unit_ids
+
+
+def _validate_combined_work_units(user_id, exp_id_group, expected_topology, expected_work_unit_ids):
+    for exp_id in exp_id_group[1:]:
+        _, _, _, _, exp_dir_raw = organise_paths.find_paths(user_id, exp_id)
+        topology, work_unit_ids = _discover_work_unit_ids(exp_dir_raw)
+        if topology != expected_topology:
+            raise ValueError(
+                f'Combined experiment {exp_id} has topology {topology}, expected {expected_topology}'
+            )
+        if work_unit_ids != expected_work_unit_ids:
+            raise ValueError(
+                'Combined experiments do not share the same mesoscope work units. '
+                f'Expected {expected_work_unit_ids}, got {work_unit_ids} for {exp_id}'
+            )
 
 
 def _normalize_suite2p_plan(suite2p_config, work_unit_ids):
@@ -244,6 +263,7 @@ def run_step1_batch_universal(step1_config):
             'Adding expID:' + exp_id[0]
             + " to the queue as the base experiment of a 'combined experiment' suite2p run"
         )
+        _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
         all_exp_ids = ','.join(exp_id)
         now = datetime.now()
         command_filename = _command_filename(now, user_id, exp_id[0], jump_queue)
