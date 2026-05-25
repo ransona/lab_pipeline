@@ -34,6 +34,10 @@ def discover_work_units(exp_dir_processed):
         scanpath_root = os.path.join(exp_dir_processed, f"P{p_index}")
         if not os.path.isdir(scanpath_root):
             continue
+        if p_index not in (1, 2):
+            raise Exception(
+                f"Universal pipeline currently supports only P1/P2 mesoscope scanpaths, found P{p_index}"
+            )
         roi_names = sorted(
             roi_name
             for roi_name in os.listdir(scanpath_root)
