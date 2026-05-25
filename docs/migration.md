@@ -36,6 +36,19 @@ The first pass promotes these universal modules into `src/preprocess_pipeline/`:
   - `pupil/core.py`
   - `pupil/preprocess.py`
 
+The next pass promotes the canonical step-2 stack:
+
+- `step2/run_batch.py`
+- `step2/runtime.py`
+- `behavior/bonvision.py`
+- `behavior/preprocess_bv.py`
+- `behavior/preprocess_bv2.py`
+- `behavior/preprocess_cam.py`
+- `behavior/preprocess_cut.py`
+- `behavior/preprocess_ephys.py`
+- `pupil/timestamp.py`
+- `pupil/calibration.py`
+
 ## Important cleanup choices
 
 - the new queue listener dispatches the canonical universal job type directly instead of relying on `eval(...)`

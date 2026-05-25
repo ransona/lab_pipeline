@@ -11,12 +11,19 @@ class CanonicalSmokeTests(unittest.TestCase):
         app_names = [
             "run_step1.py",
             "preprocess_step1.py",
+            "run_step2.py",
+            "preprocess_step2.py",
             "s2p_launcher.py",
             "dlc_launcher.py",
             "preprocess_pupil.py",
             "preprocess_s2p.py",
             "split_combined_s2p.py",
             "preprocess_habituate.py",
+            "preprocess_cam.py",
+            "preprocess_ephys.py",
+            "preprocess_cut.py",
+            "preprocess_bv.py",
+            "preprocess_pupil_timestamp.py",
             "queue_listener.py",
         ]
         for app_name in app_names:
@@ -26,6 +33,8 @@ class CanonicalSmokeTests(unittest.TestCase):
         module_names = [
             "preprocess_pipeline.step1.run_batch",
             "preprocess_pipeline.step1.runtime",
+            "preprocess_pipeline.step2.run_batch",
+            "preprocess_pipeline.step2.runtime",
             "preprocess_pipeline.queue.listener",
             "preprocess_pipeline.suite2p.preprocess",
             "preprocess_pipeline.step1.split_combined_s2p",

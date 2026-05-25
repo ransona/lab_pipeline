@@ -48,6 +48,13 @@ The new repo keeps direct runnable entrypoints so subsystems remain independentl
 - `python /home/adamranson/code/lab_pipeline/apps/split_combined_s2p.py`
 - `python /home/adamranson/code/lab_pipeline/apps/preprocess_habituate.py`
 - `python /home/adamranson/code/lab_pipeline/apps/queue_listener.py`
+- `python /home/adamranson/code/lab_pipeline/apps/run_step2.py <config.py>`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_step2.py <user> <exp> <pre_secs> <post_secs> <run_bonvision> <run_s2p_timestamp> <run_ephys> <run_dlc_timestamp> <run_cuttraces>`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_cam.py`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_ephys.py`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_cut.py`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_bv.py`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_pupil_timestamp.py`
 
 These wrappers do not require `conda develop` because they prepend `/home/adamranson/code/lab_pipeline/src` to `sys.path` themselves.
 
@@ -65,11 +72,19 @@ These wrappers do not require `conda develop` because they prepend `/home/adamra
   - run inside the `sci` environment
 - `apps/preprocess_s2p.py`
   - run inside the environment that has the scientific Python stack required by Suite2p postprocessing
+- `apps/run_step2.py` / `apps/preprocess_step2.py`
+  - standard scientific Python environment with the step-2 dependencies
 
 ## Ready-to-run examples
 
 - `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_standard.py`
 - `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_dual_channel.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_standard_combined.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso_dual_channel.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso_combined.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step2_standard.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step2_meso.py`
 
 ## Next migration steps
 
