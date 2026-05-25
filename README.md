@@ -40,12 +40,36 @@ Imported legacy snapshots:
 The new repo keeps direct runnable entrypoints so subsystems remain independently testable without the full pipeline:
 
 - `python /home/adamranson/code/lab_pipeline/apps/run_step1.py <config.py>`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_step1.py <job_id> <user_id> <exp_id> <runs2p> <rundlc> <runfitpupil>`
 - `python /home/adamranson/code/lab_pipeline/apps/s2p_launcher.py ...`
 - `python /home/adamranson/code/lab_pipeline/apps/dlc_launcher.py <user> <exp>`
 - `python /home/adamranson/code/lab_pipeline/apps/preprocess_pupil.py <user> <exp>`
 - `python /home/adamranson/code/lab_pipeline/apps/preprocess_s2p.py`
 - `python /home/adamranson/code/lab_pipeline/apps/split_combined_s2p.py`
+- `python /home/adamranson/code/lab_pipeline/apps/preprocess_habituate.py`
 - `python /home/adamranson/code/lab_pipeline/apps/queue_listener.py`
+
+These wrappers do not require `conda develop` because they prepend `/home/adamranson/code/lab_pipeline/src` to `sys.path` themselves.
+
+## Environment expectations
+
+- `apps/run_step1.py`
+  - submission only, standard Python environment is fine
+- `apps/preprocess_step1.py`
+  - standard Python environment, but it launches Suite2p/DLC/pupil subprocesses in their target envs
+- `apps/s2p_launcher.py`
+  - run inside the `suite2p` environment
+- `apps/dlc_launcher.py`
+  - run inside the `DLC_05_02_2026` environment
+- `apps/preprocess_pupil.py`
+  - run inside the `sci` environment
+- `apps/preprocess_s2p.py`
+  - run inside the environment that has the scientific Python stack required by Suite2p postprocessing
+
+## Ready-to-run examples
+
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_standard.py`
+- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_dual_channel.py`
 
 ## Next migration steps
 

@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from preprocess_pipeline.queue.listener import main
+from preprocess_pipeline.step1.habituate import main
 
 
 if __name__ == "__main__":

@@ -262,5 +262,9 @@ def split_s2p_vid(path_to_source_bin, path_to_dest_bin, Ly, Lx, start_frame, fra
             frames_written += frames_to_read
 
 
-if __name__ == "__main__":
+def main():
     split_combined_suite2p()
+
+
+if __name__ == "__main__":
+    main()
