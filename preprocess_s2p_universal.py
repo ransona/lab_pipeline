@@ -230,7 +230,14 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
         frame_duration = np.median(time_diffs)
         output_times = np.arange(frame_times[0] + 1, frame_times[-1] - 1, 1 / resample_freq)
         if output_times_common is None:
-            output_times_common = output_times
+            output_times_common = output_times.copy()
+        elif len(output_times) != len(output_times_common) or not np.allclose(
+            output_times, output_times_common
+        ):
+            print(
+                "Warning: work unit output_times differs from canonical experiment timebase; "
+                "resampling onto output_times_common from first work unit."
+            )
 
         for iCh in range(len(data_paths)):
             for iDepth in range(depth_count):
@@ -299,7 +306,9 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
                 depth_frame_times = depth_frame_times[:min_frame_count]
                 depth_frame_start_times = depth_frame_start_times[:min_frame_count]
                 next_depth_frame_times = next_depth_frame_times[:min_frame_count]
-                save_plane_timing_outputs(plane_dir, depth_frame_times, depth_frame_start_times, output_times)
+                save_plane_timing_outputs(
+                    plane_dir, depth_frame_times, depth_frame_start_times, output_times_common
+                )
 
                 if len(valid_cell_ids) == 0:
                     print("No valid cells after Suite2p filtering; storing empty outputs for this plane.")
@@ -387,10 +396,12 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
                 baseline = baseline[:, :min_frame_count]
 
                 print("Resampling to desired output frequency...")
-                dF_resampled = resample_previous(dF, depth_frame_times, output_times)
-                F_resampled = resample_previous(F_valid, depth_frame_times, output_times)
-                Spks_resampled = resample_previous(dF_spikes, depth_frame_times, output_times)
-                Baseline_resampled = resample_previous(baseline, depth_frame_times, output_times)
+                dF_resampled = resample_previous(dF, depth_frame_times, output_times_common)
+                F_resampled = resample_previous(F_valid, depth_frame_times, output_times_common)
+                Spks_resampled = resample_previous(dF_spikes, depth_frame_times, output_times_common)
+                Baseline_resampled = resample_previous(
+                    baseline, depth_frame_times, output_times_common
+                )
                 print("Resampling complete.")
 
                 if len(dF_resampled.shape) == 1:

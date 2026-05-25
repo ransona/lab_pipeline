@@ -11,23 +11,6 @@ import organise_paths
 
 
 STANDARD_CONFIG_PATH = '/data/common/dlc_models/all_setups-rubencorreia-2025-12-10/config.yaml'
-MESO_CONFIG_PATH = '/data/common/dlc_models/EYE-Yannick-2025-05-08/config.yaml'
-
-
-def is_meso_experiment(exp_dir_raw):
-    for entry in sorted(os.listdir(exp_dir_raw)):
-        scanpath_root = os.path.join(exp_dir_raw, entry)
-        if not entry.startswith('P') or not os.path.isdir(scanpath_root):
-            continue
-        for roi_entry in sorted(os.listdir(scanpath_root)):
-            roi_root = os.path.join(scanpath_root, roi_entry)
-            if roi_entry.startswith('R') and os.path.isdir(roi_root):
-                return True
-    return False
-
-
-def dlc_config_path_for_experiment(exp_dir_raw):
-    return MESO_CONFIG_PATH if is_meso_experiment(exp_dir_raw) else STANDARD_CONFIG_PATH
 
 
 def crop_vids(userID, expID):
@@ -180,8 +163,8 @@ def dlc_launcher_run(userID, expID):
     print('Starting cropping videos...')
     crop_vids(userID, expID)
 
-    config_path = dlc_config_path_for_experiment(exp_dir_raw)
-    shuffle = 1 if config_path == MESO_CONFIG_PATH else 5
+    config_path = STANDARD_CONFIG_PATH
+    shuffle = 5
 
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_left', shuffle)
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_right', shuffle)

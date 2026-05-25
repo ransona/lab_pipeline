@@ -193,7 +193,7 @@ def _run_dlc(job_id, user_id, exp_id, topology):
 
 
 def _run_fit_pupil(job_id, user_id, exp_id):
-    launcher = os.path.join(SCRIPT_ROOT, 'preprocess_pupil.py')
+    launcher = os.path.join(SCRIPT_ROOT, 'preprocess_pupil_universal.py')
     cmd = ['conda', 'run', '--no-capture-output', '--name', 'sci', 'python', launcher, user_id, exp_id]
     _stream_subprocess(cmd, _log_path_for_job(job_id))
 
