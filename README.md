@@ -77,14 +77,11 @@ These wrappers do not require `conda develop` because they prepend `/home/adamra
 
 ## Ready-to-run examples
 
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_standard.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_dual_channel.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_standard_combined.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso_dual_channel.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step1_meso_combined.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step2_standard.py`
-- `/home/adamranson/code/lab_pipeline/configs/config_example_run_step2_meso.py`
+- `/home/adamranson/code/lab_pipeline/configs/examples/`
+  - normal submission examples
+- `/home/adamranson/code/lab_pipeline/configs/debug/`
+  - debug-queue variants of the step-1 examples
+  - these include `step1_config["queue"] = "debug"`
 
 ## Next migration steps
 

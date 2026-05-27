@@ -177,7 +177,7 @@ def main():
         userID = sys.argv[1]
         expID = sys.argv[2]
     except Exception:
-        expID = '2026-01-20_02_ESRC027'
+        expID = '2026-02-23_02_ESRC033'
         userID = 'adamranson'
     start_time = time.time()
     dlc_launcher_run(userID, expID)

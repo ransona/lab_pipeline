@@ -4,8 +4,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from preprocess_pipeline.queue.listener import main
+from preprocess_pipeline.viewers.eye_check import main
 
 
 if __name__ == "__main__":
-    main(debug="--debug" in sys.argv)
+    main()

@@ -10,6 +10,7 @@ from preprocess_pipeline.shared import matrix_notify, paths
 
 CONFIG_ROOT = '/data/common/configs/s2p_configs'
 DEFAULT_QUEUE_PATH = '/data/common/queues/step1'
+DEBUG_QUEUE_PATH = '/data/common/queues/debug'
 QUEUE_PATHS_BY_HOST = {
     'server': DEFAULT_QUEUE_PATH,
     'ar-lab-si2': '/data/common/local_pipelines/ar-lab-si2/queues/step1',
@@ -148,6 +149,14 @@ def _queue_path_for_host(run_on):
     return QUEUE_PATHS_BY_HOST[run_on]
 
 
+def _resolve_queue_path(run_on, queue_name):
+    if queue_name == 'debug':
+        return DEBUG_QUEUE_PATH
+    if queue_name not in (None, 'step1'):
+        raise ValueError(f'Unknown queue target: {queue_name}')
+    return _queue_path_for_host(run_on)
+
+
 def _build_command(command_filename, user_id, exp_id, runs2p, rundlc, runfitpupil):
     return (
         'preprocess_pipeline.step1.runtime.run_preprocess_step1_universal('
@@ -204,6 +213,7 @@ def run_step1_batch_universal(step1_config):
     settings = step1_config.get('settings', False)
     jump_queue = step1_config.get('jump_queue', False)
     run_on = step1_config.get('run_on', 'server')
+    queue_name = step1_config.get('queue', 'step1')
 
     username = getpass.getuser()
     if user_id != 'machine-pipeline-access' and username != user_id:
@@ -218,7 +228,7 @@ def run_step1_batch_universal(step1_config):
     suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
     _validate_plan_configs(user_id, suite2p_plan, runs2p)
 
-    queue_path = _queue_path_for_host(run_on)
+    queue_path = _resolve_queue_path(run_on, queue_name)
 
     for exp_id in exp_ids:
         if isinstance(exp_id, str):
@@ -241,6 +251,7 @@ def run_step1_batch_universal(step1_config):
                     'runhabituate': runhabituate,
                     'settings': settings,
                     'run_on': run_on,
+                    'queue': queue_name,
                     'topology': topology,
                     'suite2p_plan': suite2p_plan,
                     'suite2p_config': suite2p_config,
@@ -304,7 +315,7 @@ def run_step1_batch_universal(step1_config):
             )
             queued_command = _queue_single_job(
                 command_filename,
-                DEFAULT_QUEUE_PATH,
+                queue_path,
                 user_id,
                 exp_id_sub,
                 command,
@@ -314,7 +325,8 @@ def run_step1_batch_universal(step1_config):
                     'runfitpupil': runfitpupil,
                     'runhabituate': runhabituate,
                     'settings': settings,
-                    'run_on': 'server',
+                    'run_on': run_on,
+                    'queue': queue_name,
                     'topology': topology,
                     'suite2p_plan': suite2p_plan,
                     'suite2p_config': suite2p_config,
@@ -326,7 +338,7 @@ def run_step1_batch_universal(step1_config):
                 },
             )
             _notify_queue_position(
-                queued_command['userID'], queued_command['expID'], DEFAULT_QUEUE_PATH
+                queued_command['userID'], queued_command['expID'], queue_path
             )
 
 

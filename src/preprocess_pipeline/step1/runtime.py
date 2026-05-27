@@ -10,38 +10,42 @@ from preprocess_pipeline.step1 import habituate
 
 
 DEFAULT_QUEUE_PATH = '/data/common/queues/step1'
+DEBUG_QUEUE_PATH = '/data/common/queues/debug'
 QUEUE_PATHS = [
     DEFAULT_QUEUE_PATH,
+    DEBUG_QUEUE_PATH,
     '/data/common/local_pipelines/ar-lab-si2/queues/step1',
     '/data/common/local_pipelines/AdamDellXPS15/queues/step1',
 ]
-LOG_ROOT = os.path.join(DEFAULT_QUEUE_PATH, 'logs')
 CONFIG_ROOT = '/data/common/configs/s2p_configs'
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / 'apps'
 
 
-def _find_job_file(job_id):
-    for queue_path in QUEUE_PATHS:
+def _find_job_file(job_id, queue_paths=None):
+    if queue_paths is None:
+        queue_paths = QUEUE_PATHS
+    for queue_path in queue_paths:
         job_path = os.path.join(queue_path, job_id)
         if os.path.exists(job_path):
             return job_path
     raise FileNotFoundError(f'Could not locate queued job file for {job_id}')
 
 
-def _load_queued_command(job_id):
-    job_path = _find_job_file(job_id)
+def _load_queued_command(job_id, queue_paths=None):
+    job_path = _find_job_file(job_id, queue_paths=queue_paths)
     with open(job_path, 'rb') as f:
         return pickle.load(f)
 
 
-def _log_path_for_job(job_id):
-    os.makedirs(LOG_ROOT, exist_ok=True)
+def _log_path_for_job(job_id, queue_path=DEFAULT_QUEUE_PATH):
+    log_root = os.path.join(queue_path, 'logs')
+    os.makedirs(log_root, exist_ok=True)
     if job_id.endswith('.pickle'):
         log_name = job_id[:-7] + '.txt'
     else:
         log_name = job_id + '.txt'
-    return os.path.join(LOG_ROOT, log_name)
+    return os.path.join(log_root, log_name)
 
 
 def _is_meso_root(exp_dir_raw):
@@ -101,17 +105,10 @@ def _suite2p_config_path(user_id, config_names):
 def _stream_subprocess(cmd, log_path):
     all_output = ''
     with subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
     ) as proc:
         for line in proc.stdout:
             print(line, end='')
-            all_output += line
-            sys.stdout.flush()
-            with open(log_path, 'a') as file:
-                file.write(line)
-
-        for line in proc.stderr:
-            print('Error: ' + line, end='')
             all_output += line
             sys.stdout.flush()
             with open(log_path, 'a') as file:
@@ -159,9 +156,9 @@ def _suite2p_cmd_for_work_unit(
     return ['/opt/scripts/conda-run.sh', suite2p_env, 'python', '-u', launcher, *launcher_args]
 
 
-def _run_suite2p_plan(job_id, user_id, exp_id, queued_command):
+def _run_suite2p_plan(job_id, user_id, exp_id, queued_command, queue_path=DEFAULT_QUEUE_PATH):
     exp_ids = _all_exp_ids(exp_id)
-    log_path = _log_path_for_job(job_id)
+    log_path = _log_path_for_job(job_id, queue_path=queue_path)
 
     for plan_item in queued_command['config']['suite2p_plan']:
         work_unit_id = plan_item['work_unit']
@@ -186,22 +183,22 @@ def _run_suite2p_plan(job_id, user_id, exp_id, queued_command):
         _stream_subprocess(cmd, log_path)
 
 
-def _run_dlc(job_id, user_id, exp_id, topology):
+def _run_dlc(job_id, user_id, exp_id, topology, queue_path=DEFAULT_QUEUE_PATH):
     env_name = 'DLC_05_02_2026'
     launcher = str(APP_ROOT / 'dlc_launcher.py')
     cmd = ['/opt/scripts/conda-run.sh', env_name, 'python', launcher, user_id, exp_id]
-    _stream_subprocess(cmd, _log_path_for_job(job_id))
+    _stream_subprocess(cmd, _log_path_for_job(job_id, queue_path=queue_path))
 
 
-def _run_fit_pupil(job_id, user_id, exp_id):
+def _run_fit_pupil(job_id, user_id, exp_id, queue_path=DEFAULT_QUEUE_PATH):
     launcher = str(APP_ROOT / 'preprocess_pupil.py')
     cmd = ['conda', 'run', '--no-capture-output', '--name', 'sci', 'python', launcher, user_id, exp_id]
-    _stream_subprocess(cmd, _log_path_for_job(job_id))
+    _stream_subprocess(cmd, _log_path_for_job(job_id, queue_path=queue_path))
 
 
-def run_preprocess_step1_job(job_id, queued_command=None):
+def run_preprocess_step1_job(job_id, queued_command=None, queue_path=DEFAULT_QUEUE_PATH):
     if queued_command is None:
-        queued_command = _load_queued_command(job_id)
+        queued_command = _load_queued_command(job_id, queue_paths=[queue_path])
 
     exp_id = queued_command['expID']
     exp_id_arg = ','.join(exp_id) if isinstance(exp_id, list) else exp_id
@@ -214,14 +211,26 @@ def run_preprocess_step1_job(job_id, queued_command=None):
         config['runs2p'],
         config['rundlc'],
         config['runfitpupil'],
+        queued_command=queued_command,
+        queue_path=queue_path,
     )
 
 
-def run_preprocess_step1_universal(jobID, userID, expID, runs2p, rundlc, runfitpupil):
+def run_preprocess_step1_universal(
+    jobID,
+    userID,
+    expID,
+    runs2p,
+    rundlc,
+    runfitpupil,
+    queued_command=None,
+    queue_path=DEFAULT_QUEUE_PATH,
+):
     print('Starting job: ' + jobID)
     print('--------------------------------------------------')
 
-    queued_command = _load_queued_command(jobID)
+    if queued_command is None:
+        queued_command = _load_queued_command(jobID, queue_paths=[queue_path])
     exp_ids = _all_exp_ids(expID)
     first_exp_raw, first_exp_processed = _find_exp_paths(userID, exp_ids[0])
     os.makedirs(first_exp_processed, exist_ok=True)
@@ -231,15 +240,15 @@ def run_preprocess_step1_universal(jobID, userID, expID, runs2p, rundlc, runfitp
         topology = _discover_topology(first_exp_raw)
 
     if runs2p:
-        _run_suite2p_plan(jobID, userID, expID, queued_command)
+        _run_suite2p_plan(jobID, userID, expID, queued_command, queue_path=queue_path)
 
     if rundlc:
         print('Running DLC launcher...')
-        _run_dlc(jobID, userID, expID, topology)
+        _run_dlc(jobID, userID, expID, topology, queue_path=queue_path)
 
     if runfitpupil:
         print('Running pupil fit launcher...')
-        _run_fit_pupil(jobID, userID, expID)
+        _run_fit_pupil(jobID, userID, expID, queue_path=queue_path)
 
     if queued_command['config'].get('runhabituate', False):
         print('Running habituation setup processing...')

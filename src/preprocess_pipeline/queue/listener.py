@@ -7,7 +7,12 @@ from preprocess_pipeline.shared import file_check, matrix_notify, paths
 from preprocess_pipeline.step1 import runtime as step1_runtime
 import grp
 import stat
+import sys
 from datetime import datetime
+
+
+DEFAULT_QUEUE_PATH = '/data/common/queues/step1/'
+DEBUG_QUEUE_PATH = '/data/common/queues/debug/'
 
 
 def detect_gpus():
@@ -56,7 +61,7 @@ class JobScheduler:
         self.user_runtime[user] += runtime
         self.user_runtime[user] = round(self.user_runtime[user])
 
-    def sort_jobs_by_priority(self, job_files):
+    def sort_jobs_by_priority(self, job_files, output_directory=DEFAULT_QUEUE_PATH):
         # Separate priority and regular jobs
         priority_jobs = []
         regular_jobs = []
@@ -90,7 +95,6 @@ class JobScheduler:
         )
 
         # Write all users with runtime info to a file
-        output_directory = "/data/common/queues/step1/"
         os.makedirs(output_directory, exist_ok=True)  # Ensure the directory exists
         output_file = os.path.join(output_directory, "user_totals.txt")
         with open(output_file, "w") as f:
@@ -111,13 +115,15 @@ class JobScheduler:
         return priority_jobs + sorted_regular_jobs
 
 
-def main():
+def main(debug=False, queue_path=None):
     scheduler = JobScheduler()
-    queue_path = '/data/common/queues/step1/'
+    if queue_path is None:
+        queue_path = DEBUG_QUEUE_PATH if debug else DEFAULT_QUEUE_PATH
 
-    matrix_notify.main('adamranson','Queue restarted')
-    matrix_notify.main('adamranson','Queue restarted','Server queue notifications')
-    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Waiting for jobs...')
+    restart_msg = 'Queue restarted (debug)' if debug else 'Queue restarted'
+    matrix_notify.main('adamranson', restart_msg)
+    matrix_notify.main('adamranson', restart_msg, 'Server queue notifications')
+    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Waiting for jobs in {queue_path}...')
 
     try:
         while True:
@@ -125,7 +131,7 @@ def main():
             time.sleep(0.5)
             files = os.listdir(queue_path)
             files = [file for file in files if file.endswith('.pickle')]
-            prioritised_jobs = scheduler.sort_jobs_by_priority(files)
+            prioritised_jobs = scheduler.sort_jobs_by_priority(files, output_directory=queue_path)
 
         # Write the sorted jobs to a file
             output_file = os.path.join(queue_path,'prioritised_jobs.txt')
@@ -252,7 +258,11 @@ def main():
                     # run command file
                         if queued_command.get('job_type') != 'step1_universal':
                             raise ValueError(f"Unsupported job_type in lab_pipeline queue: {queued_command.get('job_type')}")
-                        step1_runtime.run_preprocess_step1_job(prioritised_jobs[ijob], queued_command)
+                        step1_runtime.run_preprocess_step1_job(
+                            prioritised_jobs[ijob],
+                            queued_command,
+                            queue_path=queue_path.rstrip('/'),
+                        )
                     # if it gets here it has somewhat worked
                     # move job to completed
                         shutil.move(os.path.join(queue_path,prioritised_jobs[ijob]),os.path.join(queue_path,'completed',prioritised_jobs[ijob]))
@@ -315,4 +325,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    debug = '--debug' in sys.argv
+    main(debug=debug)

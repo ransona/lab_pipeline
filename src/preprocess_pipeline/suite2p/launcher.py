@@ -10,9 +10,10 @@ from preprocess_pipeline.shared import paths
 import numpy as np
 import os
 import re
-import tifffile
 from glob import glob
 import shutil
+import pickle
+import tifffile
 
 
 DETECTION_FILES = [
@@ -33,19 +34,91 @@ CH2_EXTRA_FILES = [
 ]
 
 
-def infer_nplanes_from_tiff(first_tif_path):
-    """Read ScanImage TIFF metadata and infer the multiplane count."""
+def is_meso_tif_path(first_tif_path):
+    """Return True when the TIFF lives under a P*/R* mesoscope layout."""
+    tif_path = os.path.abspath(first_tif_path)
+    roi_root = os.path.dirname(tif_path)
+    scanpath_root = os.path.dirname(roi_root)
+    return (
+        os.path.basename(roi_root).startswith("R")
+        and os.path.basename(scanpath_root).startswith("P")
+    )
+
+
+def infer_nplanes_from_standard_tiff(first_tif_path):
+    """Infer plane count from rich ScanImage metadata embedded in standard TIFFs."""
+    with tifffile.TiffFile(first_tif_path) as tif:
+        si_meta = getattr(tif, "scanimage_metadata", None)
+        frame_data = si_meta.get("FrameData") if isinstance(si_meta, dict) else None
+        if isinstance(frame_data, dict):
+            for key in [
+                "SI.hStackManager.numFramesPerVolume",
+                "SI.hStackManager.actualNumSlices",
+                "SI.hStackManager.numSlices",
+            ]:
+                value = frame_data.get(key)
+                try:
+                    nplanes = int(value)
+                except Exception:
+                    continue
+                if nplanes > 0:
+                    return nplanes
+
     with open(first_tif_path, "rb") as file:
         description = file.read(400000).decode("latin1", errors="ignore")
 
-    for key in ["SI.hStackManager.numSlices", "SI.hStackManager.numFramesPerVolume"]:
+    for key in ["SI.hStackManager.numFramesPerVolume", "SI.hStackManager.numSlices"]:
         match = re.search(rf"{re.escape(key)}\s*=\s*([0-9]+)", description)
         if match:
             nplanes = int(match.group(1))
             if nplanes > 0:
                 return nplanes
 
-    raise ValueError(f"Could not infer nplanes from TIFF metadata: {first_tif_path}")
+    raise ValueError(f"Could not infer nplanes from standard TIFF metadata: {first_tif_path}")
+
+
+def infer_nplanes_from_meso_si_meta(first_tif_path):
+    """Infer plane count from the mesoscope SI_meta sidecar for P*/R* split TIFFs."""
+    tif_path = os.path.abspath(first_tif_path)
+    roi_root = os.path.dirname(tif_path)
+    scanpath_root = os.path.dirname(roi_root)
+    si_meta_path = os.path.join(scanpath_root, "SI_meta.pickle")
+
+    if not os.path.exists(si_meta_path):
+        raise FileNotFoundError(f"Could not find SI_meta.pickle for {first_tif_path}")
+
+    with open(si_meta_path, "rb") as f:
+        si_meta = pickle.load(f)
+
+    meta1 = si_meta.get("Meta1")
+    if isinstance(meta1, (list, tuple)) and meta1:
+        header = meta1[0]
+    elif isinstance(meta1, dict):
+        header = meta1
+    else:
+        raise ValueError(f"Unexpected Meta1 format in {si_meta_path}")
+
+    for key in [
+        "SI.hStackManager.numFramesPerVolume",
+        "SI.hStackManager.actualNumSlices",
+        "SI.hStackManager.numSlices",
+    ]:
+        value = header.get(key)
+        try:
+            nplanes = int(value)
+        except Exception:
+            continue
+        if nplanes > 0:
+            return nplanes
+
+    raise ValueError(f"Could not infer nplanes from SI_meta.pickle: {si_meta_path}")
+
+
+def infer_nplanes(first_tif_path):
+    """Dispatch plane-count inference by raw-data topology."""
+    if is_meso_tif_path(first_tif_path):
+        return infer_nplanes_from_meso_si_meta(first_tif_path), "SI_meta.pickle"
+    return infer_nplanes_from_standard_tiff(first_tif_path), first_tif_path
 
 
 def resolve_first_tif_path(data_path):
@@ -69,8 +142,8 @@ def load_ops_with_inferred_nplanes(config_path, all_tif_paths):
     ops = np.load(config_path, allow_pickle=True).item()
     if ops.get("nplanes", 1) == 0:
         first_tif_path = resolve_first_tif_path(all_tif_paths[0])
-        ops["nplanes"] = infer_nplanes_from_tiff(first_tif_path)
-        print(f"Inferred nplanes={ops['nplanes']} from {first_tif_path}")
+        ops["nplanes"], source = infer_nplanes(first_tif_path)
+        print(f"Inferred nplanes={ops['nplanes']} from {source}")
     return ops
 
 
