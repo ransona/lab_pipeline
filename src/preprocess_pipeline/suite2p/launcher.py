@@ -45,12 +45,26 @@ def is_meso_tif_path(first_tif_path):
     )
 
 
-def infer_nplanes_from_standard_tiff(first_tif_path):
-    """Infer plane count from rich ScanImage metadata embedded in standard TIFFs."""
+def count_meso_rois_for_tif(first_tif_path):
+    """Count ROI folders in the parent mesoscope scanpath for a given ROI TIFF."""
+    tif_path = os.path.abspath(first_tif_path)
+    roi_root = os.path.dirname(tif_path)
+    scanpath_root = os.path.dirname(roi_root)
+    rois = [
+        entry
+        for entry in sorted(os.listdir(scanpath_root))
+        if entry.startswith("R") and os.path.isdir(os.path.join(scanpath_root, entry))
+    ]
+    return max(1, len(rois))
+
+
+def infer_standard_scanimage_metadata(first_tif_path):
+    """Infer plane count and per-plane fs from ScanImage metadata embedded in standard TIFFs."""
     with tifffile.TiffFile(first_tif_path) as tif:
         si_meta = getattr(tif, "scanimage_metadata", None)
         frame_data = si_meta.get("FrameData") if isinstance(si_meta, dict) else None
         if isinstance(frame_data, dict):
+            nplanes = None
             for key in [
                 "SI.hStackManager.numFramesPerVolume",
                 "SI.hStackManager.actualNumSlices",
@@ -58,27 +72,54 @@ def infer_nplanes_from_standard_tiff(first_tif_path):
             ]:
                 value = frame_data.get(key)
                 try:
-                    nplanes = int(value)
+                    candidate = int(value)
                 except Exception:
                     continue
-                if nplanes > 0:
-                    return nplanes
+                if candidate > 0:
+                    nplanes = candidate
+                    break
+
+            if nplanes is not None:
+                scan_frame_rate = frame_data.get("SI.hRoiManager.scanFrameRate")
+                fs = None
+                try:
+                    if scan_frame_rate is not None:
+                        fs = float(scan_frame_rate) / float(nplanes)
+                except Exception:
+                    fs = None
+                return nplanes, fs, scan_frame_rate
 
     with open(first_tif_path, "rb") as file:
         description = file.read(400000).decode("latin1", errors="ignore")
 
-    for key in ["SI.hStackManager.numFramesPerVolume", "SI.hStackManager.numSlices"]:
+    nplanes = None
+    for key in [
+        "SI.hStackManager.numFramesPerVolume",
+        "SI.hStackManager.actualNumSlices",
+        "SI.hStackManager.numSlices",
+    ]:
         match = re.search(rf"{re.escape(key)}\s*=\s*([0-9]+)", description)
         if match:
-            nplanes = int(match.group(1))
-            if nplanes > 0:
-                return nplanes
+            candidate = int(match.group(1))
+            if candidate > 0:
+                nplanes = candidate
+                break
+
+    if nplanes is not None:
+        fs = None
+        match = re.search(rf"{re.escape('SI.hRoiManager.scanFrameRate')}\s*=\s*([0-9.]+)", description)
+        if match:
+            try:
+                fs = float(match.group(1)) / float(nplanes)
+            except Exception:
+                fs = None
+        return nplanes, fs, float(match.group(1)) if match else None
 
     raise ValueError(f"Could not infer nplanes from standard TIFF metadata: {first_tif_path}")
 
 
-def infer_nplanes_from_meso_si_meta(first_tif_path):
-    """Infer plane count from the mesoscope SI_meta sidecar for P*/R* split TIFFs."""
+def infer_meso_scanimage_metadata(first_tif_path):
+    """Infer plane count and per-plane/per-ROI fs from mesoscope SI_meta sidecar data."""
     tif_path = os.path.abspath(first_tif_path)
     roi_root = os.path.dirname(tif_path)
     scanpath_root = os.path.dirname(roi_root)
@@ -98,6 +139,7 @@ def infer_nplanes_from_meso_si_meta(first_tif_path):
     else:
         raise ValueError(f"Unexpected Meta1 format in {si_meta_path}")
 
+    nplanes = None
     for key in [
         "SI.hStackManager.numFramesPerVolume",
         "SI.hStackManager.actualNumSlices",
@@ -105,20 +147,44 @@ def infer_nplanes_from_meso_si_meta(first_tif_path):
     ]:
         value = header.get(key)
         try:
-            nplanes = int(value)
+            candidate = int(value)
         except Exception:
             continue
-        if nplanes > 0:
-            return nplanes
+        if candidate > 0:
+            nplanes = candidate
+            break
 
-    raise ValueError(f"Could not infer nplanes from SI_meta.pickle: {si_meta_path}")
+    if nplanes is None:
+        raise ValueError(f"Could not infer nplanes from SI_meta.pickle: {si_meta_path}")
 
+    fs = None
+    scan_frame_rate = header.get("SI.hRoiManager.scanFrameRate")
+    nrois = count_meso_rois_for_tif(first_tif_path)
+    try:
+        if scan_frame_rate is not None:
+            fs = float(scan_frame_rate) / float(nplanes) / float(nrois)
+    except Exception:
+        fs = None
+    return nplanes, fs, scan_frame_rate, nrois
 
-def infer_nplanes(first_tif_path):
-    """Dispatch plane-count inference by raw-data topology."""
+def infer_scanimage_sampling(first_tif_path):
+    """Dispatch plane-count and fs inference by raw-data topology."""
     if is_meso_tif_path(first_tif_path):
-        return infer_nplanes_from_meso_si_meta(first_tif_path), "SI_meta.pickle"
-    return infer_nplanes_from_standard_tiff(first_tif_path), first_tif_path
+        nplanes, fs, scan_frame_rate, nrois = infer_meso_scanimage_metadata(first_tif_path)
+        details = {
+            "mode": "meso",
+            "source": "SI_meta.pickle",
+            "scan_frame_rate": scan_frame_rate,
+            "nrois": nrois,
+        }
+        return nplanes, fs, details
+    nplanes, fs, scan_frame_rate = infer_standard_scanimage_metadata(first_tif_path)
+    details = {
+        "mode": "standard",
+        "source": first_tif_path,
+        "scan_frame_rate": scan_frame_rate,
+    }
+    return nplanes, fs, details
 
 
 def resolve_first_tif_path(data_path):
@@ -138,12 +204,26 @@ def resolve_first_tif_path(data_path):
 
 
 def load_ops_with_inferred_nplanes(config_path, all_tif_paths):
-    """Load Suite2p ops and optionally populate nplanes from raw TIFF metadata."""
+    """Load Suite2p ops and optionally populate nplanes/fs from raw ScanImage metadata."""
     ops = np.load(config_path, allow_pickle=True).item()
     if ops.get("nplanes", 1) == 0:
         first_tif_path = resolve_first_tif_path(all_tif_paths[0])
-        ops["nplanes"], source = infer_nplanes(first_tif_path)
-        print(f"Inferred nplanes={ops['nplanes']} from {source}")
+        ops["nplanes"], inferred_fs, details = infer_scanimage_sampling(first_tif_path)
+        print(f"Inferred nplanes={ops['nplanes']} from {details['source']}")
+        if inferred_fs is not None:
+            ops["fs"] = float(inferred_fs)
+            if details["mode"] == "meso":
+                print(
+                    "Inferred fs="
+                    f"{ops['fs']} as scanFrameRate({details['scan_frame_rate']})"
+                    f" / nplanes({ops['nplanes']}) / nrois({details['nrois']})"
+                )
+            else:
+                print(
+                    "Inferred fs="
+                    f"{ops['fs']} as scanFrameRate({details['scan_frame_rate']})"
+                    f" / nplanes({ops['nplanes']})"
+                )
     return ops
 
 
@@ -194,6 +274,12 @@ def replace_file(src, dst):
     shutil.copy2(src, dst)
 
 
+def remove_tree_if_exists(path):
+    """Remove a directory tree when present."""
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
 def move_red_channel_binary(red_reg_file, plane_save_dir):
     """Move the red-channel binary into the ch2 output tree."""
     local_reg_file = os.path.join(plane_save_dir, "data.bin")
@@ -231,8 +317,30 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
     """Preserve registration-derived metadata while applying extraction settings."""
     ops = registration_ops.copy()
 
+    # Suite2p "config" files are often saved full ops dicts from prior runs rather
+    # than minimal clean configs. Runtime-derived fields from those saved ops can
+    # silently conflict with the freshly registered binary we are about to reopen
+    # for extraction-only runs. In particular, stale nframes/badframes/reg_file
+    # values can produce shape mismatches inside Suite2p ROI detection.
+    protected_runtime_keys = {
+        "data_path",
+        "save_path0",
+        "fast_disk",
+        "save_folder",
+        "subfolders",
+        "nframes",
+        "badframes",
+        "reg_file",
+        "reg_file_chan2",
+        "raw_file",
+        "raw_file_chan2",
+        "ops_path",
+        "save_path",
+        "date_proc",
+    }
+
     for key, value in extraction_ops.items():
-        if key not in ["data_path", "save_path0", "fast_disk", "save_folder", "subfolders"]:
+        if key not in protected_runtime_keys:
             ops[key] = value
 
     return ops
@@ -273,6 +381,12 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
 
 def run_shared_registration(all_tif_paths, output_path, registration_config_path):
     """Register once on ch1 and write canonical binaries for both channels."""
+    # The shared-registration path always forces a fresh registration pass.
+    # If a prior partial two-channel run left stale per-plane ops/binaries behind,
+    # Suite2p will try to reuse them and can fail before it rebuilds chan2 paths.
+    remove_tree_if_exists(os.path.join(output_path, "suite2p"))
+    remove_tree_if_exists(os.path.join(output_path, "ch2"))
+
     ops = load_ops_with_inferred_nplanes(registration_config_path, all_tif_paths)
     ops["save_mat"] = False
     ops["functional_chan"] = 1

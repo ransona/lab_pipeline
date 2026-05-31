@@ -15,6 +15,24 @@ DEFAULT_QUEUE_PATH = '/data/common/queues/step1/'
 DEBUG_QUEUE_PATH = '/data/common/queues/debug/'
 
 
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+def queue_log_path(queue_path):
+    return os.path.join(queue_path, 'qlistener-log.txt')
+
+
 def detect_gpus():
     try:
         import torch
@@ -31,10 +49,24 @@ def detect_gpus():
     except Exception as e:
         return 0, [], f'PyTorch GPU detection failed: {e}'
 
+
+def gpu_check_is_soft_failure(gpu_error):
+    if not gpu_error:
+        return False
+    soft_markers = (
+        'Unable to import torch',
+        'torch.cuda.is_available() returned False',
+    )
+    return any(marker in gpu_error for marker in soft_markers)
+
 class JobScheduler:
     def __init__(self):
         self.last_30_jobs = []  # Rolling list of last 30 jobs, (runtime, user)
         self.user_runtime = {}  # User cumulative runtime in the last 30 jobs
+
+    @staticmethod
+    def _normalise_runtime(value):
+        return 0.0 if abs(value) < 1e-9 else value
 
     def is_priority_job(self, filename):
         # Check if the job filename ends with "_x.pickle"
@@ -53,13 +85,15 @@ class JobScheduler:
         self.last_30_jobs.append((runtime, user))
         if len(self.last_30_jobs) > 30:
             old_runtime, old_user = self.last_30_jobs.pop(0)
-            self.user_runtime[old_user] -= old_runtime
+            self.user_runtime[old_user] = self._normalise_runtime(
+                self.user_runtime.get(old_user, 0.0) - old_runtime
+            )
 
         # Update user runtime
         if user not in self.user_runtime:
-            self.user_runtime[user] = 0
+            self.user_runtime[user] = 0.0
         self.user_runtime[user] += runtime
-        self.user_runtime[user] = round(self.user_runtime[user])
+        self.user_runtime[user] = self._normalise_runtime(self.user_runtime[user])
 
     def sort_jobs_by_priority(self, job_files, output_directory=DEFAULT_QUEUE_PATH):
         # Separate priority and regular jobs
@@ -99,7 +133,7 @@ class JobScheduler:
         output_file = os.path.join(output_directory, "user_totals.txt")
         with open(output_file, "w") as f:
             for user, runtime in sorted(self.user_runtime.items(), key=lambda x: x[1]):  # Sort all users by runtime
-                f.write(f"{user} {runtime}\n")
+                f.write(f"{user} {round(runtime, 2)}\n")
             # print(f"User priority list written to {output_file}")
 
         # Sort jobs within each user's group by submission time
@@ -119,6 +153,11 @@ def main(debug=False, queue_path=None):
     scheduler = JobScheduler()
     if queue_path is None:
         queue_path = DEBUG_QUEUE_PATH if debug else DEFAULT_QUEUE_PATH
+
+    os.makedirs(queue_path, exist_ok=True)
+    log_handle = open(queue_log_path(queue_path), 'a', encoding='utf-8')
+    sys.stdout = TeeStream(sys.__stdout__, log_handle)
+    sys.stderr = TeeStream(sys.__stderr__, log_handle)
 
     restart_msg = 'Queue restarted (debug)' if debug else 'Queue restarted'
     matrix_notify.main('adamranson', restart_msg)
@@ -242,11 +281,15 @@ def main(debug=False, queue_path=None):
                         if ngpus > 0:
                             print(f'PyTorch detected {ngpus} GPU(s): {", ".join(gpu_names)}')
                         else:
-                            gpu_message = f'GPU problems: expecting at least 1 GPU, found {ngpus}'
-                            if gpu_error:
-                                gpu_message += f' ({gpu_error})'
-                            print(gpu_message)
-                            matrix_notify.main(queued_command['userID'], gpu_message)
+                            if gpu_check_is_soft_failure(gpu_error):
+                                gpu_message = f'Listener GPU check skipped: {gpu_error}'
+                                print(gpu_message)
+                            else:
+                                gpu_message = f'GPU problems: expecting at least 1 GPU, found {ngpus}'
+                                if gpu_error:
+                                    gpu_message += f' ({gpu_error})'
+                                print(gpu_message)
+                                matrix_notify.main(queued_command['userID'], gpu_message)
 
                     # make the output directory if it doesn't already exist (will be first expID if several are being run through suite2p together)
                         animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(queued_command['userID'], allExps[0])

@@ -6,6 +6,7 @@ import runpy
 import sys
 
 from preprocess_pipeline.shared import matrix_notify, paths
+from preprocess_pipeline.step1 import runtime
 
 
 CONFIG_ROOT = '/data/common/configs/s2p_configs'
@@ -214,6 +215,7 @@ def run_step1_batch_universal(step1_config):
     jump_queue = step1_config.get('jump_queue', False)
     run_on = step1_config.get('run_on', 'server')
     queue_name = step1_config.get('queue', 'step1')
+    local_repository_root = step1_config.get('local_repository_root')
 
     username = getpass.getuser()
     if user_id != 'machine-pipeline-access' and username != user_id:
@@ -222,22 +224,158 @@ def run_step1_batch_universal(step1_config):
             'another users data folder'
         )
 
-    first_exp = exp_ids[0][0] if isinstance(exp_ids[0], list) else exp_ids[0]
-    _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
-    topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
-    suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
-    _validate_plan_configs(user_id, suite2p_plan, runs2p)
+    with paths.local_repository_context(local_repository_root):
+        first_exp = exp_ids[0][0] if isinstance(exp_ids[0], list) else exp_ids[0]
+        _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
+        topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
+        suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
+        _validate_plan_configs(user_id, suite2p_plan, runs2p)
 
-    queue_path = _resolve_queue_path(run_on, queue_name)
+        common_config = {
+            'runhabituate': runhabituate,
+            'settings': settings,
+            'run_on': run_on,
+            'queue': queue_name,
+            'topology': topology,
+            'suite2p_plan': suite2p_plan,
+            'suite2p_config': suite2p_config,
+            **(
+                {'suite2p_env': step1_config['suite2p_env']}
+                if 'suite2p_env' in step1_config
+                else {}
+            ),
+            **(
+                {'local_repository_root': local_repository_root}
+                if local_repository_root
+                else {}
+            ),
+        }
 
-    for exp_id in exp_ids:
-        if isinstance(exp_id, str):
-            print('Adding expID:' + exp_id + ' to the queue')
-            now = datetime.now()
-            command_filename = _command_filename(now, user_id, exp_id, jump_queue)
-            command = _build_command(
-                command_filename, user_id, exp_id, runs2p, rundlc, runfitpupil
+        if local_repository_root:
+            local_log_root = os.path.join(local_repository_root, "_pipeline_jobs")
+            os.makedirs(local_log_root, exist_ok=True)
+            for exp_id in exp_ids:
+                if isinstance(exp_id, str):
+                    print('Running local expID:' + exp_id)
+                    now = datetime.now()
+                    command_filename = _command_filename(now, user_id, exp_id, False)
+                    runtime.run_preprocess_step1_universal(
+                        command_filename,
+                        user_id,
+                        exp_id,
+                        runs2p,
+                        rundlc,
+                        runfitpupil,
+                        queued_command={
+                            'job_type': 'step1_universal',
+                            'command': '',
+                            'userID': user_id,
+                            'expID': exp_id,
+                            'config': {
+                                **common_config,
+                                'runs2p': runs2p,
+                                'rundlc': rundlc,
+                                'runfitpupil': runfitpupil,
+                            },
+                        },
+                        queue_path=local_log_root,
+                    )
+                    continue
+
+                print(
+                    'Running local combined experiment with base expID: ' + exp_id[0]
+                )
+                _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
+                all_exp_ids = ','.join(exp_id)
+                now = datetime.now()
+                command_filename = _command_filename(now, user_id, exp_id[0], False)
+                runtime.run_preprocess_step1_universal(
+                    command_filename,
+                    user_id,
+                    all_exp_ids,
+                    runs2p,
+                    False,
+                    False,
+                    queued_command={
+                        'job_type': 'step1_universal',
+                        'command': '',
+                        'userID': user_id,
+                        'expID': exp_id,
+                        'config': {
+                            **common_config,
+                            'runs2p': runs2p,
+                            'rundlc': False,
+                            'runfitpupil': False,
+                            'runhabituate': False,
+                        },
+                    },
+                    queue_path=local_log_root,
+                )
+                for exp_id_sub in exp_id:
+                    now = datetime.now()
+                    command_filename = _command_filename(now, user_id, exp_id_sub, False)
+                    runtime.run_preprocess_step1_universal(
+                        command_filename,
+                        user_id,
+                        exp_id_sub,
+                        False,
+                        rundlc,
+                        runfitpupil,
+                        queued_command={
+                            'job_type': 'step1_universal',
+                            'command': '',
+                            'userID': user_id,
+                            'expID': exp_id_sub,
+                            'config': {
+                                **common_config,
+                                'runs2p': False,
+                                'rundlc': rundlc,
+                                'runfitpupil': runfitpupil,
+                            },
+                        },
+                        queue_path=local_log_root,
+                    )
+            return
+
+        queue_path = _resolve_queue_path(run_on, queue_name)
+
+        for exp_id in exp_ids:
+            if isinstance(exp_id, str):
+                print('Adding expID:' + exp_id + ' to the queue')
+                now = datetime.now()
+                command_filename = _command_filename(now, user_id, exp_id, jump_queue)
+                command = _build_command(
+                    command_filename, user_id, exp_id, runs2p, rundlc, runfitpupil
+                )
+                queued_command = _queue_single_job(
+                    command_filename,
+                    queue_path,
+                    user_id,
+                    exp_id,
+                    command,
+                    {
+                        **common_config,
+                        'runs2p': runs2p,
+                        'rundlc': rundlc,
+                        'runfitpupil': runfitpupil,
+                    },
+                )
+                _notify_queue_position(queued_command['userID'], queued_command['expID'], queue_path)
+                continue
+
+            print(
+                'You are combining experiments into a single suite2p run - if this is not '
+                'intentional check your expID list'
             )
+            print(
+                'Adding expID:' + exp_id[0]
+                + " to the queue as the base experiment of a 'combined experiment' suite2p run"
+            )
+            _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
+            all_exp_ids = ','.join(exp_id)
+            now = datetime.now()
+            command_filename = _command_filename(now, user_id, exp_id[0], jump_queue)
+            command = _build_command(command_filename, user_id, all_exp_ids, runs2p, False, False)
             queued_command = _queue_single_job(
                 command_filename,
                 queue_path,
@@ -245,101 +383,41 @@ def run_step1_batch_universal(step1_config):
                 exp_id,
                 command,
                 {
+                    **common_config,
                     'runs2p': runs2p,
-                    'rundlc': rundlc,
-                    'runfitpupil': runfitpupil,
-                    'runhabituate': runhabituate,
-                    'settings': settings,
-                    'run_on': run_on,
-                    'queue': queue_name,
-                    'topology': topology,
-                    'suite2p_plan': suite2p_plan,
-                    'suite2p_config': suite2p_config,
-                    **(
-                        {'suite2p_env': step1_config['suite2p_env']}
-                        if 'suite2p_env' in step1_config
-                        else {}
-                    ),
+                    'rundlc': False,
+                    'runfitpupil': False,
+                    'runhabituate': False,
                 },
             )
-            _notify_queue_position(queued_command['userID'], queued_command['expID'], queue_path)
-            continue
+            _notify_queue_position(queued_command['userID'], queued_command['expID'][0], queue_path)
 
-        print(
-            'You are combining experiments into a single suite2p run - if this is not '
-            'intentional check your expID list'
-        )
-        print(
-            'Adding expID:' + exp_id[0]
-            + " to the queue as the base experiment of a 'combined experiment' suite2p run"
-        )
-        _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
-        all_exp_ids = ','.join(exp_id)
-        now = datetime.now()
-        command_filename = _command_filename(now, user_id, exp_id[0], jump_queue)
-        command = _build_command(command_filename, user_id, all_exp_ids, runs2p, False, False)
-        queued_command = _queue_single_job(
-            command_filename,
-            queue_path,
-            user_id,
-            exp_id,
-            command,
-            {
-                'runs2p': runs2p,
-                'rundlc': False,
-                'runfitpupil': False,
-                'runhabituate': False,
-                'settings': settings,
-                'run_on': run_on,
-                'topology': topology,
-                'suite2p_plan': suite2p_plan,
-                'suite2p_config': suite2p_config,
-                **(
-                    {'suite2p_env': step1_config['suite2p_env']}
-                    if 'suite2p_env' in step1_config
-                    else {}
-                ),
-            },
-        )
-        _notify_queue_position(queued_command['userID'], queued_command['expID'][0], queue_path)
-
-        for exp_id_sub in exp_id:
-            print(
-                'Adding expID:' + exp_id_sub
-                + ' to the queue for non-combined processing of non-suite2p experiment data'
-            )
-            now = datetime.now()
-            command_filename = _command_filename(now, user_id, exp_id_sub, jump_queue)
-            command = _build_command(
-                command_filename, user_id, exp_id_sub, False, rundlc, runfitpupil
-            )
-            queued_command = _queue_single_job(
-                command_filename,
-                queue_path,
-                user_id,
-                exp_id_sub,
-                command,
-                {
-                    'runs2p': False,
-                    'rundlc': rundlc,
-                    'runfitpupil': runfitpupil,
-                    'runhabituate': runhabituate,
-                    'settings': settings,
-                    'run_on': run_on,
-                    'queue': queue_name,
-                    'topology': topology,
-                    'suite2p_plan': suite2p_plan,
-                    'suite2p_config': suite2p_config,
-                    **(
-                        {'suite2p_env': step1_config['suite2p_env']}
-                        if 'suite2p_env' in step1_config
-                        else {}
-                    ),
-                },
-            )
-            _notify_queue_position(
-                queued_command['userID'], queued_command['expID'], queue_path
-            )
+            for exp_id_sub in exp_id:
+                print(
+                    'Adding expID:' + exp_id_sub
+                    + ' to the queue for non-combined processing of non-suite2p experiment data'
+                )
+                now = datetime.now()
+                command_filename = _command_filename(now, user_id, exp_id_sub, jump_queue)
+                command = _build_command(
+                    command_filename, user_id, exp_id_sub, False, rundlc, runfitpupil
+                )
+                queued_command = _queue_single_job(
+                    command_filename,
+                    queue_path,
+                    user_id,
+                    exp_id_sub,
+                    command,
+                    {
+                        **common_config,
+                        'runs2p': False,
+                        'rundlc': rundlc,
+                        'runfitpupil': runfitpupil,
+                    },
+                )
+                _notify_queue_position(
+                    queued_command['userID'], queued_command['expID'], queue_path
+                )
 
 
 def main():
