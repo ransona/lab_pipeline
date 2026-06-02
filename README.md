@@ -22,12 +22,20 @@ The repo is organised around workflow, not around old script-vs-library splits:
 
 The usual workflow is:
 
-1. Pick a config in `configs/examples/`, `configs/debug/`, or `configs/local/`.
-2. Edit `userID`, `expIDs`, and the relevant config fields.
-3. Run the config directly with `python`.
-4. Watch or inspect the job with the queue GUI if it was submitted to the queue.
+1. Open the queue GUI.
+2. Build or load a Step 1 config.
+3. Submit Step 1 from the GUI.
+4. Run Step 2 directly once Step 1 has finished.
 
-Step 1 config files are self-runnable and submit jobs when executed:
+The queue GUI is the default Step 1 submission path.
+
+Launch it with:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
+```
+
+Step 1 config files are still self-runnable if you want to bypass the GUI:
 
 ```bash
 python /home/[username]/code/lab_pipeline/configs/examples/config_example_run_step1_standard.py
@@ -43,20 +51,25 @@ python /home/[username]/code/lab_pipeline/configs/debug/config_example_run_step2
 
 ## Queue And Jobs
 
-Step 1 jobs are added by running a Step 1 config file. The config decides whether the job goes to the normal queue or the debug queue.
+The queue GUI is the standard way to add Step 1 jobs. It can also inspect queued jobs, show the queue log, and remove your own queued jobs.
+
+Step 1 queue target:
 
 - normal queue:
   - leave `step1_config["queue"]` unset, or set it to `"step1"`
 - debug queue:
   - set `step1_config["queue"] = "debug"`
 
-The queue GUI is for monitoring, inspecting, and removing queued jobs. It does not create jobs by itself.
+From the GUI:
 
-Launch the queue GUI with:
+1. Open the `Step 1` tab.
+2. Add one or more `expIDs`.
+3. Wait for the experiment summary to appear.
+4. Pick the correct Suite2p config form for the detected topology.
+5. Leave the queue selector on `Normal` or switch it to `Debug`.
+6. Click `Submit Step 1 Job`.
 
-```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
-```
+Step 2 is not queued. The `Step 2` tab is for building the config, but Step 2 itself still runs directly from the config file.
 
 If you need the listener manually, the new queue listener can be run with:
 
@@ -92,6 +105,14 @@ Eye-check viewer:
 ```bash
 /opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py
 ```
+
+Windows launch helpers are in:
+
+```text
+windows_launchers/
+```
+
+Those `.bat` files assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If that inference does not work, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME` manually.
 
 ## Step 1 Configs
 
@@ -247,6 +268,7 @@ The GUI in `apps/qview.py` can build these forms for you.
 ## Step 2 Configs
 
 Step 2 runs directly, not through the queue listener.
+You can assemble the Step 2 config in the GUI, but the actual run still happens by executing the config file itself.
 
 Typical fields:
 

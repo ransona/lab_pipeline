@@ -2,6 +2,7 @@ from matrix_client.client import MatrixClient
 from matrix_client.api import MatrixHttpApi
 import json
 import time
+import traceback
 from datetime import datetime, timedelta
 
 
@@ -29,7 +30,7 @@ def load_token():
         return None
 
 def login_and_save_token():
-    print("Making token")
+    print("Element notification: creating Matrix token")
     with open(password_file_path, 'r') as file:
         bot_password = file.read()
     
@@ -47,15 +48,18 @@ def main(target_user, msg, group=''):
         try:
             client = MatrixClient(MATRIX_SERVER, token=token)
             api = CustomMatrixHttpApi(MATRIX_SERVER, token=token)
-        except:
+        except Exception:
             token = login_and_save_token()
             try:
                 client = MatrixClient(MATRIX_SERVER, token=token)
                 api = CustomMatrixHttpApi(MATRIX_SERVER, token=token)
-            except:
-                print('Error: could not login to matrix')          
+            except Exception as exc:
+                print(f'Element notification error: could not login to Matrix ({exc})')
+                traceback.print_exc()
+                return
             
 
+        original_target_user = target_user
         target_user = lookup_user(target_user)
         rooms = client.get_rooms()
         msg_sent = False
@@ -65,6 +69,12 @@ def main(target_user, msg, group=''):
             group = 'Server queue notifications'
 
         if group == '':
+            if not target_user:
+                print(
+                    "Element notification skipped: no Matrix username mapped for "
+                    f"Ubuntu user '{original_target_user}'"
+                )
+                return
             target_room = None
             for room_id, room in rooms.items():
                 members = room.get_joined_members()
@@ -81,9 +91,13 @@ def main(target_user, msg, group=''):
                     msg_sent = True
 
         if not msg_sent:
-            print("WARNING: YOU DO NOT HAVE AN ELEMENT USERNAME PAIRED TO YOUR UBUNTU USERNAME - PLEASE REQUEST THIS FOR ELEMENT NOTIFICATIONS")
-    except:
-        print('####### UNHANDLED ELEMENT ERROR ##############')
+            print(
+                "Element notification warning: no matching room found "
+                f"for user='{original_target_user}', group='{group}'"
+            )
+    except Exception as exc:
+        print(f"Element notification failed; pipeline will continue: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
 
    
 

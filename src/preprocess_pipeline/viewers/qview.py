@@ -1,18 +1,23 @@
 import getpass
+import contextlib
 import json
 import os
 import pickle
 import re
 import sys
+import traceback
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import tifffile
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
+from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths
+from preprocess_pipeline.step1 import split_combined_s2p
 from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 from preprocess_pipeline.step2.run_batch import run_step2_batch
 
@@ -259,6 +264,84 @@ def describe_experiment(user_id: str, exp_id: str) -> ExperimentDescriptor:
     )
 
 
+def _timeline_duration_seconds(user_id: str, exp_id: str) -> Optional[float]:
+    _, _, _, _, exp_dir_raw = paths.find_paths(user_id, exp_id)
+    timeline_path = Path(exp_dir_raw) / f"{exp_id}_Timeline.mat"
+    if not timeline_path.exists():
+        return None
+    timeline = loadmat(str(timeline_path))["timelineSession"]
+    timeline_time = np.squeeze(timeline["time"][0][0])
+    if timeline_time.size < 2:
+        return None
+    return float(timeline_time[-1] - timeline_time[0])
+
+
+def _combined_suite2p_path(channel_root: str) -> str:
+    suite2p_combined_path = os.path.join(channel_root, "suite2p_combined")
+    if os.path.isdir(suite2p_combined_path):
+        return suite2p_combined_path
+    suite2p_path = os.path.join(channel_root, "suite2p")
+    if os.path.isdir(suite2p_path):
+        return suite2p_path
+    raise FileNotFoundError(f"Missing suite2p or suite2p_combined folder: {channel_root}")
+
+
+def inspect_combined_split_sources(user_id: str, exp_id: str) -> list[dict]:
+    _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+    split_roots = split_combined_s2p.discover_split_roots(exp_dir_processed)
+    if not split_roots:
+        raise FileNotFoundError(f"No Suite2p split roots found under {exp_dir_processed}")
+
+    split_root = split_roots[0]
+    channel_root = split_combined_s2p.discover_channel_roots(split_root)[0]
+    suite2p_path = _combined_suite2p_path(channel_root)
+    plane_dirs = sorted(Path(suite2p_path).glob("plane*"))
+    if not plane_dirs:
+        raise FileNotFoundError(f"No plane folders found in {suite2p_path}")
+
+    plane0_ops = np.load(plane_dirs[0] / "ops.npy", allow_pickle=True).item()
+    layout_mode = split_combined_s2p.infer_layout_mode_from_split_root(split_root)
+    source_exp_ids = [
+        split_combined_s2p.extract_exp_id_from_data_path(data_path, layout_mode)
+        for data_path in plane0_ops["data_path"]
+    ]
+    frames_per_folder = [int(frame_count) for frame_count in plane0_ops.get("frames_per_folder", [])]
+
+    rows = []
+    for index, source_exp_id in enumerate(source_exp_ids):
+        duration = _timeline_duration_seconds(user_id, source_exp_id)
+        frames = frames_per_folder[index] if index < len(frames_per_folder) else None
+        rows.append(
+            {
+                "source_exp_id": source_exp_id,
+                "frames": frames,
+                "timeline_seconds": duration,
+                "split_root": split_root,
+                "suite2p_path": suite2p_path,
+                "warnings": [],
+            }
+        )
+    if len(frames_per_folder) != len(source_exp_ids):
+        warning = (
+            f"metadata mismatch: data_path has {len(source_exp_ids)} source experiment(s), "
+            f"but frames_per_folder has {len(frames_per_folder)} value(s)"
+        )
+        if not rows:
+            rows.append(
+                {
+                    "source_exp_id": "?",
+                    "frames": None,
+                    "timeline_seconds": None,
+                    "split_root": split_root,
+                    "suite2p_path": suite2p_path,
+                    "warnings": [warning],
+                }
+            )
+        else:
+            rows[0]["warnings"].append(warning)
+    return rows
+
+
 class EditableConfigCombo(QtWidgets.QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -270,6 +353,63 @@ class EditableConfigCombo(QtWidgets.QComboBox):
 
     def set_value(self, value: str):
         self.setCurrentText(value or "")
+
+
+class EmittingTextStream:
+    def __init__(self, callback):
+        self.callback = callback
+
+    def write(self, text):
+        if text:
+            self.callback(text)
+
+    def flush(self):
+        pass
+
+
+class Step2Worker(QtCore.QObject):
+    output = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal()
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, config: dict):
+        super().__init__()
+        self.config = config
+
+    def run(self):
+        stream = EmittingTextStream(self.output.emit)
+        try:
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+                run_step2_batch(self.config)
+        except Exception as exc:
+            self.output.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+        else:
+            self.finished.emit()
+
+
+class SplitWorker(QtCore.QObject):
+    output = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal()
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, user_id: str, exp_id: str):
+        super().__init__()
+        self.user_id = user_id
+        self.exp_id = exp_id
+
+    def run(self):
+        stream = EmittingTextStream(self.output.emit)
+        try:
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+                split_combined_s2p.split_combined_suite2p_for_experiment(
+                    self.user_id, self.exp_id
+                )
+        except Exception as exc:
+            self.output.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+        else:
+            self.finished.emit()
 
 
 class QueueTab(QtWidgets.QWidget):
@@ -304,9 +444,18 @@ class QueueTab(QtWidgets.QWidget):
         top_splitter.addWidget(self._group_box("Jobs in Queue", self.queue_list))
         self.prioritised_jobs_list = QtWidgets.QListWidget()
         top_splitter.addWidget(self._group_box("Prioritized Jobs", self.prioritised_jobs_list))
+
+        right_panel = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.completed_jobs_list = QtWidgets.QListWidget()
+        self.failed_jobs_list = QtWidgets.QListWidget()
+        right_panel.addWidget(self._group_box("Completed Jobs", self.completed_jobs_list))
+        right_panel.addWidget(self._group_box("Failed Jobs", self.failed_jobs_list))
+        right_panel.setSizes([160, 160])
+        top_splitter.addWidget(right_panel)
+
         self.user_totals_list = QtWidgets.QListWidget()
         top_splitter.addWidget(self._group_box("User Compute Times", self.user_totals_list))
-        top_splitter.setSizes([360, 360, 180])
+        top_splitter.setSizes([360, 360, 360, 180])
         main_splitter.addWidget(top_splitter)
 
         self.log_list = QtWidgets.QListWidget()
@@ -318,6 +467,8 @@ class QueueTab(QtWidgets.QWidget):
         self.remove_button.clicked.connect(self.remove_selected_job)
         self.queue_list.itemSelectionChanged.connect(self._remember_selection)
         self.queue_list.itemDoubleClicked.connect(self.show_selected_job_config)
+        self.completed_jobs_list.itemDoubleClicked.connect(self.show_completed_job_config)
+        self.failed_jobs_list.itemDoubleClicked.connect(self.show_failed_job_config)
 
     def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox(title)
@@ -328,6 +479,7 @@ class QueueTab(QtWidgets.QWidget):
     def _connect_timers(self):
         self.queue_timer = QtCore.QTimer(self)
         self.queue_timer.timeout.connect(self.refresh_queue_list)
+        self.queue_timer.timeout.connect(self.refresh_completed_failed_jobs)
         self.queue_timer.start(QUEUE_REFRESH_MS)
 
         self.priority_timer = QtCore.QTimer(self)
@@ -352,6 +504,7 @@ class QueueTab(QtWidgets.QWidget):
         self.refresh_queue_list()
         self.refresh_prioritised_jobs()
         self.refresh_user_totals()
+        self.refresh_completed_failed_jobs()
 
     def _current_log_path(self) -> Optional[Path]:
         path = _queue_listener_log_path(self.current_queue_directory)
@@ -366,8 +519,22 @@ class QueueTab(QtWidgets.QWidget):
         lines = _read_tail_lines(path, INITIAL_LOG_LINES)
         self.current_log_size = path.stat().st_size
         for line in lines:
-            self.log_list.addItem(line.rstrip())
+            self._add_log_line(line.rstrip())
         self.log_list.scrollToBottom()
+
+    def _add_log_line(self, line: str):
+        item = QtWidgets.QListWidgetItem()
+        display_text = line
+        bold = False
+        if line.startswith("**"):
+            bold = True
+            display_text = line[2:].lstrip()
+        item.setText(display_text)
+        if bold:
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        self.log_list.addItem(item)
 
     def _parse_displayed_job_name(self, display_text: str) -> Optional[str]:
         match = re.match(r"^[* ]+\d{3}\.\s+(.*)$", display_text)
@@ -391,26 +558,99 @@ class QueueTab(QtWidgets.QWidget):
             queued_command = pickle.load(handle)
         return job_name, queued_command
 
+    def _load_job_from_list(self, list_widget: QtWidgets.QListWidget, subdirectory: str):
+        items = list_widget.selectedItems()
+        if not items:
+            raise ValueError("Select a job first.")
+        job_name = items[0].text()
+        job_path = self.current_queue_directory / subdirectory / job_name
+        if not job_path.exists():
+            raise FileNotFoundError("Selected job file no longer exists.")
+        with job_path.open("rb") as handle:
+            queued_command = pickle.load(handle)
+        return job_name, queued_command
+
     def show_selected_job_config(self):
         try:
             job_name, queued_command = self._load_selected_job()
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Show Job Config", str(exc))
             return
+        self._show_job_config_dialog(job_name, queued_command)
 
+    def show_completed_job_config(self):
+        try:
+            job_name, queued_command = self._load_job_from_list(self.completed_jobs_list, "completed")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Show Completed Job Config", str(exc))
+            return
+        self._show_job_config_dialog(job_name, queued_command)
+
+    def show_failed_job_config(self):
+        try:
+            job_name, queued_command = self._load_job_from_list(self.failed_jobs_list, "failed")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Show Failed Job Config", str(exc))
+            return
+        self._show_job_config_dialog(job_name, queued_command)
+
+    def _show_job_config_dialog(self, job_name: str, queued_command: dict):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle(f"Queued Job Config: {job_name}")
-        dialog.resize(900, 700)
+        dialog.setWindowTitle(f"Job Config: {job_name}")
+        dialog.resize(1000, 850)
         layout = QtWidgets.QVBoxLayout(dialog)
-        text = QtWidgets.QPlainTextEdit(dialog)
-        text.setReadOnly(True)
-        text.setPlainText(json.dumps(queued_command, indent=2, default=str))
-        layout.addWidget(text)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, dialog)
+
+        config_text = QtWidgets.QPlainTextEdit(dialog)
+        config_text.setReadOnly(True)
+        config_text.setPlainText(json.dumps(queued_command, indent=2, default=str))
+        splitter.addWidget(self._group_box("Config", config_text))
+
+        feedback_text = QtWidgets.QPlainTextEdit(dialog)
+        feedback_text.setReadOnly(True)
+        feedback_log_path = self._job_feedback_log_path(job_name)
+        feedback_size = {"value": -1}
+
+        def refresh_feedback():
+            if not feedback_log_path.exists():
+                feedback_text.setPlainText(f"No feedback log found yet:\n{feedback_log_path}")
+                feedback_size["value"] = -1
+                return
+            current_size = feedback_log_path.stat().st_size
+            if current_size == feedback_size["value"]:
+                return
+            at_bottom = (
+                feedback_text.verticalScrollBar().value()
+                == feedback_text.verticalScrollBar().maximum()
+            )
+            feedback_text.setPlainText(
+                feedback_log_path.read_text(encoding="utf-8", errors="replace")
+            )
+            feedback_size["value"] = current_size
+            if at_bottom:
+                feedback_text.verticalScrollBar().setValue(
+                    feedback_text.verticalScrollBar().maximum()
+                )
+
+        refresh_feedback()
+        splitter.addWidget(self._group_box("Feedback", feedback_text))
+        splitter.setSizes([360, 490])
+        layout.addWidget(splitter)
+
+        timer = QtCore.QTimer(dialog)
+        timer.timeout.connect(refresh_feedback)
+        timer.start(LOG_REFRESH_MS)
+
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close, parent=dialog)
         buttons.rejected.connect(dialog.reject)
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
         dialog.exec()
+
+    def _job_feedback_log_path(self, job_name: str) -> Path:
+        log_name = job_name[:-7] + ".txt" if job_name.endswith(".pickle") else job_name + ".txt"
+        return self.current_queue_directory / "logs" / log_name
 
     def refresh_queue_list(self):
         current_selection = self.selected_job_name
@@ -434,6 +674,23 @@ class QueueTab(QtWidgets.QWidget):
         if file_path.exists():
             for line in file_path.read_text(encoding="utf-8", errors="replace").splitlines():
                 self.prioritised_jobs_list.addItem(line)
+
+    def _refresh_job_history_list(self, list_widget: QtWidgets.QListWidget, subdirectory: str):
+        list_widget.clear()
+        history_dir = self.current_queue_directory / subdirectory
+        if not history_dir.exists():
+            return
+        jobs = sorted(
+            history_dir.glob("*.pickle"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:50]
+        for job_path in jobs:
+            list_widget.addItem(job_path.name)
+
+    def refresh_completed_failed_jobs(self):
+        self._refresh_job_history_list(self.completed_jobs_list, "completed")
+        self._refresh_job_history_list(self.failed_jobs_list, "failed")
 
     def refresh_user_totals(self):
         self.user_totals_list.clear()
@@ -462,7 +719,7 @@ class QueueTab(QtWidgets.QWidget):
         self.current_log_size = current_size
         text = data.decode("utf-8", errors="replace")
         for line in text.splitlines():
-            self.log_list.addItem(line.rstrip())
+            self._add_log_line(line.rstrip())
         while self.log_list.count() > MAX_LOG_LINES:
             self.log_list.takeItem(0)
         if auto_scroll:
@@ -1074,6 +1331,8 @@ class Step2Tab(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.username = getpass.getuser()
+        self.step2_thread = None
+        self.step2_worker = None
         self._build_ui()
 
     def _build_ui(self):
@@ -1087,6 +1346,10 @@ class Step2Tab(QtWidgets.QWidget):
         toolbar.addStretch(1)
         toolbar.addWidget(self.run_button)
         outer.addLayout(toolbar)
+
+        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        controls_widget = QtWidgets.QWidget()
+        controls_layout = QtWidgets.QVBoxLayout(controls_widget)
 
         form = QtWidgets.QFormLayout()
         self.user_edit = QtWidgets.QLineEdit(self.username)
@@ -1128,11 +1391,26 @@ class Step2Tab(QtWidgets.QWidget):
             )
         )
         form.addRow("settings JSON", self.settings_json)
-        outer.addLayout(form)
+        controls_layout.addLayout(form)
+        controls_layout.addStretch(1)
+
+        self.step2_output = QtWidgets.QPlainTextEdit()
+        self.step2_output.setReadOnly(True)
+
+        main_splitter.addWidget(controls_widget)
+        main_splitter.addWidget(self._group_box("Step 2 Output", self.step2_output))
+        main_splitter.setSizes([520, 720])
+        outer.addWidget(main_splitter)
 
         self.load_preset_button.clicked.connect(self.load_preset)
         self.save_preset_button.clicked.connect(self.save_preset)
         self.run_button.clicked.connect(self.run_step2)
+
+    def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
+        box = QtWidgets.QGroupBox(title)
+        box_layout = QtWidgets.QVBoxLayout(box)
+        box_layout.addWidget(widget)
+        return box
 
     def _build_config(self) -> dict:
         user_id = self.user_edit.text().strip()
@@ -1207,10 +1485,213 @@ class Step2Tab(QtWidgets.QWidget):
     def run_step2(self):
         try:
             config = self._build_config()
-            run_step2_batch(config)
-            QtWidgets.QMessageBox.information(self, "Step 2", "Step 2 processing started.")
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Step 2", str(exc))
+            return
+
+        if self.step2_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Step 2", "Step 2 is already running.")
+            return
+
+        self.step2_output.clear()
+        self._append_step2_output("** Starting Step 2\n")
+        self.run_button.setEnabled(False)
+
+        self.step2_thread = QtCore.QThread(self)
+        self.step2_worker = Step2Worker(config)
+        self.step2_worker.moveToThread(self.step2_thread)
+        self.step2_thread.started.connect(self.step2_worker.run)
+        self.step2_worker.output.connect(self._append_step2_output)
+        self.step2_worker.finished.connect(self._step2_finished)
+        self.step2_worker.failed.connect(self._step2_failed)
+        self.step2_worker.finished.connect(self.step2_thread.quit)
+        self.step2_worker.failed.connect(self.step2_thread.quit)
+        self.step2_thread.finished.connect(self.step2_worker.deleteLater)
+        self.step2_thread.finished.connect(self.step2_thread.deleteLater)
+        self.step2_thread.finished.connect(self._clear_step2_worker)
+        self.step2_thread.start()
+
+    def _append_step2_output(self, text: str):
+        at_bottom = (
+            self.step2_output.verticalScrollBar().value()
+            == self.step2_output.verticalScrollBar().maximum()
+        )
+        self.step2_output.moveCursor(QtGui.QTextCursor.MoveOperation.End)
+        self.step2_output.insertPlainText(text)
+        if at_bottom:
+            self.step2_output.verticalScrollBar().setValue(
+                self.step2_output.verticalScrollBar().maximum()
+            )
+
+    def _step2_finished(self):
+        self._append_step2_output("\n** Step 2 finished without errors\n")
+        self.run_button.setEnabled(True)
+
+    def _step2_failed(self, message: str):
+        self._append_step2_output(f"\n** Step 2 failed: {message}\n")
+        self.run_button.setEnabled(True)
+
+    def _clear_step2_worker(self):
+        self.step2_thread = None
+        self.step2_worker = None
+
+
+class SplitTab(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.username = getpass.getuser()
+        self.split_thread = None
+        self.split_worker = None
+        self._build_ui()
+
+    def _build_ui(self):
+        outer = QtWidgets.QVBoxLayout(self)
+        toolbar = QtWidgets.QHBoxLayout()
+        self.expand_button = QtWidgets.QPushButton("Expand")
+        self.split_button = QtWidgets.QPushButton("Split")
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.expand_button)
+        toolbar.addWidget(self.split_button)
+        outer.addLayout(toolbar)
+
+        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
+        form = QtWidgets.QFormLayout()
+        self.user_edit = QtWidgets.QLineEdit(self.username)
+        form.addRow("userID", self.user_edit)
+        self.exp_edit = QtWidgets.QLineEdit()
+        self.exp_edit.setPlaceholderText("Combined/base expID")
+        form.addRow("combined expID", self.exp_edit)
+        left_layout.addLayout(form)
+
+        self.source_table = QtWidgets.QTableWidget(0, 3)
+        self.source_table.setHorizontalHeaderLabels(
+            ["Source expID", "Frames", "Timeline seconds"]
+        )
+        self.source_table.horizontalHeader().setStretchLastSection(True)
+        self.source_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.source_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        left_layout.addWidget(self.source_table)
+
+        self.split_output = QtWidgets.QPlainTextEdit()
+        self.split_output.setReadOnly(True)
+
+        main_splitter.addWidget(left_widget)
+        main_splitter.addWidget(self._group_box("Split Output", self.split_output))
+        main_splitter.setSizes([620, 620])
+        outer.addWidget(main_splitter)
+
+        self.expand_button.clicked.connect(self.expand_combined_experiment)
+        self.split_button.clicked.connect(self.run_split)
+
+    def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
+        box = QtWidgets.QGroupBox(title)
+        box_layout = QtWidgets.QVBoxLayout(box)
+        box_layout.addWidget(widget)
+        return box
+
+    def _split_inputs(self) -> tuple[str, str]:
+        user_id = self.user_edit.text().strip()
+        exp_id = self.exp_edit.text().strip()
+        if not user_id or not exp_id:
+            raise ValueError("userID and combined expID are required.")
+        return user_id, exp_id
+
+    def expand_combined_experiment(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            rows = inspect_combined_split_sources(user_id, exp_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Split Expand", str(exc))
+            return
+
+        self.source_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            seconds = row["timeline_seconds"]
+            seconds_text = "?" if seconds is None else f"{seconds:.2f}"
+            frames_text = "?" if row["frames"] is None else str(row["frames"])
+            values = [row["source_exp_id"], frames_text, seconds_text]
+            for col_index, value in enumerate(values):
+                self.source_table.setItem(row_index, col_index, QtWidgets.QTableWidgetItem(value))
+        self.source_table.resizeColumnsToContents()
+        if rows:
+            first = rows[0]
+            self._append_split_output(
+                f"Expanded {exp_id}\n"
+                f"Split root: {first['split_root']}\n"
+                f"Suite2p source: {first['suite2p_path']}\n"
+            )
+            warnings = [warning for row in rows for warning in row.get("warnings", [])]
+            for warning in warnings:
+                self._append_split_output(f"WARNING: {warning}\n")
+
+    def run_split(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            rows = inspect_combined_split_sources(user_id, exp_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Split", str(exc))
+            return
+
+        if any(row["frames"] is None for row in rows):
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Split",
+                "Cannot split because combined Suite2p metadata is incomplete. "
+                "Expand the experiment and check the warning in Split Output.",
+            )
+            return
+
+        if self.split_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Split", "Split is already running.")
+            return
+
+        self.split_output.clear()
+        self._append_split_output(f"** Starting split for {exp_id}\n")
+        self.expand_button.setEnabled(False)
+        self.split_button.setEnabled(False)
+
+        self.split_thread = QtCore.QThread(self)
+        self.split_worker = SplitWorker(user_id, exp_id)
+        self.split_worker.moveToThread(self.split_thread)
+        self.split_thread.started.connect(self.split_worker.run)
+        self.split_worker.output.connect(self._append_split_output)
+        self.split_worker.finished.connect(self._split_finished)
+        self.split_worker.failed.connect(self._split_failed)
+        self.split_worker.finished.connect(self.split_thread.quit)
+        self.split_worker.failed.connect(self.split_thread.quit)
+        self.split_thread.finished.connect(self.split_worker.deleteLater)
+        self.split_thread.finished.connect(self.split_thread.deleteLater)
+        self.split_thread.finished.connect(self._clear_split_worker)
+        self.split_thread.start()
+
+    def _append_split_output(self, text: str):
+        at_bottom = (
+            self.split_output.verticalScrollBar().value()
+            == self.split_output.verticalScrollBar().maximum()
+        )
+        self.split_output.moveCursor(QtGui.QTextCursor.MoveOperation.End)
+        self.split_output.insertPlainText(text)
+        if at_bottom:
+            self.split_output.verticalScrollBar().setValue(
+                self.split_output.verticalScrollBar().maximum()
+            )
+
+    def _split_finished(self):
+        self._append_split_output("\n** Split finished without errors\n")
+        self.expand_button.setEnabled(True)
+        self.split_button.setEnabled(True)
+
+    def _split_failed(self, message: str):
+        self._append_split_output(f"\n** Split failed: {message}\n")
+        self.expand_button.setEnabled(True)
+        self.split_button.setEnabled(True)
+
+    def _clear_split_worker(self):
+        self.split_thread = None
+        self.split_worker = None
 
 
 class QueueManagerWindow(QtWidgets.QMainWindow):
@@ -1222,6 +1703,7 @@ class QueueManagerWindow(QtWidgets.QMainWindow):
         tabs.addTab(QueueTab(), "Queue")
         tabs.addTab(Step1Tab(), "Step 1")
         tabs.addTab(Step2Tab(), "Step 2")
+        tabs.addTab(SplitTab(), "Split")
         self.setCentralWidget(tabs)
 
 

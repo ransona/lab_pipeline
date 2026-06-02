@@ -51,7 +51,7 @@ def crop_vids(userID, expID):
 
     if is_habit:
         habit_output_filename = os.path.join(exp_dir_processed, expID + habit_suffix + '.avi')
-        print(f'Cropping habituation video to {os.path.basename(habit_output_filename)}')
+        print(f'** Cropping habituation video to {os.path.basename(habit_output_filename)}')
         habit_out = cv2.VideoWriter(habit_output_filename, fourcc, fps, (habit_crop[3], habit_crop[2]))
         left_out = None
         right_out = None
@@ -139,7 +139,7 @@ def analyze_if_present(config_path, exp_dir_processed, expID, eye_label, shuffle
         print(f'Skipping {eye_label} video (file not found).')
         return
 
-    print(f'Starting {eye_label} video...')
+    print(f'** Starting {eye_label} video...')
     deeplabcut.analyze_videos(
         config_path,
         video_path,
@@ -156,7 +156,7 @@ def dlc_launcher_run(userID, expID):
     os.makedirs(exp_dir_processed, exist_ok=True)
     remove_existing_outputs(exp_dir_processed)
 
-    print('Starting cropping videos...')
+    print('** Starting cropping videos...')
     crop_vids(userID, expID)
 
     config_path = STANDARD_CONFIG_PATH
@@ -168,7 +168,7 @@ def dlc_launcher_run(userID, expID):
 
 
 def main():
-    print('Starting DLC Launcher Universal...')
+    print('** Starting DLC Launcher Universal...')
     try:
         userID = sys.argv[1]
         expID = sys.argv[2]

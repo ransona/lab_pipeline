@@ -266,7 +266,7 @@ def run_step1_batch_universal(step1_config):
             os.makedirs(local_log_root, exist_ok=True)
             for exp_id in exp_ids:
                 if isinstance(exp_id, str):
-                    print('Running local expID:' + exp_id)
+                    print('** Running local expID:' + exp_id)
                     now = datetime.now()
                     command_filename = _command_filename(now, user_id, exp_id, False)
                     runtime.run_preprocess_step1_universal(

@@ -163,7 +163,7 @@ def main(debug=False, queue_path=None):
     restart_msg = 'Queue restarted (debug)' if debug else 'Queue restarted'
     matrix_notify.main('adamranson', restart_msg)
     matrix_notify.main('adamranson', restart_msg, 'Server queue notifications')
-    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Waiting for jobs in {queue_path}...')
+    print(f'** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Waiting for jobs in {queue_path}...')
 
     try:
         while True:
@@ -277,7 +277,7 @@ def main(debug=False, queue_path=None):
                         matrix_notify.main(queued_command['userID'],'----------')
                     
                     # if the above loop through the jobs found one that is ready
-                        print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Running:')
+                        print(f'** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Running:')
                         print(queued_command['command'])
 
                         matrix_notify.main(queued_command['userID'],'Starting ' + expID)
@@ -357,17 +357,17 @@ def main(debug=False, queue_path=None):
                         except:
                         # unable to move command file
                         # this kills the queue
-                            print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Error with ' + prioritised_jobs[ijob])
+                            print(f'** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Error with ' + prioritised_jobs[ijob])
                             print('Unmovable file in the queue - please investigate')
                             print('Run time: ' + str((time.time()-start_time) / 60) + ' mins')
                             exit()
                     
                     print('#####################')
-                    print('Error with ' + prioritised_jobs[ijob])
+                    print('** Error with ' + prioritised_jobs[ijob])
                     print('Run time: ' + str((time.time()-start_time) / 60) + ' mins')
                     print('#####################')            
                 
-                print('Waiting for jobs...')
+                    print('** Waiting for jobs...')
     except Exception as e:
         print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Error caused queue to crash!')
         print('Will require queue restart!')

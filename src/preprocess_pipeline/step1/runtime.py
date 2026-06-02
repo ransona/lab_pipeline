@@ -259,7 +259,7 @@ def _run_suite2p_plan(job_id, user_id, exp_id, queued_command, queue_path=DEFAUL
             work_unit_id,
         )
 
-        print('Starting S2P launcher for work unit ' + work_unit_id + '...')
+        print('** Starting S2P launcher for work unit ' + work_unit_id + '...')
         now = datetime.now()
         print(now.strftime('%Y-%m-%d %H:%M:%S'))
         _stream_subprocess_for_job(cmd, job_id, queue_path)
@@ -308,7 +308,7 @@ def run_preprocess_step1_universal(
     queued_command=None,
     queue_path=DEFAULT_QUEUE_PATH,
 ):
-    print('Starting job: ' + jobID)
+    print('** Starting job: ' + jobID)
     print('--------------------------------------------------')
 
     if queued_command is None:
@@ -325,15 +325,15 @@ def run_preprocess_step1_universal(
         _run_suite2p_plan(jobID, userID, expID, queued_command, queue_path=queue_path)
 
     if rundlc:
-        print('Running DLC launcher...')
+        print('** Running DLC launcher...')
         _run_dlc(jobID, userID, expID, topology, queue_path=queue_path)
 
     if runfitpupil:
-        print('Running pupil fit launcher...')
+        print('** Running pupil fit launcher...')
         _run_fit_pupil(jobID, userID, expID, queue_path=queue_path)
 
     if queued_command['config'].get('runhabituate', False):
-        print('Running habituation setup processing...')
+        print('** Running habituation setup processing...')
         habituate.preprocess_habituate_run(userID, expID)
 
 

@@ -337,6 +337,8 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
         "save_folder",
         "subfolders",
         "nframes",
+        "frames_per_folder",
+        "frames_per_file",
         "badframes",
         "reg_file",
         "reg_file_chan2",
@@ -525,7 +527,7 @@ def _run_srdtrans_on_binary(plane_dir, input_filename, srdtrans_config):
         input_filename,
         encode_srdtrans_config_arg(srdtrans_config),
     ]
-    print(f"Running SRDTrans on {os.path.join(plane_dir, input_filename)}")
+    print(f"** Running SRDTrans on {os.path.join(plane_dir, input_filename)}")
     subprocess.run(cmd, check=True)
 
 
@@ -769,7 +771,7 @@ def s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans
 
 
 def main():
-    print("S2P Launcher Universal Run...")
+    print("** S2P Launcher Universal Run...")
     try:
         userID = sys.argv[1]
         expID = sys.argv[2]

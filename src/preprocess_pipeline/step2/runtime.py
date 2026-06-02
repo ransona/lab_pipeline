@@ -34,7 +34,7 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         # Process bv data
         ###########################################################
         # process bonvision related data, this includes relating bon vision time to TL time and wheel data
-        print('Starting bonvision section...')
+        print('** Starting bonvision section...')
         bonvision.run_preprocess_bonvision(userID, expID)
         
 
@@ -42,21 +42,21 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         ###########################################################
         # Process S2P data
         ###########################################################
-        print('Starting S2P section...')
+        print('** Starting S2P section...')
         preprocess_s2p.run_preprocess_s2p_universal(userID, expID)
 
     if run_ephys:
         ###########################################################
         # Process ephys data
         ###########################################################
-        print('Starting ephys section...')
+        print('** Starting ephys section...')
         preprocess_ephys.run_preprocess_ephys(userID, expID)
 
     if run_dlc_timestamp:
         ###########################################################
         # Process DLC data (timestamping)
         ###########################################################
-        print('Starting dlc timestamp section...')
+        print('** Starting dlc timestamp section...')
         preprocess_cam.preprocess_cam_run(userID, expID)
         preprocess_pupil_timestamp.preprocess_pupil_timestamp_run(userID, expID)
 
@@ -64,7 +64,7 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         ####################################################
         ### cut up ephys, eye, and ca traces into trials ###
         ####################################################
-        print('Starting trail cutting section...')
+        print('** Starting trail cutting section...')
         preprocess_cut.run_preprocess_cut(userID, expID, pre_secs, post_secs)
 
 

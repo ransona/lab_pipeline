@@ -7,12 +7,12 @@ from preprocess_pipeline.shared import paths
 from preprocess_pipeline.pupil import calibration
 
 def preprocess_pupil_timestamp_run(userID, expID):
-    print('Starting preprocess_pupil_timestamp_run...')
+    print('** Starting preprocess_pupil_timestamp_run...')
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
         exp_dir_raw = paths.find_paths(userID, expID)
     exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
-    print('Starting ' + expID)
+    print('** Starting ' + expID)
     dlc_filenames = [expID + '_eye1_leftDLC_resnet50_Trial_newMay19shuffle1_1030000.csv',
                 expID + '_eye1_rightDLC_resnet50_Trial_newMay19shuffle1_1030000.csv']
 
@@ -54,7 +54,7 @@ def preprocess_pupil_timestamp_run(userID, expID):
     else:
         print('Warning: no eye position calibration file found')
     print()
-    print('Done without errors')
+    print('** Done without errors')
 
 # for debugging:
 def main():

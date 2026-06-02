@@ -23,7 +23,7 @@ def run_step2_batch(step2_config):
 
     with paths.local_repository_context(local_repository_root):
         for expID in expIDs:
-            print('Starting expID...' + expID)
+            print('** Starting expID...' + expID)
             # save step2 ops to exp dir
             animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
             with open(os.path.join(exp_dir_processed,'step2_config.pickle'), 'wb') as f: pickle.dump(step2_config, f)  

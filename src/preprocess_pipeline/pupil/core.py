@@ -23,7 +23,7 @@ from preprocess_pipeline.shared import paths
 # 6: pupil circle fit not valid (centre out of eye, circle bigger than eye)
 
 def preprocess_pupil_run(userID, expID):
-    print('Starting preprocess_pupil_run...')
+    print('** Starting preprocess_pupil_run...')
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
         exp_dir_raw = paths.find_paths(userID, expID)
@@ -40,7 +40,7 @@ def preprocess_pupil_run(userID, expID):
     print('WARNING: pupil pupil_likelihood_threshold = 0. Set higher once model working!')
 
 
-    print('Starting ' + expID)
+    print('** Starting ' + expID)
 
     # dlc_filenames = [expID + '_eye1_leftDLC_resnet50_Trial_newMay19shuffle1_1030000.csv',
     #                 expID + '_eye1_rightDLC_resnet50_Trial_newMay19shuffle1_1030000.csv']
@@ -57,7 +57,7 @@ def preprocess_pupil_run(userID, expID):
 
     for iVid in range(0, len(dlc_filenames)):
         print()
-        print('Starting video ' + str(iVid))
+        print('** Starting video ' + str(iVid))
 
         videoPath = os.path.join(exp_dir_processed, vid_filenames[iVid])
 
@@ -426,7 +426,7 @@ def preprocess_pupil_run(userID, expID):
     
 
     print()
-    print('Done without errors')
+    print('** Done without errors')
 
 # for debugging:
 def main():

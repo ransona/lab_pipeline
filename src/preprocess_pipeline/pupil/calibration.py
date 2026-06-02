@@ -8,7 +8,7 @@ def apply_pupil_calib(userID, expIDs):
     # loop through each expID
     for expID in expIDs:
         print('################')
-        print('Starting expID: ' + expID)
+        print('** Starting expID: ' + expID)
         animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
         exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
         meta_data_path = os.path.join(processed_root,animalID,'meta')
@@ -20,7 +20,7 @@ def apply_pupil_calib(userID, expIDs):
         try:
             filenames = ['dlcEyeLeft_resampled.pickle','dlcEyeRight_resampled.pickle']
             for iFilename in range(len(filenames)):
-                print('Starting ' + filenames[iFilename])
+                print('** Starting ' + filenames[iFilename])
                 with open(os.path.join(exp_dir_processed_recordings,filenames[iFilename]),'rb') as file: dlcEye_resampled = pickle.load(file)
                 if iFilename == 0:
                     pupil_map = pupil_maps['left_map']
