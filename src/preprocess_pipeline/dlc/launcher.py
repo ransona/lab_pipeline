@@ -14,7 +14,6 @@ STANDARD_CONFIG_PATH = '/data/common/dlc_models/all_setups-rubencorreia-2025-12-
 
 
 def crop_vids(userID, expID):
-    print('Cropping videos...')
     _, _, _, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
 
     habit_video = os.path.join(exp_dir_raw, expID + '_habit.mp4')
@@ -52,19 +51,22 @@ def crop_vids(userID, expID):
 
     if is_habit:
         habit_output_filename = os.path.join(exp_dir_processed, expID + habit_suffix + '.avi')
+        print(f'Cropping habituation video to {os.path.basename(habit_output_filename)}')
         habit_out = cv2.VideoWriter(habit_output_filename, fourcc, fps, (habit_crop[3], habit_crop[2]))
         left_out = None
         right_out = None
     else:
         left_output_filename = os.path.join(exp_dir_processed, expID + left_suffix + '.avi')
         right_output_filename = os.path.join(exp_dir_processed, expID + right_suffix + '.avi')
+        print(
+            'Cropping eye videos to '
+            f'{os.path.basename(left_output_filename)} and {os.path.basename(right_output_filename)}'
+        )
         left_out = cv2.VideoWriter(left_output_filename, fourcc, fps, (left_crop[3], left_crop[2]))
         right_out = cv2.VideoWriter(right_output_filename, fourcc, fps, (right_crop[3], right_crop[2]))
         habit_out = None
 
     cnt = 0
-    progress_marks = [20, 40, 60, 80, 100]
-    next_mark_index = 0
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -86,12 +88,6 @@ def crop_vids(userID, expID):
             right_frame = frame[y:y + h, x:x + w]
             right_frame = cv2.flip(right_frame, 1)
             right_out.write(right_frame)
-
-        if frames:
-            pct = cnt * 100 / frames
-            if next_mark_index < len(progress_marks) and pct >= progress_marks[next_mark_index]:
-                print(f'Cropping {progress_marks[next_mark_index]}% complete')
-                next_mark_index += 1
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

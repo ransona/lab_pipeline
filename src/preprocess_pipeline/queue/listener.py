@@ -22,6 +22,7 @@ class TeeStream:
     def write(self, data):
         for stream in self.streams:
             stream.write(data)
+            stream.flush()
         return len(data)
 
     def flush(self):
@@ -155,7 +156,7 @@ def main(debug=False, queue_path=None):
         queue_path = DEBUG_QUEUE_PATH if debug else DEFAULT_QUEUE_PATH
 
     os.makedirs(queue_path, exist_ok=True)
-    log_handle = open(queue_log_path(queue_path), 'a', encoding='utf-8')
+    log_handle = open(queue_log_path(queue_path), 'a', encoding='utf-8', buffering=1)
     sys.stdout = TeeStream(sys.__stdout__, log_handle)
     sys.stderr = TeeStream(sys.__stderr__, log_handle)
 
@@ -215,29 +216,35 @@ def main(debug=False, queue_path=None):
                             file_date = datetime.strptime(date_str, date_format)
                             target_date = datetime.strptime(target_date_str, date_format)
 
-                            exp_has_integrity_check = file_date >= target_date
+                        exp_has_integrity_check = file_date >= target_date
 
-                            if exp_has_integrity_check:
+                        if exp_has_integrity_check:
+                            if queued_command['config'].get('runhabituate', False):
+                                print(
+                                    'Habituation job detected; skipping NAS/cams integrity checks '
+                                    f'for {nextExpID}'
+                                )
+                                continue
                             # you always need to have your nas data verified (contains experiment log, timeline, bonvision etc)
-                                ready,comment = file_check.verify_file_data('nas',exp_dir_raw,exp_dir_processed)
-                                matrix_notify.main(queued_command['userID'],'----------')
-                        
+                            ready,comment = file_check.verify_file_data('nas',exp_dir_raw,exp_dir_processed)
+                            matrix_notify.main(queued_command['userID'],'----------')
+
+                            if not ready:
+                                files_ready = False
+                                matrix_notify.main(queued_command['userID'],'Awaiting NAS data integrity verification: ' + comment)
+                            else:          
+                                matrix_notify.main(queued_command['userID'],'NAS data verified')
+                                print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} NAS data verified')
+
+                            if queued_command['config']['runs2p']:
+                            # if you want to do suite2p you need to have your scanimage data verified
+                                ready,comment = file_check.verify_file_data('scanimage',exp_dir_raw,exp_dir_processed)
                                 if not ready:
                                     files_ready = False
-                                    matrix_notify.main(queued_command['userID'],'Awaiting NAS data integrity verification: ' + comment)
+                                    matrix_notify.main(queued_command['userID'],'Awaiting SI data integrity verification: ' + comment) 
                                 else:          
-                                    matrix_notify.main(queued_command['userID'],'NAS data verified')
-                                    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} NAS data verified')
-
-                                if queued_command['config']['runs2p']:
-                                # if you want to do suite2p you need to have your scanimage data verified
-                                    ready,comment = file_check.verify_file_data('scanimage',exp_dir_raw,exp_dir_processed)
-                                    if not ready:
-                                        files_ready = False
-                                        matrix_notify.main(queued_command['userID'],'Awaiting SI data integrity verification: ' + comment) 
-                                    else:          
-                                        matrix_notify.main(queued_command['userID'],'SI data verified')
-                                        print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} SI data verified')
+                                    matrix_notify.main(queued_command['userID'],'SI data verified')
+                                    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} SI data verified')
 
                                 if queued_command['config']['rundlc']:
                                 # if you want to do dlc you need to have your video data verified
@@ -325,7 +332,7 @@ def main(debug=False, queue_path=None):
                     # queue so we are probably waiting for experiments to sync to the google drive
                     # we therefore timeout for 10 mins to avoid repeatedly polling the google drive
                     # for file presence/integrity
-                        print('Pausing 10 mins to await probable NAS -> GDrive sync')
+                        print('Pausing 10 mins to await probable NAS -> Server sync')
                         time.sleep(60*2)
 
                 except Exception as e:

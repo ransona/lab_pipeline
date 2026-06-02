@@ -150,6 +150,15 @@ def _should_emit_progress_line(line, progress_state):
             return True
         return False
 
+    dlc_tqdm = re.match(r'^(\d+)%\|.*\|\s*(\d+)/(\d+)\s*\[', stripped)
+    if dlc_tqdm:
+        percent = int(dlc_tqdm.group(1))
+        milestone = (percent // 25) * 25
+        if milestone >= 25 and milestone not in progress_state['dlc_percent_milestones']:
+            progress_state['dlc_percent_milestones'].add(milestone)
+            return True
+        return False
+
     if re.match(r'^(25|50|75|100)% complete$', stripped):
         return True
 

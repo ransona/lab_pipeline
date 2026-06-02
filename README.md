@@ -30,15 +30,15 @@ The usual workflow is:
 Step 1 config files are self-runnable and submit jobs when executed:
 
 ```bash
-python /home/adamranson/code/lab_pipeline/configs/examples/config_example_run_step1_standard.py
-python /home/adamranson/code/lab_pipeline/configs/debug/config_example_run_step1_standard.py
+python /home/[username]/code/lab_pipeline/configs/examples/config_example_run_step1_standard.py
+python /home/[username]/code/lab_pipeline/configs/debug/config_example_run_step1_standard.py
 ```
 
 Step 2 config files are also self-runnable and run immediately:
 
 ```bash
-python /home/adamranson/code/lab_pipeline/configs/examples/config_example_run_step2_standard.py
-python /home/adamranson/code/lab_pipeline/configs/debug/config_example_run_step2_standard.py
+python /home/[username]/code/lab_pipeline/configs/examples/config_example_run_step2_standard.py
+python /home/[username]/code/lab_pipeline/configs/debug/config_example_run_step2_standard.py
 ```
 
 ## Queue And Jobs
@@ -55,14 +55,14 @@ The queue GUI is for monitoring, inspecting, and removing queued jobs. It does n
 Launch the queue GUI with:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/qview.py
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
 ```
 
 If you need the listener manually, the new queue listener can be run with:
 
 ```bash
-/opt/scripts/conda-run.sh base python /home/adamranson/code/lab_pipeline/apps/queue_listener.py
-/opt/scripts/conda-run.sh base python /home/adamranson/code/lab_pipeline/apps/queue_listener.py --debug
+/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py
+/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug
 ```
 
 The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/common/queues/step1/`.
@@ -72,25 +72,25 @@ The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/
 Queue manager:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/qview.py
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
 ```
 
 Imaging viewer with raw TIFF and Suite2p binary modes:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/imaging_view.py
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py
 ```
 
 Standalone Suite2p binary viewer:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/s2p_bin_view.py
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py
 ```
 
 Eye-check viewer:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/eye_check.py
+/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py
 ```
 
 ## Step 1 Configs
@@ -264,7 +264,7 @@ Typical fields:
 Example:
 
 ```python
-step2_config["userID"] = "adamranson"
+step2_config["userID"] = "[username]"
 step2_config["expIDs"] = ["2026-05-11_03_ESRC033"]
 step2_config["pre_secs"] = 5
 step2_config["post_secs"] = 5
