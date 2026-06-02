@@ -1,12 +1,16 @@
 # these scripts are to run commands that need to be run in specific conda environments
 # they should be run from the command line
 from conceivable import thread_limit
+import json
+from pathlib import Path
+import subprocess
 import sys
 import suite2p
 from suite2p import io as suite2p_io
 from suite2p.run_s2p import run_plane
 from suite2p.registration import register as suite2p_register
 from preprocess_pipeline.shared import paths
+from preprocess_pipeline.srdtrans.launcher import encode_config_arg as encode_srdtrans_config_arg, decode_config_arg as decode_srdtrans_config_arg
 import numpy as np
 import os
 import re
@@ -14,6 +18,10 @@ from glob import glob
 import shutil
 import pickle
 import tifffile
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+APP_ROOT = REPO_ROOT / "apps"
 
 
 DETECTION_FILES = [
@@ -380,7 +388,7 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
 
 
 def run_shared_registration(all_tif_paths, output_path, registration_config_path):
-    """Register once on ch1 and write canonical binaries for both channels."""
+    """Run the initial rigid registration pass and write canonical binaries."""
     # The shared-registration path always forces a fresh registration pass.
     # If a prior partial two-channel run left stale per-plane ops/binaries behind,
     # Suite2p will try to reuse them and can fail before it rebuilds chan2 paths.
@@ -392,6 +400,7 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
     ops["functional_chan"] = 1
     ops["roidetect"] = False
     ops["do_registration"] = 2
+    ops["nonrigid"] = False
 
     db = {
         "data_path": all_tif_paths,
@@ -484,6 +493,142 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
     fix_binary_permissions(save_root)
 
 
+def _selected_binary_for_plane(canonical_plane_dir, source_channel, plane_save_dir=None):
+    reg_file = os.path.join(canonical_plane_dir, "data.bin")
+    reg_file_chan2 = os.path.join(canonical_plane_dir, "data_chan2.bin")
+
+    if source_channel == "ch1":
+        return reg_file
+
+    if source_channel != "ch2":
+        raise ValueError(f"Unknown source channel: {source_channel}")
+
+    if plane_save_dir is None:
+        return reg_file_chan2
+
+    if os.path.exists(reg_file_chan2):
+        return move_red_channel_binary(reg_file_chan2, plane_save_dir)
+
+    fallback = os.path.join(plane_save_dir, "data.bin")
+    replace_file(reg_file, fallback)
+    return fallback
+
+
+def _run_srdtrans_on_binary(plane_dir, input_filename, srdtrans_config):
+    launcher = APP_ROOT / "srdtrans_launcher.py"
+    cmd = [
+        "/opt/scripts/conda-run.sh",
+        str(srdtrans_config.get("env", "srdtrans")),
+        "python",
+        str(launcher),
+        plane_dir,
+        input_filename,
+        encode_srdtrans_config_arg(srdtrans_config),
+    ]
+    print(f"Running SRDTrans on {os.path.join(plane_dir, input_filename)}")
+    subprocess.run(cmd, check=True)
+
+
+def apply_srdtrans_to_registered_planes(canonical_root, srdtrans_config, available_channels):
+    channels = srdtrans_config.get("channels")
+    if not channels:
+        channels = ["ch1"] if "ch1" in available_channels else list(available_channels)
+    unknown_channels = set(channels) - set(available_channels)
+    if unknown_channels:
+        raise ValueError(
+            f"SRDTrans channels {sorted(unknown_channels)} are not available for this work unit"
+        )
+
+    for canonical_plane_dir in get_plane_dirs(canonical_root):
+        for channel in channels:
+            if channel == "ch1":
+                _run_srdtrans_on_binary(canonical_plane_dir, "data.bin", srdtrans_config)
+            elif channel == "ch2" and os.path.exists(
+                os.path.join(canonical_plane_dir, "data_chan2.bin")
+            ):
+                _run_srdtrans_on_binary(canonical_plane_dir, "data_chan2.bin", srdtrans_config)
+
+
+def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel):
+    """Run the final Suite2p pass on already rigid-registered binaries."""
+    clear_detection_outputs(save_root)
+
+    canonical_plane_dirs = get_plane_dirs(canonical_root)
+    final_config = np.load(final_config_path, allow_pickle=True).item()
+
+    for canonical_plane_dir in canonical_plane_dirs:
+        plane_name = os.path.basename(canonical_plane_dir)
+        registration_ops = np.load(os.path.join(canonical_plane_dir, "ops.npy"), allow_pickle=True).item()
+
+        plane_save_dir = os.path.join(save_root, "suite2p", plane_name)
+        os.makedirs(plane_save_dir, exist_ok=True)
+
+        output_reg_file = _selected_binary_for_plane(
+            canonical_plane_dir,
+            source_channel,
+            plane_save_dir if save_root != canonical_root else None,
+        )
+
+        plane_ops = copy_ops_for_extraction(registration_ops, final_config)
+        plane_ops["save_mat"] = False
+        plane_ops["save_path0"] = save_root
+        plane_ops["save_path"] = plane_save_dir
+        plane_ops["ops_path"] = os.path.join(plane_save_dir, "ops.npy")
+        plane_ops["move_bin"] = False
+        plane_ops["delete_bin"] = False
+        plane_ops["nchannels"] = 1
+        plane_ops["functional_chan"] = 1
+        plane_ops["align_by_chan"] = 1
+        plane_ops["nplanes"] = int(nplanes)
+        plane_ops["reg_file"] = output_reg_file
+        plane_ops["do_registration"] = 2
+        if source_channel == "ch2" and "meanImg_chan2" in registration_ops:
+            plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
+            image_ops = plane_ops.copy()
+            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+                plane_ops["meanImg"], image_ops
+            ).astype(np.float32)
+        for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
+            if key in plane_ops:
+                del plane_ops[key]
+
+        try:
+            plane_ops = run_plane(plane_ops)
+        except ValueError as exc:
+            if "no ROIs were found" not in str(exc):
+                raise
+            print(f"No ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
+            write_empty_detection_outputs(plane_save_dir, plane_ops)
+            continue
+
+        plane_ops["nchannels"] = 1
+        plane_ops["functional_chan"] = 1
+        plane_ops["align_by_chan"] = 1
+        plane_ops["nplanes"] = int(nplanes)
+        plane_ops["reg_file"] = output_reg_file
+        if source_channel == "ch2" and "meanImg_chan2" in registration_ops:
+            plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
+            image_ops = plane_ops.copy()
+            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+                plane_ops["meanImg"], image_ops
+            ).astype(np.float32)
+        for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
+            if key in plane_ops:
+                del plane_ops[key]
+
+        for filename in CH2_EXTRA_FILES:
+            extra_path = os.path.join(plane_save_dir, filename)
+            if os.path.exists(extra_path):
+                os.remove(extra_path)
+        np.save(plane_ops["ops_path"], plane_ops)
+
+    if len(canonical_plane_dirs) > 1 and final_config.get("combined", True) and final_config.get("roidetect", True):
+        suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
+        update_combined_ops(save_root, nplanes)
+
+    fix_binary_permissions(save_root)
+
+
 def run_single_config_suite2p(all_tif_paths, output_path, config_path):
     """Single-config launcher path, including the legacy functional_chan==3 special case."""
     ops = load_ops_with_inferred_nplanes(config_path, all_tif_paths)
@@ -568,6 +713,30 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes):
     update_combined_ops(ch2_root, nplanes)
 
 
+def run_srdtrans_suite2p(all_tif_paths, output_path, config_paths, srdtrans_config):
+    primary_ops = load_ops_with_inferred_nplanes(config_paths[0], all_tif_paths)
+    nplanes = int(primary_ops["nplanes"])
+    available_channels = ["ch1"]
+
+    effective_config_paths = list(config_paths)
+    if int(primary_ops.get("nchannels", 1)) > 1:
+        available_channels.append("ch2")
+        if len(effective_config_paths) == 1:
+            effective_config_paths = [effective_config_paths[0], effective_config_paths[0]]
+
+    run_shared_registration(all_tif_paths, output_path, effective_config_paths[0])
+    apply_srdtrans_to_registered_planes(output_path, srdtrans_config, available_channels)
+
+    if "ch2" in available_channels:
+        ch2_root = os.path.join(output_path, "ch2")
+        run_final_suite2p_stage(output_path, ch2_root, effective_config_paths[1], nplanes, "ch2")
+        run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
+        finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
+        return
+
+    run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
+
+
 def resolve_output_path(userID, expID, output_path):
     if output_path is not None:
         return output_path
@@ -576,12 +745,16 @@ def resolve_output_path(userID, expID, output_path):
     return exp_dir_processed
 
 
-def s2p_launcher_run(userID, expID, tif_path, output_path, config_path):
+def s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans_config=None):
     all_tif_paths = tif_path.split(",")
     print("tif_path = " + tif_path)
     print("ExpID = " + expID)
     print("output_path = " + output_path)
     config_paths = config_path.split(",")
+
+    if srdtrans_config:
+        run_srdtrans_suite2p(all_tif_paths, output_path, config_paths, srdtrans_config)
+        return
 
     if len(config_paths) == 2:
         nplanes = resolve_nplanes(config_paths[0], all_tif_paths)
@@ -601,9 +774,12 @@ def main():
         userID = sys.argv[1]
         expID = sys.argv[2]
         tif_path = sys.argv[3]
+        srdtrans_config = None
         if len(sys.argv) >= 6:
             output_path = sys.argv[4]
             config_path = sys.argv[5]
+            if len(sys.argv) >= 7:
+                srdtrans_config = decode_srdtrans_config_arg(sys.argv[6])
         else:
             output_path = None
             config_path = sys.argv[4]
@@ -619,9 +795,10 @@ def main():
             os.path.join("/data/common/configs/s2p_configs", userID, "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy"),
             os.path.join("/data/common/configs/s2p_configs", userID, "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy"),
         ])
+        srdtrans_config = None
 
     output_path = resolve_output_path(userID, expID, output_path)
-    s2p_launcher_run(userID, expID, tif_path, output_path, config_path)
+    s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans_config=srdtrans_config)
 
 
 if __name__ == "__main__":

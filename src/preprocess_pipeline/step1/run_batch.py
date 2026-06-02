@@ -1,5 +1,6 @@
 from datetime import datetime
 import getpass
+import json
 import os
 import pickle
 import runpy
@@ -210,6 +211,8 @@ def run_step1_batch_universal(step1_config):
     runs2p = step1_config['runs2p']
     rundlc = step1_config['rundlc']
     runfitpupil = step1_config['runfitpupil']
+    runsrdtrans = step1_config.get('runsrdtrans', False)
+    srdtrans_config = step1_config.get('srdtrans')
     runhabituate = step1_config.get('runhabituate', False)
     settings = step1_config.get('settings', False)
     jump_queue = step1_config.get('jump_queue', False)
@@ -223,6 +226,11 @@ def run_step1_batch_universal(step1_config):
             'You are not permitted to execute a job on the pipeline which will write to '
             'another users data folder'
         )
+
+    if runsrdtrans and not runs2p:
+        raise ValueError('runsrdtrans requires runs2p=True')
+    if runsrdtrans and not isinstance(srdtrans_config, dict):
+        raise ValueError('runsrdtrans requires step1_config["srdtrans"] to be a dict')
 
     with paths.local_repository_context(local_repository_root):
         first_exp = exp_ids[0][0] if isinstance(exp_ids[0], list) else exp_ids[0]
@@ -239,6 +247,8 @@ def run_step1_batch_universal(step1_config):
             'topology': topology,
             'suite2p_plan': suite2p_plan,
             'suite2p_config': suite2p_config,
+            'runsrdtrans': runsrdtrans,
+            **({'srdtrans': json.loads(json.dumps(srdtrans_config))} if runsrdtrans else {}),
             **(
                 {'suite2p_env': step1_config['suite2p_env']}
                 if 'suite2p_env' in step1_config

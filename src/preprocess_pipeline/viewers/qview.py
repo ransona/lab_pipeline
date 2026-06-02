@@ -829,6 +829,9 @@ class Step1Tab(QtWidgets.QWidget):
         self.runfitpupil = QtWidgets.QCheckBox()
         self.runfitpupil.setChecked(True)
         left_form.addRow("runfitpupil", self.runfitpupil)
+        self.runsrdtrans = QtWidgets.QCheckBox()
+        self.runsrdtrans.setChecked(False)
+        left_form.addRow("runsrdtrans", self.runsrdtrans)
         self.runhabituate = QtWidgets.QCheckBox()
         self.runhabituate.setChecked(False)
         self.jump_queue = QtWidgets.QCheckBox()
@@ -860,6 +863,12 @@ class Step1Tab(QtWidgets.QWidget):
         self.settings_json.setPlaceholderText('Optional JSON dict for step1_config["settings"]')
         config_layout.addWidget(QtWidgets.QLabel('settings JSON'))
         config_layout.addWidget(self.settings_json)
+        self.srdtrans_json = QtWidgets.QPlainTextEdit(
+            '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}'
+        )
+        self.srdtrans_json.setPlaceholderText('JSON dict for step1_config["srdtrans"]')
+        config_layout.addWidget(QtWidgets.QLabel('SRDTrans JSON'))
+        config_layout.addWidget(self.srdtrans_json)
         right_layout.addWidget(self.config_group)
         main_splitter.addWidget(right)
         main_splitter.setSizes([420, 680])
@@ -952,6 +961,7 @@ class Step1Tab(QtWidgets.QWidget):
             "runs2p": self.runs2p.isChecked(),
             "rundlc": self.rundlc.isChecked(),
             "runfitpupil": self.runfitpupil.isChecked(),
+            "runsrdtrans": self.runsrdtrans.isChecked(),
         }
         if self.runhabituate.isChecked():
             config["runhabituate"] = True
@@ -965,6 +975,8 @@ class Step1Tab(QtWidgets.QWidget):
         settings_text = self.settings_json.toPlainText().strip()
         if settings_text and settings_text != "{}":
             config["settings"] = json.loads(settings_text)
+        if self.runsrdtrans.isChecked():
+            config["srdtrans"] = json.loads(self.srdtrans_json.toPlainText().strip() or "{}")
         return config
 
     def _preset_payload(self) -> dict:
@@ -975,10 +987,12 @@ class Step1Tab(QtWidgets.QWidget):
             "runs2p": self.runs2p.isChecked(),
             "rundlc": self.rundlc.isChecked(),
             "runfitpupil": self.runfitpupil.isChecked(),
+            "runsrdtrans": self.runsrdtrans.isChecked(),
             "runhabituate": self.runhabituate.isChecked(),
             "jump_queue": self.jump_queue.isChecked(),
             "suite2p_env": self.suite2p_env.text().strip(),
             "settings_json": self.settings_json.toPlainText(),
+            "srdtrans_json": self.srdtrans_json.toPlainText(),
             "topology": self.detected_descriptor.topology if self.detected_descriptor else None,
             "nchannels": self.detected_descriptor.nchannels if self.detected_descriptor else None,
             "standard": self.standard_widget.preset_state(),
@@ -994,10 +1008,17 @@ class Step1Tab(QtWidgets.QWidget):
         self.runs2p.setChecked(payload.get("runs2p", True))
         self.rundlc.setChecked(payload.get("rundlc", True))
         self.runfitpupil.setChecked(payload.get("runfitpupil", True))
+        self.runsrdtrans.setChecked(payload.get("runsrdtrans", False))
         self.runhabituate.setChecked(payload.get("runhabituate", False))
         self.jump_queue.setChecked(payload.get("jump_queue", False))
         self.suite2p_env.setText(payload.get("suite2p_env", ""))
         self.settings_json.setPlainText(payload.get("settings_json", "{}"))
+        self.srdtrans_json.setPlainText(
+            payload.get(
+                "srdtrans_json",
+                '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}',
+            )
+        )
 
         if self.detected_descriptor is None:
             self.pending_preset = payload

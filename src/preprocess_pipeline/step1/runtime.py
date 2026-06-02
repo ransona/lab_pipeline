@@ -1,11 +1,14 @@
 import os
 import pickle
+import json
+import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from preprocess_pipeline.shared import paths
+from preprocess_pipeline.srdtrans.launcher import encode_config_arg as encode_srdtrans_config_arg
 from preprocess_pipeline.step1 import habituate
 
 
@@ -46,6 +49,13 @@ def _log_path_for_job(job_id, queue_path=DEFAULT_QUEUE_PATH):
     else:
         log_name = job_id + '.txt'
     return os.path.join(log_root, log_name)
+
+
+def _raw_log_path_for_job(job_id, queue_path=DEFAULT_QUEUE_PATH):
+    log_path = _log_path_for_job(job_id, queue_path=queue_path)
+    if log_path.endswith('.txt'):
+        return log_path[:-4] + '.raw.txt'
+    return log_path + '.raw'
 
 
 def _is_meso_root(exp_dir_raw):
@@ -102,23 +112,85 @@ def _suite2p_config_path(user_id, config_names):
     return ','.join(os.path.join(CONFIG_ROOT, user_id, config_name) for config_name in config_names)
 
 
-def _stream_subprocess(cmd, log_path):
-    all_output = ''
+def _should_emit_progress_line(line, progress_state):
+    stripped = line.strip()
+    lowered = stripped.lower()
+
+    if not stripped:
+        return True
+
+    if any(
+        token in lowered
+        for token in ('traceback', 'error', 'warning', 'failed', 'exception', 'done without errors')
+    ):
+        return True
+
+    suite2p_binary = re.match(r'^(\d+) frames of binary, time ', stripped)
+    if suite2p_binary:
+        frame_count = int(suite2p_binary.group(1))
+        if frame_count - progress_state['last_binary_frame'] >= 20000:
+            progress_state['last_binary_frame'] = frame_count
+            return True
+        return False
+
+    suite2p_registered = re.match(r'^(?:Second channel, )?Registered (\d+)/(\d+) in ', stripped)
+    if suite2p_registered:
+        frame_count = int(suite2p_registered.group(1))
+        if frame_count - progress_state['last_registered_frame'] >= 20000:
+            progress_state['last_registered_frame'] = frame_count
+            return True
+        return False
+
+    dlc_progress = re.match(r'^(\d+)/(\d+) - ([0-9.]+)% complete Frame rate = ', stripped)
+    if dlc_progress:
+        percent = int(float(dlc_progress.group(3)))
+        milestone = (percent // 25) * 25
+        if milestone >= 25 and milestone not in progress_state['dlc_percent_milestones']:
+            progress_state['dlc_percent_milestones'].add(milestone)
+            return True
+        return False
+
+    if re.match(r'^(25|50|75|100)% complete$', stripped):
+        return True
+
+    return True
+
+
+def _stream_subprocess(cmd, log_path, raw_log_path):
+    progress_state = {
+        'last_binary_frame': 0,
+        'last_registered_frame': 0,
+        'dlc_percent_milestones': set(),
+    }
     with subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
     ) as proc:
         for line in proc.stdout:
-            print(line, end='')
-            all_output += line
-            sys.stdout.flush()
-            with open(log_path, 'a') as file:
-                file.write(line)
+            with open(raw_log_path, 'a') as raw_file:
+                raw_file.write(line)
+
+            if _should_emit_progress_line(line, progress_state):
+                print(line, end='')
+                sys.stdout.flush()
+                with open(log_path, 'a') as file:
+                    file.write(line)
 
         proc.wait()
         if proc.returncode != 0:
-            with open(log_path, 'w') as file:
-                file.write(all_output)
+            with open(log_path, 'a') as file:
+                file.write(f'[subprocess exited with code {proc.returncode}]\n')
             raise Exception('An error occurred during subprocess execution')
+
+
+def _stream_subprocess_for_job(cmd, job_id, queue_path):
+    log_path = _log_path_for_job(job_id, queue_path=queue_path)
+    raw_log_path = _raw_log_path_for_job(job_id, queue_path=queue_path)
+    os.makedirs(os.path.dirname(raw_log_path), exist_ok=True)
+    for path in (log_path, raw_log_path):
+        if not os.path.exists(path):
+            with open(path, 'a'):
+                pass
+    _stream_subprocess(cmd, log_path, raw_log_path)
 
 
 def _suite2p_cmd_for_work_unit(
@@ -140,6 +212,8 @@ def _suite2p_cmd_for_work_unit(
         output_path,
         _suite2p_config_path(user_id, config_names),
     ]
+    if queued_command["config"].get("runsrdtrans", False):
+        launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
 
     if run_s2p_as_user:
         return [
@@ -158,7 +232,6 @@ def _suite2p_cmd_for_work_unit(
 
 def _run_suite2p_plan(job_id, user_id, exp_id, queued_command, queue_path=DEFAULT_QUEUE_PATH):
     exp_ids = _all_exp_ids(exp_id)
-    log_path = _log_path_for_job(job_id, queue_path=queue_path)
 
     for plan_item in queued_command['config']['suite2p_plan']:
         work_unit_id = plan_item['work_unit']
@@ -180,20 +253,20 @@ def _run_suite2p_plan(job_id, user_id, exp_id, queued_command, queue_path=DEFAUL
         print('Starting S2P launcher for work unit ' + work_unit_id + '...')
         now = datetime.now()
         print(now.strftime('%Y-%m-%d %H:%M:%S'))
-        _stream_subprocess(cmd, log_path)
+        _stream_subprocess_for_job(cmd, job_id, queue_path)
 
 
 def _run_dlc(job_id, user_id, exp_id, topology, queue_path=DEFAULT_QUEUE_PATH):
     env_name = 'DLC_05_02_2026'
     launcher = str(APP_ROOT / 'dlc_launcher.py')
     cmd = ['/opt/scripts/conda-run.sh', env_name, 'python', launcher, user_id, exp_id]
-    _stream_subprocess(cmd, _log_path_for_job(job_id, queue_path=queue_path))
+    _stream_subprocess_for_job(cmd, job_id, queue_path)
 
 
 def _run_fit_pupil(job_id, user_id, exp_id, queue_path=DEFAULT_QUEUE_PATH):
     launcher = str(APP_ROOT / 'preprocess_pupil.py')
     cmd = ['conda', 'run', '--no-capture-output', '--name', 'sci', 'python', launcher, user_id, exp_id]
-    _stream_subprocess(cmd, _log_path_for_job(job_id, queue_path=queue_path))
+    _stream_subprocess_for_job(cmd, job_id, queue_path)
 
 
 def run_preprocess_step1_job(job_id, queued_command=None, queue_path=DEFAULT_QUEUE_PATH):

@@ -1,91 +1,320 @@
 # lab_pipeline
 
-Fresh consolidation repo for the lab preprocessing pipeline.
+Canonical preprocessing repository for the lab pipeline.
 
-## Current state
-
-- the old source repos remain unchanged:
-  - `/home/adamranson/code/preprocess_py`
-  - `/home/adamranson/code/preprocess_scripts`
-- their histories are imported under `legacy/`
-- the forward path is now the canonical universal pipeline under `src/preprocess_pipeline/`
-- non-universal paths are retained only under `legacy/`
-
-Imported legacy snapshots:
-- `legacy/preprocess_py` from `c31fcc6`
-- `legacy/preprocess_scripts` from `8ef0335`
-
-## Canonical structure
+The repo is organised around workflow, not around old script-vs-library splits:
 
 - `src/preprocess_pipeline/`
-  - package-first canonical code
-  - current first-pass promoted modules:
-    - shared paths, matrix notifications, file integrity checks
-    - universal step-1 queueing/runtime
-    - universal queue listener
-    - universal Suite2p launcher and preprocessing
-    - universal DLC and pupil paths
-    - universal combined Suite2p splitter
+  - importable pipeline code
+  - queueing, step 1, step 2, Suite2p, DLC, pupil, viewers, utilities
 - `apps/`
-  - thin runnable shims for direct subsystem execution
+  - thin runnable shims for direct execution of subsystems and GUIs
 - `configs/`
-  - future home for run configs and examples
+  - runnable example configs, debug configs, and local configs
 - `docs/`
-  - migration and architecture notes
+  - short reference notes
 - `legacy/`
-  - imported source repos kept intact for reference and history
+  - archived historical code snapshots kept for reference only
 
-## Direct subsystem execution
+`apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
 
-The new repo keeps direct runnable entrypoints so subsystems remain independently testable without the full pipeline:
+## How To Use It
 
-- `python /home/adamranson/code/lab_pipeline/apps/run_step1.py <config.py>`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_step1.py <job_id> <user_id> <exp_id> <runs2p> <rundlc> <runfitpupil>`
-- `python /home/adamranson/code/lab_pipeline/apps/s2p_launcher.py ...`
-- `python /home/adamranson/code/lab_pipeline/apps/dlc_launcher.py <user> <exp>`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_pupil.py <user> <exp>`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_s2p.py`
-- `python /home/adamranson/code/lab_pipeline/apps/split_combined_s2p.py`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_habituate.py`
-- `python /home/adamranson/code/lab_pipeline/apps/queue_listener.py`
-- `python /home/adamranson/code/lab_pipeline/apps/run_step2.py <config.py>`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_step2.py <user> <exp> <pre_secs> <post_secs> <run_bonvision> <run_s2p_timestamp> <run_ephys> <run_dlc_timestamp> <run_cuttraces>`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_cam.py`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_ephys.py`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_cut.py`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_bv.py`
-- `python /home/adamranson/code/lab_pipeline/apps/preprocess_pupil_timestamp.py`
+The usual workflow is:
 
-These wrappers do not require `conda develop` because they prepend `/home/adamranson/code/lab_pipeline/src` to `sys.path` themselves.
+1. Pick a config in `configs/examples/`, `configs/debug/`, or `configs/local/`.
+2. Edit `userID`, `expIDs`, and the relevant config fields.
+3. Run the config directly with `python`.
+4. Watch or inspect the job with the queue GUI if it was submitted to the queue.
 
-## Environment expectations
+Step 1 config files are self-runnable and submit jobs when executed:
 
-- `apps/run_step1.py`
-  - submission only, standard Python environment is fine
-- `apps/preprocess_step1.py`
-  - standard Python environment, but it launches Suite2p/DLC/pupil subprocesses in their target envs
+```bash
+python /home/adamranson/code/lab_pipeline/configs/examples/config_example_run_step1_standard.py
+python /home/adamranson/code/lab_pipeline/configs/debug/config_example_run_step1_standard.py
+```
+
+Step 2 config files are also self-runnable and run immediately:
+
+```bash
+python /home/adamranson/code/lab_pipeline/configs/examples/config_example_run_step2_standard.py
+python /home/adamranson/code/lab_pipeline/configs/debug/config_example_run_step2_standard.py
+```
+
+## Queue And Jobs
+
+Step 1 jobs are added by running a Step 1 config file. The config decides whether the job goes to the normal queue or the debug queue.
+
+- normal queue:
+  - leave `step1_config["queue"]` unset, or set it to `"step1"`
+- debug queue:
+  - set `step1_config["queue"] = "debug"`
+
+The queue GUI is for monitoring, inspecting, and removing queued jobs. It does not create jobs by itself.
+
+Launch the queue GUI with:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/qview.py
+```
+
+If you need the listener manually, the new queue listener can be run with:
+
+```bash
+/opt/scripts/conda-run.sh base python /home/adamranson/code/lab_pipeline/apps/queue_listener.py
+/opt/scripts/conda-run.sh base python /home/adamranson/code/lab_pipeline/apps/queue_listener.py --debug
+```
+
+The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/common/queues/step1/`.
+
+## GUIs
+
+Queue manager:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/qview.py
+```
+
+Imaging viewer with raw TIFF and Suite2p binary modes:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/imaging_view.py
+```
+
+Standalone Suite2p binary viewer:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/s2p_bin_view.py
+```
+
+Eye-check viewer:
+
+```bash
+/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/eye_check.py
+```
+
+## Step 1 Configs
+
+Step 1 config files define:
+
+- `userID`
+- `expIDs`
+- `suite2p_config`
+- `runs2p`
+- `rundlc`
+- `runfitpupil`
+- optional `runsrdtrans`
+- optional `srdtrans`
+- optional `queue`
+- optional `jump_queue`
+- optional `suite2p_env`
+- optional `settings`
+
+The universal Step 1 submitter supports these `suite2p_config` shapes:
+
+### 1. One config string
+
+Use the same Suite2p config for every work unit.
+
+```python
+step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+```
+
+### 2. One or two configs in a list
+
+For standard dual-channel data, pass one config per channel.
+
+```python
+step1_config["suite2p_config"] = [
+    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+]
+```
+
+### 3. A mapping with `default` and optional `overrides`
+
+Use this when most work units share a config, but a few need special handling.
+
+```python
+step1_config["suite2p_config"] = {
+    "default": "ch_1_depth_1.npy",
+    "overrides": {
+        "P1/R002": "ch_1_depth_1_special.npy",
+    },
+}
+```
+
+You can also use a default dual-channel pair:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": [
+        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    ],
+}
+```
+
+### 4. A direct work-unit mapping
+
+This is the most explicit form. Use work-unit IDs such as `root` for standard data, or `P1/R001` for mesoscope data.
+
+```python
+step1_config["suite2p_config"] = {
+    "root": "ch_1_depth_1.npy",
+    "P1/R001": "ch_1_depth_1.npy",
+    "P1/R002": "ch_1_depth_1.npy",
+}
+```
+
+For explicit dual-channel overrides:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": [
+        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    ],
+    "overrides": {
+        "P1/R002": [
+            "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+            "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        ],
+    },
+}
+```
+
+### Standard experiment examples
+
+Single experiment:
+
+```python
+step1_config["expIDs"] = ["2026-05-11_03_ESRC033"]
+step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+```
+
+Combined experiment:
+
+```python
+step1_config["expIDs"] = [["2026-05-11_03_ESRC033", "2026-05-11_99_ESRC033"]]
+step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+```
+
+Dual-channel standard experiment:
+
+```python
+step1_config["suite2p_config"] = [
+    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+]
+```
+
+### Meso experiment examples
+
+Same config for all paths and ROIs:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": "ch_1_depth_1.npy",
+}
+```
+
+Same dual-channel pair for all paths and ROIs:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": [
+        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    ],
+}
+```
+
+Explicit per-path or per-ROI overrides:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": "ch_1_depth_1.npy",
+    "overrides": {
+        "P1/R001": "ch_1_depth_1.npy",
+        "P1/R002": "ch_1_depth_1_special.npy",
+    },
+}
+```
+
+The GUI in `apps/qview.py` can build these forms for you.
+
+## Step 2 Configs
+
+Step 2 runs directly, not through the queue listener.
+
+Typical fields:
+
+- `userID`
+- `expIDs`
+- `pre_secs`
+- `post_secs`
+- `run_bonvision`
+- `run_s2p_timestamp`
+- `run_ephys`
+- `run_dlc_timestamp`
+- `run_cuttraces`
+- optional `settings`
+
+Example:
+
+```python
+step2_config["userID"] = "adamranson"
+step2_config["expIDs"] = ["2026-05-11_03_ESRC033"]
+step2_config["pre_secs"] = 5
+step2_config["post_secs"] = 5
+step2_config["run_bonvision"] = True
+step2_config["run_s2p_timestamp"] = True
+step2_config["run_ephys"] = True
+step2_config["run_dlc_timestamp"] = True
+step2_config["run_cuttraces"] = True
+```
+
+The default example settings include:
+
+```python
+settings["neuropil_coeff"] = [0.7, 0.7]
+settings["subtract_overall_frame"] = False
+```
+
+## Local Mode
+
+For a local workstation or Windows machine, set:
+
+```python
+step1_config["local_repository_root"] = r"D:\data\Repository"
+step2_config["local_repository_root"] = r"D:\data\Repository"
+```
+
+Local mode:
+
+- bypasses the queue
+- writes outputs under `<local_repository_root>/<animalID>/<expID>`
+- is intended for direct Step 1 and Step 2 execution
+- still uses the normal Suite2p config files and local envs
+
+## Environment Expectations
+
+- `apps/qview.py`
+  - run in `sci`
+- `apps/imaging_view.py`
+  - run in `sci`
+- `apps/s2p_bin_view.py`
+  - run in `sci`
+- `apps/eye_check.py`
+  - run in `sci`
 - `apps/s2p_launcher.py`
-  - run inside the `suite2p` environment
+  - run in `suite2p`
 - `apps/dlc_launcher.py`
-  - run inside the `DLC_05_02_2026` environment
+  - run in `DLC_05_02_2026`
 - `apps/preprocess_pupil.py`
-  - run inside the `sci` environment
-- `apps/preprocess_s2p.py`
-  - run inside the environment that has the scientific Python stack required by Suite2p postprocessing
-- `apps/run_step2.py` / `apps/preprocess_step2.py`
-  - standard scientific Python environment with the step-2 dependencies
+  - run in `sci`
+- `apps/srdtrans_launcher.py`
+  - run in `srdtrans`
 
-## Ready-to-run examples
-
-- `/home/adamranson/code/lab_pipeline/configs/examples/`
-  - normal submission examples
-- `/home/adamranson/code/lab_pipeline/configs/debug/`
-  - debug-queue variants of the step-1 examples
-  - these include `step1_config["queue"] = "debug"`
-
-## Next migration steps
-
-- continue promoting only the canonical universal path into `src/preprocess_pipeline`
-- move configs into `configs/`
-- add tests around queue planning, work-unit discovery, and direct subsystem entrypoints
-- archive or explicitly freeze legacy-only code once the universal path is fully validated
+The Step 1 and Step 2 config files can be executed directly from any normal shell as long as the required downstream envs are available for the subprocesses they launch.
