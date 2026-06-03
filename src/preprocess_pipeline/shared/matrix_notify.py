@@ -1,8 +1,6 @@
-from matrix_client.client import MatrixClient
-from matrix_client.api import MatrixHttpApi
 import json
+import os
 import time
-import traceback
 from datetime import datetime, timedelta
 
 
@@ -12,11 +10,24 @@ BOT_USERNAME = "dream_bot_1"
 password_file_path = '/data/common/configs/bot/dream_bot_psw'
 token_file_path = '/data/common/configs/bot/token.txt'
 
-class CustomMatrixHttpApi(MatrixHttpApi):
-    def get_room_members(self, room_id):
-        """Get the list of members in the given room."""
-        content = self._send("GET", f"/rooms/{room_id}/members")
-        return content
+def notifications_disabled():
+    return os.environ.get("LAB_PIPELINE_DISABLE_ELEMENT", "").lower() in ("1", "true", "yes")
+
+
+def _matrix_classes():
+    try:
+        from matrix_client.client import MatrixClient
+        from matrix_client.api import MatrixHttpApi
+    except Exception:
+        return None, None
+
+    class CustomMatrixHttpApi(MatrixHttpApi):
+        def get_room_members(self, room_id):
+            """Get the list of members in the given room."""
+            content = self._send("GET", f"/rooms/{room_id}/members")
+            return content
+
+    return MatrixClient, CustomMatrixHttpApi
 
 def save_token(token):
     with open(token_file_path, 'w') as file:
@@ -30,9 +41,17 @@ def load_token():
         return None
 
 def login_and_save_token():
+    if notifications_disabled():
+        return None
+    MatrixClient, _ = _matrix_classes()
+    if MatrixClient is None:
+        return None
     print("Element notification: creating Matrix token")
-    with open(password_file_path, 'r') as file:
-        bot_password = file.read()
+    try:
+        with open(password_file_path, 'r') as file:
+            bot_password = file.read()
+    except Exception:
+        return None
     
     client = MatrixClient(MATRIX_SERVER)
     client.login_with_password(username=BOT_USERNAME, password=bot_password)
@@ -40,26 +59,34 @@ def login_and_save_token():
     return client.api.token
 
 def main(target_user, msg, group=''):
+    if notifications_disabled():
+        return
+
+    MatrixClient, CustomMatrixHttpApi = _matrix_classes()
+    if MatrixClient is None or CustomMatrixHttpApi is None:
+        return
+
     try:
         token = load_token()
         if not token:
             token = login_and_save_token()
+        if not token:
+            return
             
         try:
             client = MatrixClient(MATRIX_SERVER, token=token)
             api = CustomMatrixHttpApi(MATRIX_SERVER, token=token)
         except Exception:
             token = login_and_save_token()
+            if not token:
+                return
             try:
                 client = MatrixClient(MATRIX_SERVER, token=token)
                 api = CustomMatrixHttpApi(MATRIX_SERVER, token=token)
-            except Exception as exc:
-                print(f'Element notification error: could not login to Matrix ({exc})')
-                traceback.print_exc()
+            except Exception:
                 return
             
 
-        original_target_user = target_user
         target_user = lookup_user(target_user)
         rooms = client.get_rooms()
         msg_sent = False
@@ -70,10 +97,6 @@ def main(target_user, msg, group=''):
 
         if group == '':
             if not target_user:
-                print(
-                    "Element notification skipped: no Matrix username mapped for "
-                    f"Ubuntu user '{original_target_user}'"
-                )
                 return
             target_room = None
             for room_id, room in rooms.items():
@@ -90,14 +113,8 @@ def main(target_user, msg, group=''):
                     room.send_text(msg)
                     msg_sent = True
 
-        if not msg_sent:
-            print(
-                "Element notification warning: no matching room found "
-                f"for user='{original_target_user}', group='{group}'"
-            )
-    except Exception as exc:
-        print(f"Element notification failed; pipeline will continue: {type(exc).__name__}: {exc}")
-        traceback.print_exc()
+    except Exception:
+        return
 
    
 

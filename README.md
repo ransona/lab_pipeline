@@ -339,6 +339,19 @@ Local mode:
 
 The older `local_repository_root` setting is still accepted as a shortcut where raw and processed data live in the same tree, but the split-root form above is preferred.
 
+### Local dependencies
+
+For local Step 1 and Step 2 processing, install the pipeline on the workstation and make these environments available:
+
+- `sci` or equivalent analysis env: runs the config files, Step 2, BonVision processing, trace cutting, and general pipeline code.
+- `suite2p` env: required for Step 1 Suite2p processing. The Step 1 runner calls this env when `runs2p=True`.
+- Suite2p config files: available under `/data/common/configs/s2p_configs/<userID>/`, or an equivalent mounted path.
+- NAS access: the Windows UNC path `\\ar-lab-nas1\DataServer\Remote_Repository` must be readable for missing metadata fallback.
+- Python packages for Step 2: `numpy`, `scipy`, `pandas`, `scikit-learn`, `matplotlib`, `scikit-image`, `opencv-python`, `tifffile`, and `suite2p` where relevant.
+- BonVision v2 support: `harp` is needed when processing newer BonVision/Harp experiments.
+- DLC and pupil support: only needed if `rundlc=True`, `runfitpupil=True`, or `run_dlc_timestamp=True`; the default local examples leave these off.
+- Element/Matrix notifications: optional. Local runs continue silently if Matrix/Element packages, tokens, or server config are not present. Set `LAB_PIPELINE_DISABLE_ELEMENT=1` to disable notification attempts explicitly.
+
 ### Local mesoscope processing
 
 Local mesoscope raw data must match the normal lab repository layout under `local_raw_repository_root`:
