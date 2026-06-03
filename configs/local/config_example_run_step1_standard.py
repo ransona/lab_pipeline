@@ -13,11 +13,11 @@ step1_config["expIDs"] = [
     "2026-05-17_02_ESYB040",
 ]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
-step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_processed_repository_root"] = r"F:\processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = "test1.npy"
 
 step1_config["runs2p"] = True
 step1_config["rundlc"] = False
