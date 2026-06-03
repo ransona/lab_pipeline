@@ -1781,8 +1781,6 @@ class Step1Tab(QtWidgets.QWidget):
             if response != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
         self._apply_preset_payload(payload)
-        if self.detected_descriptor is not None:
-            QtWidgets.QMessageBox.information(self, "Load Preset", f"Loaded preset:\n{path}")
 
     def delete_preset(self):
         path = self._selected_preset_path()
