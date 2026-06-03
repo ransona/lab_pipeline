@@ -1,4 +1,3 @@
-import grp
 import os
 import pickle
 import runpy
@@ -51,6 +50,8 @@ def run_step2_batch(step2_config):
                 continue
 
             # set permissions all files generated to user; improve this later
+            import grp
+
             animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
             path = exp_dir_processed
             group_id = grp.getgrnam('users').gr_gid

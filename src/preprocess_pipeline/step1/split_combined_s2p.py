@@ -1,6 +1,5 @@
 import glob
 import os
-import grp
 import shutil
 
 import numpy as np
@@ -258,6 +257,8 @@ def rewrite_ops_for_split(plane_ops, exp_dir_raw, dest_channel_root, dest_plane_
 
 def set_permissions(path):
     try:
+        import grp
+
         group_id = grp.getgrnam("users").gr_gid
         mode = 0o770
         for root, dirs, files in os.walk(path):

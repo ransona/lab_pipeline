@@ -14,7 +14,6 @@ import os
 import pickle
 import shutil
 import stat
-import grp
 from preprocess_pipeline.shared import paths
 
 
@@ -63,6 +62,11 @@ def merge_tree_contents(source_path, destination_path):
 
 def apply_data_permissions_recursive(target_path):
     """Set group ownership to 'users' and grant group read/write recursively."""
+    try:
+        import grp
+    except ImportError:
+        return
+
     users_gid = grp.getgrnam("users").gr_gid
     skipped = []
 
