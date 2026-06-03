@@ -230,7 +230,8 @@ def run_step1_batch_universal(step1_config):
     )
 
     username = getpass.getuser()
-    if user_id != 'machine-pipeline-access' and username != user_id:
+    local_output_mode = bool(local_repository_root or local_processed_repository_root)
+    if not local_output_mode and user_id != 'machine-pipeline-access' and username != user_id:
         raise ValueError(
             'You are not permitted to execute a job on the pipeline which will write to '
             'another users data folder'
