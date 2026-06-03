@@ -14,7 +14,6 @@ Launchers:
 - `run_queue_gui.bat` starts the queue/config GUI
 - `run_imaging_view.bat` starts the combined Suite2p bin / raw TIFF viewer
 - `run_eye_check.bat` starts the eye-check GUI adapter
-- `run_s2p_bin_view.bat` starts the standalone Suite2p bin viewer
 
 If username detection fails, edit `_run_remote_gui.bat` and set:
 

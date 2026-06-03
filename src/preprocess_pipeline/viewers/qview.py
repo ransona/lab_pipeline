@@ -1,4 +1,5 @@
 import getpass
+import ast
 import contextlib
 import json
 import os
@@ -44,6 +45,10 @@ def _step2_preset_root(username: str) -> Path:
 
 def _ensure_preset_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_preset_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip()).strip("._")
 
 
 def _queue_listener_log_path(queue_directory: Path) -> Path:
@@ -353,6 +358,240 @@ class EditableConfigCombo(QtWidgets.QComboBox):
 
     def set_value(self, value: str):
         self.setCurrentText(value or "")
+
+
+S2P_OPS_GROUPS = [
+    ("Main settings", [
+        "nplanes", "nchannels", "functional_chan", "tau", "fs", "do_bidiphase",
+        "bidiphase", "multiplane_parallel", "ignore_flyback",
+    ]),
+    ("Output settings", [
+        "preclassify", "save_mat", "save_NWB", "combined", "reg_tif",
+        "reg_tif_chan2", "aspect", "delete_bin", "move_bin",
+    ]),
+    ("Registration", [
+        "do_registration", "align_by_chan", "nimg_init", "batch_size",
+        "smooth_sigma", "smooth_sigma_time", "maxregshift", "th_badframes",
+        "keep_movie_raw", "two_step_registration",
+    ]),
+    ("Nonrigid", ["nonrigid", "block_size", "snr_thresh", "maxregshiftNR"]),
+    ("1P", ["1Preg", "spatial_hp_reg", "pre_smooth", "spatial_taper"]),
+    ("Functional detect", [
+        "roidetect", "sparse_mode", "denoise", "spatial_scale", "connected",
+        "threshold_scaling", "max_overlap", "max_iterations", "high_pass",
+        "spatial_hp_detect",
+    ]),
+    ("Anat detect", [
+        "anatomical_only", "diameter", "cellprob_threshold", "flow_threshold",
+        "pretrained_model", "spatial_hp_cp",
+    ]),
+    ("Extraction/Neuropil", [
+        "neuropil_extract", "allow_overlap", "inner_neuropil_radius",
+        "min_neuropil_pixels",
+    ]),
+    ("Classify/Deconv", [
+        "soma_crop", "spikedetect", "win_baseline", "sig_baseline", "neucoeff",
+    ]),
+]
+
+
+def _display_ops_value(value) -> str:
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple, dict, bool, int, float)) or value is None:
+        return repr(value)
+    return str(value)
+
+
+def _parse_ops_value(text: str, old_value):
+    stripped = text.strip()
+    if isinstance(old_value, np.ndarray):
+        return np.asarray(ast.literal_eval(stripped))
+    if isinstance(old_value, bool):
+        lowered = stripped.lower()
+        if lowered in {"true", "1", "yes", "y"}:
+            return True
+        if lowered in {"false", "0", "no", "n"}:
+            return False
+        raise ValueError("Boolean values must be true/false or 1/0.")
+    if isinstance(old_value, int) and not isinstance(old_value, bool):
+        return int(stripped)
+    if isinstance(old_value, float):
+        return float(stripped)
+    if isinstance(old_value, (list, tuple, dict)) or old_value is None:
+        return ast.literal_eval(stripped)
+    return stripped
+
+
+class Suite2pOpsEditorDialog(QtWidgets.QDialog):
+    def __init__(self, config_path: Path, parent=None):
+        super().__init__(parent)
+        self.config_path = Path(config_path)
+        self.ops = np.load(self.config_path, allow_pickle=True).item()
+        if not isinstance(self.ops, dict):
+            raise ValueError(f"Suite2p config is not a dict: {self.config_path}")
+        self.dirty = False
+        self.setWindowTitle(f"Edit Suite2p config: {self.config_path.name}")
+        self.resize(900, 700)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        path_label = QtWidgets.QLabel(str(self.config_path))
+        path_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(path_label)
+
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["Setting", "Value", "Type"])
+        self.tree.itemDoubleClicked.connect(self.edit_selected_item)
+        layout.addWidget(self.tree)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.save_button = QtWidgets.QPushButton("Save")
+        self.close_button = QtWidgets.QPushButton("Close")
+        buttons.addStretch(1)
+        buttons.addWidget(self.save_button)
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
+        self.save_button.clicked.connect(self.save)
+        self.close_button.clicked.connect(self.close)
+        self.populate_tree()
+
+    def populate_tree(self):
+        self.tree.clear()
+        grouped_keys = set()
+        for group_name, keys in S2P_OPS_GROUPS:
+            group_item = QtWidgets.QTreeWidgetItem([group_name, "", ""])
+            group_item.setFirstColumnSpanned(True)
+            font = group_item.font(0)
+            font.setBold(True)
+            group_item.setFont(0, font)
+            self.tree.addTopLevelItem(group_item)
+            for key in keys:
+                if key in self.ops:
+                    grouped_keys.add(key)
+                    group_item.addChild(self._setting_item(key))
+            group_item.setExpanded(True)
+
+        other_keys = sorted(key for key in self.ops if key not in grouped_keys)
+        if other_keys:
+            other_item = QtWidgets.QTreeWidgetItem(["Other", "", ""])
+            other_item.setFirstColumnSpanned(True)
+            font = other_item.font(0)
+            font.setBold(True)
+            other_item.setFont(0, font)
+            self.tree.addTopLevelItem(other_item)
+            for key in other_keys:
+                other_item.addChild(self._setting_item(key))
+            other_item.setExpanded(False)
+
+        self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(2)
+
+    def _setting_item(self, key: str) -> QtWidgets.QTreeWidgetItem:
+        value = self.ops[key]
+        item = QtWidgets.QTreeWidgetItem([
+            key,
+            _display_ops_value(value),
+            type(value).__name__,
+        ])
+        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, key)
+        return item
+
+    def edit_selected_item(self, item: QtWidgets.QTreeWidgetItem, _column: int):
+        key = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not key:
+            return
+        old_value = self.ops[key]
+        text, ok = QtWidgets.QInputDialog.getMultiLineText(
+            self,
+            "Edit Suite2p Setting",
+            f"{key} ({type(old_value).__name__})",
+            _display_ops_value(old_value),
+        )
+        if not ok:
+            return
+        try:
+            new_value = _parse_ops_value(text, old_value)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Invalid Value", str(exc))
+            return
+        self.ops[key] = new_value
+        item.setText(1, _display_ops_value(new_value))
+        item.setText(2, type(new_value).__name__)
+        self.dirty = True
+
+    def save(self):
+        np.save(self.config_path, self.ops)
+        self.dirty = False
+        QtWidgets.QMessageBox.information(self, "Suite2p Config", f"Saved:\n{self.config_path}")
+
+    def closeEvent(self, event: QtGui.QCloseEvent):
+        if self.dirty:
+            response = QtWidgets.QMessageBox.question(
+                self,
+                "Unsaved Suite2p Config Changes",
+                "Save changes before closing?",
+                (
+                    QtWidgets.QMessageBox.StandardButton.Save
+                    | QtWidgets.QMessageBox.StandardButton.Discard
+                    | QtWidgets.QMessageBox.StandardButton.Cancel
+                ),
+                QtWidgets.QMessageBox.StandardButton.Save,
+            )
+            if response == QtWidgets.QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if response == QtWidgets.QMessageBox.StandardButton.Save:
+                np.save(self.config_path, self.ops)
+                self.dirty = False
+        event.accept()
+
+
+class Suite2pConfigSelector(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.config_dir: Optional[Path] = None
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.combo = EditableConfigCombo()
+        self.edit_button = QtWidgets.QPushButton("Edit")
+        layout.addWidget(self.combo, 1)
+        layout.addWidget(self.edit_button)
+        self.edit_button.clicked.connect(self.edit_current_config)
+
+    def set_config_dir(self, config_dir: Optional[Path]):
+        self.config_dir = Path(config_dir) if config_dir else None
+
+    def clear(self):
+        self.combo.clear()
+
+    def addItems(self, values: list[str]):
+        self.combo.addItems(values)
+
+    def value(self) -> str:
+        return self.combo.value()
+
+    def set_value(self, value: str):
+        self.combo.set_value(value)
+
+    def edit_current_config(self):
+        config_name = self.value()
+        if not config_name:
+            QtWidgets.QMessageBox.information(self, "Edit Suite2p Config", "Select a Suite2p config first.")
+            return
+        config_path = Path(config_name)
+        if not config_path.is_absolute():
+            if self.config_dir is None:
+                QtWidgets.QMessageBox.warning(self, "Edit Suite2p Config", "No Suite2p config directory is set.")
+                return
+            config_path = self.config_dir / config_name
+        if not config_path.exists():
+            QtWidgets.QMessageBox.warning(self, "Edit Suite2p Config", f"Config file not found:\n{config_path}")
+            return
+        dialog = Suite2pOpsEditorDialog(config_path, self)
+        dialog.exec()
 
 
 class EmittingTextStream:
@@ -814,21 +1053,24 @@ class StandardConfigWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._config_files: list[str] = []
+        self._config_dir: Optional[Path] = None
         layout = QtWidgets.QFormLayout(self)
         self.same_for_both = QtWidgets.QCheckBox("Use same config for both channels")
         self.same_for_both.setChecked(True)
-        self.ch1_combo = EditableConfigCombo()
-        self.ch2_combo = EditableConfigCombo()
+        self.ch1_combo = Suite2pConfigSelector()
+        self.ch2_combo = Suite2pConfigSelector()
         layout.addRow(self.same_for_both)
         layout.addRow("Channel 1 config", self.ch1_combo)
         layout.addRow("Channel 2 config", self.ch2_combo)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
         self._sync_channel_mode()
 
-    def set_config_files(self, config_files: list[str]):
+    def set_config_files(self, config_files: list[str], config_dir: Optional[Path] = None):
         self._config_files = list(config_files)
+        self._config_dir = Path(config_dir) if config_dir else None
         for combo in (self.ch1_combo, self.ch2_combo):
             current = combo.value()
+            combo.set_config_dir(self._config_dir)
             combo.clear()
             combo.addItems(self._config_files)
             combo.set_value(current)
@@ -873,21 +1115,30 @@ class StandardConfigWidget(QtWidgets.QWidget):
 
 
 class PathConfigRow(QtWidgets.QWidget):
-    def __init__(self, path_name: str, nchannels: int, config_files: list[str], parent=None):
+    def __init__(
+        self,
+        path_name: str,
+        nchannels: int,
+        config_files: list[str],
+        config_dir: Optional[Path] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.path_name = path_name
         self.nchannels = nchannels
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QtWidgets.QLabel(path_name))
-        self.ch1_combo = EditableConfigCombo()
+        self.ch1_combo = Suite2pConfigSelector()
+        self.ch1_combo.set_config_dir(config_dir)
         self.ch1_combo.addItems(config_files)
         layout.addWidget(QtWidgets.QLabel("Ch1"))
         layout.addWidget(self.ch1_combo, 1)
         self.same_for_both = QtWidgets.QCheckBox("Same for ch2")
         self.same_for_both.setChecked(True)
         layout.addWidget(self.same_for_both)
-        self.ch2_combo = EditableConfigCombo()
+        self.ch2_combo = Suite2pConfigSelector()
+        self.ch2_combo.set_config_dir(config_dir)
         self.ch2_combo.addItems(config_files)
         layout.addWidget(QtWidgets.QLabel("Ch2"))
         layout.addWidget(self.ch2_combo, 1)
@@ -947,6 +1198,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_files: list[str] = []
+        self.config_dir: Optional[Path] = None
         self.descriptor: Optional[ExperimentDescriptor] = None
         layout = QtWidgets.QVBoxLayout(self)
         mode_layout = QtWidgets.QHBoxLayout()
@@ -978,10 +1230,16 @@ class MesoConfigWidget(QtWidgets.QWidget):
         self.mode_combo.currentIndexChanged.connect(self.stack.setCurrentIndex)
         self.path_rows: OrderedDict[str, PathConfigRow] = OrderedDict()
 
-    def set_context(self, descriptor: ExperimentDescriptor, config_files: list[str]):
+    def set_context(
+        self,
+        descriptor: ExperimentDescriptor,
+        config_files: list[str],
+        config_dir: Optional[Path] = None,
+    ):
         self.descriptor = descriptor
         self.config_files = list(config_files)
-        self.global_widget.set_config_files(self.config_files)
+        self.config_dir = Path(config_dir) if config_dir else None
+        self.global_widget.set_config_files(self.config_files, self.config_dir)
         self.global_widget.set_channel_count(descriptor.nchannels)
         for row in list(self.path_rows.values()):
             row.setParent(None)
@@ -994,7 +1252,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
             if widget is not None:
                 widget.deleteLater()
         for path_name, meta in descriptor.per_path.items():
-            row = PathConfigRow(path_name, meta.nchannels, self.config_files)
+            row = PathConfigRow(path_name, meta.nchannels, self.config_files, self.config_dir)
             roi_label = QtWidgets.QLabel(f"ROIs: {', '.join(meta.roi_names)}")
             container = QtWidgets.QWidget()
             container_layout = QtWidgets.QVBoxLayout(container)
@@ -1041,18 +1299,18 @@ class Step1Tab(QtWidgets.QWidget):
         self.username = getpass.getuser()
         self.detected_descriptor: Optional[ExperimentDescriptor] = None
         self.pending_preset: Optional[dict] = None
+        self.preview_timer = QtCore.QTimer(self)
+        self.preview_timer.setInterval(500)
+        self.preview_timer.timeout.connect(self.update_config_preview)
         self._build_ui()
         self.refresh_config_choices()
+        self.preview_timer.start()
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
 
         toolbar = QtWidgets.QHBoxLayout()
-        self.load_preset_button = QtWidgets.QPushButton("Load Preset")
-        self.save_preset_button = QtWidgets.QPushButton("Save Preset")
         self.submit_button = QtWidgets.QPushButton("Submit Step 1 Job")
-        toolbar.addWidget(self.load_preset_button)
-        toolbar.addWidget(self.save_preset_button)
         toolbar.addStretch(1)
         toolbar.addWidget(self.submit_button)
         outer.addLayout(toolbar)
@@ -1109,6 +1367,25 @@ class Step1Tab(QtWidgets.QWidget):
         right_layout = QtWidgets.QVBoxLayout(right)
         self.config_group = QtWidgets.QGroupBox("Suite2p Config Builder")
         config_layout = QtWidgets.QVBoxLayout(self.config_group)
+        self.preset_group = QtWidgets.QGroupBox("Saved Step 1 Configs")
+        preset_layout = QtWidgets.QVBoxLayout(self.preset_group)
+        self.preset_list = QtWidgets.QListWidget()
+        self.preset_list.setMaximumHeight(140)
+        preset_layout.addWidget(self.preset_list)
+        preset_buttons = QtWidgets.QHBoxLayout()
+        self.load_preset_button = QtWidgets.QPushButton("Load")
+        self.save_preset_button = QtWidgets.QPushButton("Save")
+        self.delete_preset_button = QtWidgets.QPushButton("Delete")
+        self.rename_preset_button = QtWidgets.QPushButton("Rename")
+        self.help_preset_button = QtWidgets.QPushButton("Help")
+        preset_buttons.addWidget(self.load_preset_button)
+        preset_buttons.addWidget(self.save_preset_button)
+        preset_buttons.addWidget(self.delete_preset_button)
+        preset_buttons.addWidget(self.rename_preset_button)
+        preset_buttons.addStretch(1)
+        preset_buttons.addWidget(self.help_preset_button)
+        preset_layout.addLayout(preset_buttons)
+        config_layout.addWidget(self.preset_group)
         self.standard_widget = StandardConfigWidget()
         self.meso_widget = MesoConfigWidget()
         self.config_stack = QtWidgets.QStackedWidget()
@@ -1118,30 +1395,70 @@ class Step1Tab(QtWidgets.QWidget):
 
         self.settings_json = QtWidgets.QPlainTextEdit("{}")
         self.settings_json.setPlaceholderText('Optional JSON dict for step1_config["settings"]')
-        config_layout.addWidget(QtWidgets.QLabel('settings JSON'))
+        self.settings_json.setMaximumHeight(90)
+        config_layout.addWidget(QtWidgets.QLabel('Optional settings override JSON'))
         config_layout.addWidget(self.settings_json)
         self.srdtrans_json = QtWidgets.QPlainTextEdit(
             '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}'
         )
         self.srdtrans_json.setPlaceholderText('JSON dict for step1_config["srdtrans"]')
+        self.srdtrans_json.setMaximumHeight(90)
         config_layout.addWidget(QtWidgets.QLabel('SRDTrans JSON'))
         config_layout.addWidget(self.srdtrans_json)
+        self.config_preview = QtWidgets.QPlainTextEdit()
+        self.config_preview.setReadOnly(True)
+        self.config_preview.setPlaceholderText("Generated step1_config preview")
+        config_layout.addWidget(QtWidgets.QLabel("Generated step1_config JSON"))
+        config_layout.addWidget(self.config_preview)
         right_layout.addWidget(self.config_group)
         main_splitter.addWidget(right)
         main_splitter.setSizes([420, 680])
 
         self.exp_editor.changed.connect(self.on_exp_list_changed)
-        self.user_edit.editingFinished.connect(self.on_exp_list_changed)
+        self.user_edit.editingFinished.connect(self.on_user_edit_finished)
         self.load_preset_button.clicked.connect(self.load_preset)
+        self.delete_preset_button.clicked.connect(self.delete_preset)
+        self.rename_preset_button.clicked.connect(self.rename_preset)
+        self.help_preset_button.clicked.connect(self.show_preset_help)
+        self.preset_list.itemDoubleClicked.connect(lambda _item: self.load_preset())
         self.save_preset_button.clicked.connect(self.save_preset)
         self.submit_button.clicked.connect(self.submit_job)
+        self.refresh_preset_list()
+        self.update_config_preview()
+
+    def on_user_edit_finished(self):
+        self.refresh_preset_list()
+        self.on_exp_list_changed()
 
     def refresh_config_choices(self):
         config_dir = S2P_CONFIG_ROOT / self.user_edit.text().strip()
         config_files = sorted(p.name for p in config_dir.glob("*.npy")) if config_dir.exists() else []
-        self.standard_widget.set_config_files(config_files)
+        self.standard_widget.set_config_files(config_files, config_dir)
         if self.detected_descriptor is not None and self.detected_descriptor.topology == "meso":
-            self.meso_widget.set_context(self.detected_descriptor, config_files)
+            self.meso_widget.set_context(self.detected_descriptor, config_files, config_dir)
+
+    def _preset_root(self) -> Path:
+        return _step1_preset_root(self.user_edit.text().strip() or self.username)
+
+    def refresh_preset_list(self):
+        preset_root = self._preset_root()
+        _ensure_preset_dir(preset_root)
+        selected_path = self._selected_preset_path()
+        selected_name = selected_path.name if selected_path else None
+        self.preset_list.clear()
+        for path in sorted(preset_root.glob("*.json")):
+            item = QtWidgets.QListWidgetItem(path.stem)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
+            self.preset_list.addItem(item)
+            if selected_name and path.name == selected_name:
+                self.preset_list.setCurrentItem(item)
+
+    def _selected_preset_path(self) -> Optional[Path]:
+        item = self.preset_list.currentItem()
+        if item is None:
+            return None
+        path_text = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        return Path(path_text) if path_text else None
 
     def on_exp_list_changed(self):
         self.detected_descriptor = None
@@ -1161,7 +1478,11 @@ class Step1Tab(QtWidgets.QWidget):
                 self.standard_widget.set_channel_count(first_descriptor.nchannels)
             else:
                 self.config_stack.setCurrentWidget(self.meso_widget)
-                self.meso_widget.set_context(first_descriptor, self.standard_widget._config_files)
+                self.meso_widget.set_context(
+                    first_descriptor,
+                    self.standard_widget._config_files,
+                    self.standard_widget._config_dir,
+                )
             lines = [f"{exp_ids[0]}: {first_descriptor.summary}"]
 
             for extra_exp_id in exp_ids[1:]:
@@ -1236,6 +1557,18 @@ class Step1Tab(QtWidgets.QWidget):
             config["srdtrans"] = json.loads(self.srdtrans_json.toPlainText().strip() or "{}")
         return config
 
+    def update_config_preview(self):
+        try:
+            config = self._build_step1_config()
+            preview = json.dumps(config, indent=2)
+        except Exception as exc:
+            preview = (
+                "Config preview will appear once the Step 1 form is complete.\n\n"
+                f"Current issue: {exc}"
+            )
+        if self.config_preview.toPlainText() != preview:
+            self.config_preview.setPlainText(preview)
+
     def _preset_payload(self) -> dict:
         return {
             "userID": self.user_edit.text().strip(),
@@ -1259,6 +1592,7 @@ class Step1Tab(QtWidgets.QWidget):
     def _apply_preset_payload(self, payload: dict):
         if payload.get("userID"):
             self.user_edit.setText(payload["userID"])
+            self.refresh_preset_list()
         self.refresh_config_choices()
         self.mode_combo.setCurrentIndex(0 if payload.get("mode", "single") == "single" else 1)
         self.queue_combo.setCurrentIndex(0 if payload.get("queue", "step1") == "step1" else 1)
@@ -1291,32 +1625,139 @@ class Step1Tab(QtWidgets.QWidget):
         else:
             self.meso_widget.apply_preset(payload.get("meso", {}))
 
+    def _preset_compatibility_warning(self, payload: dict) -> Optional[str]:
+        if self.detected_descriptor is None:
+            return (
+                "No experiment metadata is currently selected.\n\n"
+                "Add at least one expID first so the GUI can check whether this saved config "
+                "matches the experiment topology and channel count."
+            )
+
+        warnings = []
+        for exp_id in self.exp_editor.values()[1:]:
+            try:
+                extra_descriptor = describe_experiment(self.user_edit.text().strip(), exp_id)
+            except Exception as exc:
+                warnings.append(f"could not inspect selected expID {exp_id}: {exc}")
+                continue
+            compatible, reason = self._is_compatible(self.detected_descriptor, extra_descriptor)
+            if not compatible:
+                warnings.append(f"selected expID {exp_id} is incompatible with the first expID: {reason}")
+
+        preset_topology = payload.get("topology")
+        if preset_topology and preset_topology != self.detected_descriptor.topology:
+            warnings.append(
+                f"topology differs: preset is {preset_topology}, "
+                f"selected experiment is {self.detected_descriptor.topology}"
+            )
+        preset_nchannels = payload.get("nchannels")
+        if preset_nchannels and int(preset_nchannels) != int(self.detected_descriptor.nchannels):
+            warnings.append(
+                f"channel count differs: preset has {preset_nchannels}, "
+                f"selected experiment has {self.detected_descriptor.nchannels}"
+            )
+
+        if self.detected_descriptor.topology == "meso":
+            preset_paths = set((payload.get("meso", {}).get("paths") or {}).keys())
+            selected_paths = set(self.detected_descriptor.per_path.keys())
+            if preset_paths and preset_paths != selected_paths:
+                warnings.append(
+                    "mesoscope path set differs: preset has "
+                    f"{', '.join(sorted(preset_paths))}; selected experiment has "
+                    f"{', '.join(sorted(selected_paths))}"
+                )
+
+        if not warnings:
+            return None
+        return "This saved config may be incompatible with the selected expIDs:\n\n- " + "\n- ".join(warnings)
+
     def save_preset(self):
-        preset_root = _step1_preset_root(self.user_edit.text().strip() or self.username)
+        preset_root = self._preset_root()
         _ensure_preset_dir(preset_root)
         name, ok = QtWidgets.QInputDialog.getText(self, "Save Step 1 Preset", "Preset name:")
         if not ok or not name.strip():
             return
+        safe_name = _safe_preset_name(name)
+        if not safe_name:
+            QtWidgets.QMessageBox.warning(self, "Save Preset", "Preset name is not valid.")
+            return
         payload = self._preset_payload()
-        path = preset_root / f"{name.strip()}.json"
+        path = preset_root / f"{safe_name}.json"
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self.refresh_preset_list()
         QtWidgets.QMessageBox.information(self, "Save Preset", f"Saved preset:\n{path}")
 
     def load_preset(self):
-        preset_root = _step1_preset_root(self.user_edit.text().strip() or self.username)
-        _ensure_preset_dir(preset_root)
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Load Step 1 Preset",
-            str(preset_root),
-            "JSON (*.json)",
-        )
+        path = self._selected_preset_path()
         if not path:
+            QtWidgets.QMessageBox.information(self, "Load Preset", "Select a saved config first.")
             return
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        warning = self._preset_compatibility_warning(payload)
+        if warning is not None:
+            response = QtWidgets.QMessageBox.warning(
+                self,
+                "Load Preset",
+                warning + "\n\nLoad it anyway?",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No,
+            )
+            if response != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
         self._apply_preset_payload(payload)
         if self.detected_descriptor is not None:
             QtWidgets.QMessageBox.information(self, "Load Preset", f"Loaded preset:\n{path}")
+
+    def delete_preset(self):
+        path = self._selected_preset_path()
+        if not path:
+            QtWidgets.QMessageBox.information(self, "Delete Preset", "Select a saved config first.")
+            return
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Preset",
+            f"Delete saved config?\n{path}",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        path.unlink()
+        self.refresh_preset_list()
+
+    def rename_preset(self):
+        path = self._selected_preset_path()
+        if not path:
+            QtWidgets.QMessageBox.information(self, "Rename Preset", "Select a saved config first.")
+            return
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Rename Step 1 Preset",
+            "New preset name:",
+            text=path.stem,
+        )
+        if not ok or not name.strip():
+            return
+        safe_name = _safe_preset_name(name)
+        if not safe_name:
+            QtWidgets.QMessageBox.warning(self, "Rename Preset", "Preset name is not valid.")
+            return
+        new_path = path.with_name(f"{safe_name}.json")
+        if new_path.exists() and new_path != path:
+            QtWidgets.QMessageBox.warning(self, "Rename Preset", f"Preset already exists:\n{new_path}")
+            return
+        path.rename(new_path)
+        self.refresh_preset_list()
+
+    def show_preset_help(self):
+        QtWidgets.QMessageBox.information(
+            self,
+            "Saved Step 1 Configs",
+            "First add exp IDs, then load a saved config or configure a new one.\n\n"
+            "The GUI uses the selected exp IDs to detect standard vs mesoscope layout, "
+            "channel count, paths, and ROIs. Loading a saved config before adding exp IDs "
+            "prevents that compatibility check.",
+        )
 
     def submit_job(self):
         try:

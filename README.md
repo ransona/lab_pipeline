@@ -2,6 +2,48 @@
 
 Canonical preprocessing repository for the lab pipeline.
 
+## Apps And Launchers
+
+Use `[username]` as your Linux username on `dream`.
+
+GUI apps:
+
+| App | Purpose | Linux command | Windows launcher |
+| --- | --- | --- | --- |
+| `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
+| `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
+| `eye_check.py` | Eye tracking QC GUI adapter | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
+| `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
+
+Pipeline and subsystem apps:
+
+| App | Purpose | Typical command |
+| --- | --- | --- |
+| `queue_listener.py` | Normal Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py` |
+| `queue_listener.py --debug` | Debug Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug` |
+| `run_step1.py` | Submit Step 1 jobs from a config | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/run_step1.py` |
+| `run_step2.py` | Run Step 2 jobs from a config | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/run_step2.py` |
+| `preprocess_step1.py` | Execute one queued Step 1 runtime job directly | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/preprocess_step1.py` |
+| `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
+| `s2p_launcher.py` | Suite2p launcher for one work unit | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/s2p_launcher.py` |
+| `dlc_launcher.py` | DeepLabCut launcher | `/opt/scripts/conda-run.sh DLC_05_02_2026 python /home/[username]/code/lab_pipeline/apps/dlc_launcher.py` |
+| `srdtrans_launcher.py` | SRDTrans denoising launcher | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/srdtrans_launcher.py` |
+| `split_combined_s2p.py` | Split combined Suite2p output back into source experiments | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/split_combined_s2p.py` |
+| `preprocess_bv.py` | Bonvision preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_bv.py` |
+| `preprocess_cam.py` | Camera timing preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_cam.py` |
+| `preprocess_cut.py` | Trace cutting/preprocessing helper | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_cut.py` |
+| `preprocess_ephys.py` | Ephys preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_ephys.py` |
+| `preprocess_habituate.py` | Habituation data copy/preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_habituate.py` |
+| `preprocess_pupil.py` | Pupil preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_pupil.py` |
+| `preprocess_pupil_timestamp.py` | Pupil timestamp alignment | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_pupil_timestamp.py` |
+| `preprocess_s2p.py` | Suite2p postprocessing/timestamp extraction | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_s2p.py` |
+
+Windows launchers are in `windows_launchers/`. They assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If inference fails, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME`.
+
+`apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
+
+## Repository Layout
+
 The repo is organised around workflow, not around old script-vs-library splits:
 
 - `src/preprocess_pipeline/`
@@ -15,8 +57,6 @@ The repo is organised around workflow, not around old script-vs-library splits:
   - short reference notes
 - `legacy/`
   - archived historical code snapshots kept for reference only
-
-`apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
 
 ## How To Use It
 
@@ -82,37 +122,7 @@ The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/
 
 ## GUIs
 
-Queue manager:
-
-```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
-```
-
-Imaging viewer with raw TIFF and Suite2p binary modes:
-
-```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py
-```
-
-Standalone Suite2p binary viewer:
-
-```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py
-```
-
-Eye-check viewer:
-
-```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py
-```
-
-Windows launch helpers are in:
-
-```text
-windows_launchers/
-```
-
-Those `.bat` files assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If that inference does not work, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME` manually.
+The main GUI entry points are `qview.py`, `imaging_view.py`, and `eye_check.py`. See `Apps And Launchers` at the top of this README for Linux commands and Windows `.bat` launchers.
 
 ## Step 1 Configs
 
