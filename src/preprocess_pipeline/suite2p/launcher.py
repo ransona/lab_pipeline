@@ -412,17 +412,19 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
     fix_binary_permissions(output_path)
 
 
-def make_summed_registration_binary(ch1_file, ch2_file, sum_file, nframes, Ly, Lx, batch_size):
-    """Create a temporary int16 binary containing clipped ch1 + ch2 frames."""
-    if os.path.exists(sum_file):
-        os.remove(sum_file)
+def make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size):
+    """Create a temporary int16 binary containing the average of ch1 and ch2."""
+    if os.path.exists(combined_file):
+        os.remove(combined_file)
     with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch1_file, n_frames=nframes) as ch1, \
             suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch2_file, n_frames=nframes) as ch2, \
-            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=sum_file, n_frames=nframes) as summed:
+            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined:
         for start in range(0, nframes, batch_size):
             stop = min(start + batch_size, nframes)
-            frames = ch1[start:stop].astype(np.int32) + ch2[start:stop].astype(np.int32)
-            summed[start:stop] = np.clip(frames, np.iinfo(np.int16).min, np.iinfo(np.int16).max)
+            frames = (
+                ch1[start:stop].astype(np.int32) + ch2[start:stop].astype(np.int32)
+            ) / 2.0
+            combined[start:stop] = np.rint(frames).astype(np.int16)
 
 
 def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
@@ -443,7 +445,7 @@ def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
 
 
 def run_shared_summed_channel_registration(all_tif_paths, output_path, registration_config_path):
-    """Register two-channel data using ch1 + ch2 for offsets, then apply offsets to both channels."""
+    """Register two-channel data using average(ch1, ch2), then apply offsets to both channels."""
     remove_tree_if_exists(os.path.join(output_path, "suite2p"))
     remove_tree_if_exists(os.path.join(output_path, "ch2"))
 
@@ -451,7 +453,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
     if int(ops.get("nchannels", 1)) < 2:
         raise ValueError("Summed-channel registration requires a two-channel Suite2p config.")
 
-    print("** Running summed-channel shared registration")
+    print("** Running combined-channel shared registration")
     conversion_ops = ops.copy()
     conversion_ops["save_mat"] = False
     conversion_ops["roidetect"] = False
@@ -468,7 +470,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
 
     for plane_dir in get_plane_dirs(output_path):
         plane_name = os.path.basename(plane_dir)
-        print(f">>>>>>>>>>>>>>>>>>>>> SUMMED REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
+        print(f">>>>>>>>>>>>>>>>>>>>> COMBINED-CHANNEL REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
         plane_ops_path = os.path.join(plane_dir, "ops.npy")
         plane_ops = np.load(plane_ops_path, allow_pickle=True).item()
         ch1_file = plane_ops["reg_file"]
@@ -493,13 +495,13 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
         Ly = int(reg_ops["Ly"])
         Lx = int(reg_ops["Lx"])
         batch_size = int(reg_ops.get("batch_size", 500))
-        summed_file = os.path.join(plane_dir, "data_summed_registration.bin")
-        print(f"Creating summed registration binary: {summed_file}")
-        make_summed_registration_binary(ch1_file, ch2_file, summed_file, nframes, Ly, Lx, batch_size)
+        combined_file = os.path.join(plane_dir, "data_combined_registration.bin")
+        print(f"Creating averaged two-channel registration binary: {combined_file}")
+        make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
 
-        with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=summed_file, n_frames=nframes) as summed_binary:
+        with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
             registration_outputs = suite2p_register.registration_wrapper(
-                summed_binary,
+                combined_binary,
                 ops=reg_ops,
             )
 
@@ -508,9 +510,9 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
         yoff1 = reg_ops.get("yoff1")
         xoff1 = reg_ops.get("xoff1")
 
-        print("Applying summed-channel registration offsets to channel 1")
+        print("Applying combined-channel registration offsets to channel 1")
         mean_img_ch1 = register_binary_with_offsets(ch1_file, yoff, xoff, yoff1, xoff1, reg_ops)
-        print("Applying summed-channel registration offsets to channel 2")
+        print("Applying combined-channel registration offsets to channel 2")
         mean_img_ch2 = register_binary_with_offsets(ch2_file, yoff, xoff, yoff1, xoff1, reg_ops)
 
         reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
@@ -519,10 +521,11 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
             reg_ops["meanImg"], reg_ops.copy()
         ).astype(np.float32)
         reg_ops["register_with_summed_channel"] = True
+        reg_ops["registration_channel_combination"] = "average"
         np.save(plane_ops_path, reg_ops)
 
-        if os.path.exists(summed_file):
-            os.remove(summed_file)
+        if os.path.exists(combined_file):
+            os.remove(combined_file)
 
     fix_binary_permissions(output_path)
 

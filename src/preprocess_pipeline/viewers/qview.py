@@ -1086,7 +1086,7 @@ class StandardConfigWidget(QtWidgets.QWidget):
         layout = QtWidgets.QFormLayout(self)
         self.same_for_both = QtWidgets.QCheckBox("Use same config for both channels")
         self.same_for_both.setChecked(True)
-        self.register_with_summed_channel = QtWidgets.QCheckBox("Register with summed channel")
+        self.register_with_summed_channel = QtWidgets.QCheckBox("Register with averaged channels")
         self.register_with_summed_channel.setChecked(False)
         self.register_with_summed_channel.setEnabled(False)
         self.ch1_combo = Suite2pConfigSelector()
