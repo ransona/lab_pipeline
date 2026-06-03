@@ -1,10 +1,18 @@
 import glob
 import os
 import grp
+import shutil
 
 import numpy as np
 
 from preprocess_pipeline.shared import paths
+
+
+SPINES_GUI_ARTIFACT_PATTERNS = [
+    "*conversion*.npy",
+    "extraction_*.txt",
+    "*mode*.npy",
+]
 
 
 def split_combined_suite2p():
@@ -168,6 +176,7 @@ def split_combined_channel(userID, split_root, channel_root):
             split_suffix=split_suffix,
         )
         dest_channel_root = get_dest_channel_root(dest_split_root, is_ch2)
+        copy_spines_gui_artifacts(suite2p_combined_path, dest_channel_root)
         set_permissions(os.path.join(dest_channel_root, "suite2p"))
 
 
@@ -201,6 +210,26 @@ def get_dest_channel_root(dest_split_root, is_ch2):
     if is_ch2:
         return os.path.join(dest_split_root, "ch2")
     return dest_split_root
+
+
+def copy_spines_gui_artifacts(suite2p_combined_path, dest_channel_root):
+    source_dir = os.path.join(suite2p_combined_path, "SpinesGUI")
+    if not os.path.isdir(source_dir):
+        return
+
+    dest_dir = os.path.join(dest_channel_root, "suite2p", "SpinesGUI")
+    os.makedirs(dest_dir, exist_ok=True)
+
+    copied = 0
+    for pattern in SPINES_GUI_ARTIFACT_PATTERNS:
+        for source_path in sorted(glob.glob(os.path.join(source_dir, pattern))):
+            if not os.path.isfile(source_path):
+                continue
+            shutil.copy2(source_path, os.path.join(dest_dir, os.path.basename(source_path)))
+            copied += 1
+
+    if copied:
+        print(f"Copied {copied} SpinesGUI artifact(s) to {dest_dir}")
 
 
 def rewrite_ops_for_split(plane_ops, exp_dir_raw, dest_channel_root, dest_plane_dir, frames_in_exp):
