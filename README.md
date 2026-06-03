@@ -321,11 +321,11 @@ For a local workstation or Windows machine, set:
 ```python
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
-step1_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 
 step2_config["local_raw_repository_root"] = r"D:\data\Repository"
 step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
-step2_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+step2_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 ```
 
 Local mode:
@@ -379,7 +379,7 @@ step1_config["userID"] = getpass.getuser()
 step1_config["expIDs"] = ["2025-10-30_10_ESYB025"]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
-step1_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 
 # Use one Suite2p config for every mesoscope path/ROI work unit.
 step1_config["suite2p_config"] = {
@@ -449,7 +449,7 @@ step2_config["userID"] = getpass.getuser()
 step2_config["expIDs"] = ["2025-10-30_10_ESYB025"]
 step2_config["local_raw_repository_root"] = r"D:\data\Repository"
 step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
-step2_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+step2_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step2_config["pre_secs"] = 5
 step2_config["post_secs"] = 5
 
