@@ -16,10 +16,10 @@ STANDARD_CONFIG_PATH = '/data/common/dlc_models/all_setups-rubencorreia-2025-12-
 def crop_vids(userID, expID):
     _, _, _, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
 
-    habit_video = os.path.join(exp_dir_raw, expID + '_habit.mp4')
+    habit_video = paths.raw_file_path(userID, expID, expID + '_habit.mp4', exp_dir_raw=exp_dir_raw)
     habit_video_pattern = os.path.join(exp_dir_raw, expID + '_Setup_*_habit.mp4')
     habit_video_matches = sorted(glob.glob(habit_video_pattern))
-    two_eye_video = os.path.join(exp_dir_raw, expID + '_eye1.mp4')
+    two_eye_video = paths.raw_file_path(userID, expID, expID + '_eye1.mp4', exp_dir_raw=exp_dir_raw)
 
     if os.path.exists(habit_video):
         eye_video_to_crop = habit_video

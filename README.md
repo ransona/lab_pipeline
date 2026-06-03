@@ -319,16 +319,167 @@ settings["subtract_overall_frame"] = False
 For a local workstation or Windows machine, set:
 
 ```python
-step1_config["local_repository_root"] = r"D:\data\Repository"
-step2_config["local_repository_root"] = r"D:\data\Repository"
+step1_config["local_raw_repository_root"] = r"D:\data\Repository"
+step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+
+step2_config["local_raw_repository_root"] = r"D:\data\Repository"
+step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step2_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
 ```
 
 Local mode:
 
 - bypasses the queue
-- writes outputs under `<local_repository_root>/<animalID>/<expID>`
+- reads imaging data from `<local_raw_repository_root>/<animalID>/<expID>`
+- writes outputs under `<local_processed_repository_root>/<animalID>/<expID>`
+- falls back to `<local_nas_repository_root>/<animalID>/<expID>` for missing named metadata files
 - is intended for direct Step 1 and Step 2 execution
 - still uses the normal Suite2p config files and local envs
+
+The older `local_repository_root` setting is still accepted as a shortcut where raw and processed data live in the same tree, but the split-root form above is preferred.
+
+### Local mesoscope processing
+
+Local mesoscope raw data must match the normal lab repository layout under `local_raw_repository_root`:
+
+```text
+D:\data\Repository\
+  ESYB025\
+    2025-10-30_10_ESYB025\
+      P1\
+        R001\
+          *.tif
+        R002\
+          *.tif
+        SI_meta.pickle
+```
+
+For mesoscope experiments, the pipeline detects the `P*/R*` folders automatically. Each ROI folder becomes a Suite2p work unit, for example `P1/R001` and `P1/R002`. Outputs are written under `local_processed_repository_root`:
+
+```text
+D:\processed\Repository\ESYB025\2025-10-30_10_ESYB025\
+  P1\R001\suite2p\
+  P1\R002\suite2p\
+```
+
+Create a local Step 1 config, for example `configs/local/config_run_step1_meso.py`:
+
+```python
+from pathlib import Path
+import getpass
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
+
+step1_config = {}
+step1_config["userID"] = getpass.getuser()
+step1_config["expIDs"] = ["2025-10-30_10_ESYB025"]
+step1_config["local_raw_repository_root"] = r"D:\data\Repository"
+step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+
+# Use one Suite2p config for every mesoscope path/ROI work unit.
+step1_config["suite2p_config"] = {
+    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+}
+
+step1_config["runs2p"] = True
+step1_config["rundlc"] = False
+step1_config["runfitpupil"] = False
+
+run_step1_batch_universal(step1_config)
+```
+
+Suite2p config filenames are resolved from:
+
+```text
+/data/common/configs/s2p_configs/<userID>/
+```
+
+For local processing, make sure the required `.npy` Suite2p configs are available at that path in the environment where Python is running. On a native Windows setup this usually means running through WSL or otherwise making an equivalent `/data/common/...` path available.
+
+For dual-channel mesoscope data, use a default pair:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": [
+        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    ],
+}
+```
+
+For explicit per-ROI control:
+
+```python
+step1_config["suite2p_config"] = {
+    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "overrides": {
+        "P1/R001": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "P1/R002": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    },
+}
+```
+
+Run local Step 1 directly; it is not submitted to the server queue:
+
+```bat
+conda activate sci
+python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
+```
+
+The Step 1 runner will call the local `suite2p` conda environment for Suite2p work. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
+
+After Step 1 finishes, create a local Step 2 config:
+
+```python
+from pathlib import Path
+import getpass
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from preprocess_pipeline.step2.run_batch import run_step2_batch
+
+step2_config = {}
+step2_config["userID"] = getpass.getuser()
+step2_config["expIDs"] = ["2025-10-30_10_ESYB025"]
+step2_config["local_raw_repository_root"] = r"D:\data\Repository"
+step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step2_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
+step2_config["pre_secs"] = 5
+step2_config["post_secs"] = 5
+
+step2_config["run_bonvision"] = True
+step2_config["run_s2p_timestamp"] = True
+step2_config["run_ephys"] = False
+step2_config["run_dlc_timestamp"] = False
+step2_config["run_cuttraces"] = True
+
+step2_config["settings"] = {
+    "neuropil_coeff": [0.7, 0.7],
+    "subtract_overall_frame": False,
+}
+
+run_step2_batch(step2_config)
+```
+
+Run Step 2 directly:
+
+```bat
+conda activate sci
+python D:\code\lab_pipeline\configs\local\config_run_step2_meso.py
+```
+
+Local mode limitations:
+
+- It currently assumes the local machine has a working `sci` env and a working `suite2p` env.
+- It is intended first for Suite2p and Suite2p postprocessing/trace cutting.
+- DLC, pupil fitting, ephys, and Bonvision steps should only be enabled if the required local files and envs are present.
+- The normal server queue GUI is not required for local mode; local configs execute immediately.
 
 ## Environment Expectations
 

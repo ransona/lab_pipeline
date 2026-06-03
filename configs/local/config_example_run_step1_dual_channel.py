@@ -12,7 +12,9 @@ step1_config["userID"] = "adamranson"
 step1_config["expIDs"] = [
     "2026-05-11_01_ESRC033",
 ]
-step1_config["local_repository_root"] = r"D:\data\Repository"
+step1_config["local_raw_repository_root"] = r"D:\data\Repository"
+step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_nas_repository_root"] = r"Z:\Remote_Repository"
 
 step1_config["suite2p_config"] = [
     "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",

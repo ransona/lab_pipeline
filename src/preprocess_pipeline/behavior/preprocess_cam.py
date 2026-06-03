@@ -15,7 +15,7 @@ def preprocess_cam_run(userID, expID):
     exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
 
     # load timeline
-    Timeline = loadmat(os.path.join(exp_dir_raw, expID + '_Timeline.mat'))
+    Timeline = loadmat(paths.raw_file_path(userID, expID, expID + '_Timeline.mat', exp_dir_raw=exp_dir_raw))
     Timeline = Timeline['timelineSession']
     # get timeline file in a usable format after importing to python
     tl_chNames = Timeline['chNames'][0][0][0][0:]
@@ -24,15 +24,17 @@ def preprocess_cam_run(userID, expID):
 
     # Here load meta dta acquired with video frames. This contains frame times.
     # This is either in a .mat file (pre 08/07/24) or in a .pickle files (after this date)
-    if os.path.isfile(os.path.join(exp_dir_raw, (expID + '_eyeMeta1.mat'))):
+    eye_meta_mat = paths.raw_file_path(userID, expID, expID + '_eyeMeta1.mat', exp_dir_raw=exp_dir_raw)
+    eye_meta_pickle = paths.raw_file_path(userID, expID, expID + '_eyeMeta1.pickle', exp_dir_raw=exp_dir_raw)
+    if os.path.isfile(eye_meta_mat):
         # Load the MAT file
-        mat_contents = loadmat(os.path.join(exp_dir_raw, (expID + '_eyeMeta1.mat')))
+        mat_contents = loadmat(eye_meta_mat)
         eTrackData = mat_contents['eTrackData']
         eye_frameTimes = eTrackData['frameTimes'][0][0][0] # in one row array
         # eye_frameCount = eTrackData['frameCount'][0][0][0][0] # single number
     else:
         # Load the pickle
-        pickle_contents = pickle.load(open(os.path.join(exp_dir_raw, (expID + '_eyeMeta1.pickle')), "rb"))
+        pickle_contents = pickle.load(open(eye_meta_pickle, "rb"))
         eye_frameTimes = np.array(pickle_contents['frame_times'])
         print('Number of frame times = ' + str(len(eye_frameTimes)))
 

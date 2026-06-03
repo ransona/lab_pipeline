@@ -18,18 +18,18 @@ def run_preprocess_bv(userID, expID):
     # load the stimulus parameter file produced by matlab by the bGUI
     # this includes stim parameters and stimulus order
     try:
-        stim_params = loadmat(os.path.join(exp_dir_raw, expID + '_stim.mat'))
+        stim_params = loadmat(paths.raw_file_path(userID, expID, expID + '_stim.mat', exp_dir_raw=exp_dir_raw))
     except:
         raise Exception('Stimulus parameter file not found - this experiment was probably from pre-Dec 2021.')
     # load timeline
-    Timeline = loadmat(os.path.join(exp_dir_raw, expID + '_Timeline.mat'))
+    Timeline = loadmat(paths.raw_file_path(userID, expID, expID + '_Timeline.mat', exp_dir_raw=exp_dir_raw))
     Timeline = Timeline['timelineSession']
     # get timeline file in a usable format after importing to python
     tl_chNames = Timeline['chNames'][0][0][0][0:]
     tl_daqData = Timeline['daqData'][0,0]
     tl_time    = Timeline['time'][0][0]
 
-    frame_events = pd.read_csv(os.path.join(exp_dir_raw, expID + '_FrameEvents.csv'), names=['Frame', 'Timestamp', 'Sync', 'Trial'],
+    frame_events = pd.read_csv(paths.raw_file_path(userID, expID, expID + '_FrameEvents.csv', exp_dir_raw=exp_dir_raw), names=['Frame', 'Timestamp', 'Sync', 'Trial'],
                             header=None, skiprows=[0], dtype={'Frame':np.float32, 'Timestamp':np.float32, 'Sync':np.float32, 'Trial':np.float32})
 
     # Find BV times when digital flips
@@ -143,12 +143,12 @@ def run_preprocess_bv(userID, expID):
     trialOnsetTimesTL = trialOnsetTimesTL + bv_trial_latency
 
     # load matlab expData file
-    expData = loadmat(os.path.join(exp_dir_raw, expID + '_stim.mat'))
+    expData = loadmat(paths.raw_file_path(userID, expID, expID + '_stim.mat', exp_dir_raw=exp_dir_raw))
     stims = expData['expDat']['stims']
     stims = stims[0][0][0]
 
-    stim_info = pd.read_csv(os.path.join(exp_dir_raw, expID + '_stim.csv'))
-    stim_order = pd.read_csv(os.path.join(exp_dir_raw, expID + '_stim_order.csv'), header=None)
+    stim_info = pd.read_csv(paths.raw_file_path(userID, expID, expID + '_stim.csv', exp_dir_raw=exp_dir_raw))
+    stim_order = pd.read_csv(paths.raw_file_path(userID, expID, expID + '_stim_order.csv', exp_dir_raw=exp_dir_raw), header=None)
 
     # make a matrix for csv output of trial onset time and trial stimulus type
     # check number of trial onsets matches between bonvision and bGUI
@@ -160,7 +160,7 @@ def run_preprocess_bv(userID, expID):
     trialTimeMatrix = np.column_stack((trialOnsetTimesTL, stim_order.values))
 
     # Add running trace
-    Encoder = pd.read_csv(os.path.join(exp_dir_raw, expID + '_Encoder.csv'), names=['Frame', 'Timestamp', 'Trial', 'Position'],
+    Encoder = pd.read_csv(paths.raw_file_path(userID, expID, expID + '_Encoder.csv', exp_dir_raw=exp_dir_raw), names=['Frame', 'Timestamp', 'Trial', 'Position'],
                             header=None, skiprows=[0]) #, dtype={'Frame':np.float32, 'Timestamp':np.float32, 'Trial':np.int64, 'Position':np.int64})
     wheelPos = Encoder.Position.values
     # deal with wrap around of rotary encoder position
@@ -206,7 +206,7 @@ def run_preprocess_bv(userID, expID):
 
     # output a csv file which contains dataframe of all trials with first column showing trial onset time
     # read the all trials file, append trial onset times to first column (trialOnsetTimesTL)
-    all_trials = pd.read_csv(os.path.join(exp_dir_raw, expID + '_all_trials.csv'))
+    all_trials = pd.read_csv(paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw))
     all_trials.insert(0,'time',trialOnsetTimesTL)
     all_trials.to_csv(os.path.join(exp_dir_processed, expID + '_all_trials.csv'), index=False)
     print('Done without errors')

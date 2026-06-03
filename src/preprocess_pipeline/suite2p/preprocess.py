@@ -154,7 +154,7 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
     except Exception:
         step2_config = {}
 
-    timeline = loadmat(os.path.join(exp_dir_raw, expID + "_Timeline.mat"))["timelineSession"]
+    timeline = loadmat(paths.raw_file_path(userID, expID, expID + "_Timeline.mat", exp_dir_raw=exp_dir_raw))["timelineSession"]
     tl_ch_names = timeline["chNames"][0][0][0][0:]
     tl_daq_data = timeline["daqData"][0, 0]
     tl_time = timeline["time"][0][0]

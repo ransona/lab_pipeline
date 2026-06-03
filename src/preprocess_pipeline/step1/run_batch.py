@@ -219,6 +219,15 @@ def run_step1_batch_universal(step1_config):
     run_on = step1_config.get('run_on', 'server')
     queue_name = step1_config.get('queue', 'step1')
     local_repository_root = step1_config.get('local_repository_root')
+    local_raw_repository_root = step1_config.get('local_raw_repository_root')
+    local_processed_repository_root = step1_config.get('local_processed_repository_root')
+    local_nas_repository_root = step1_config.get('local_nas_repository_root')
+    local_mode = bool(
+        local_repository_root
+        or local_raw_repository_root
+        or local_processed_repository_root
+        or local_nas_repository_root
+    )
 
     username = getpass.getuser()
     if user_id != 'machine-pipeline-access' and username != user_id:
@@ -232,7 +241,12 @@ def run_step1_batch_universal(step1_config):
     if runsrdtrans and not isinstance(srdtrans_config, dict):
         raise ValueError('runsrdtrans requires step1_config["srdtrans"] to be a dict')
 
-    with paths.local_repository_context(local_repository_root):
+    with paths.local_repository_context(
+        local_repository_root=local_repository_root,
+        local_raw_repository_root=local_raw_repository_root,
+        local_processed_repository_root=local_processed_repository_root,
+        local_nas_repository_root=local_nas_repository_root,
+    ):
         first_exp = exp_ids[0][0] if isinstance(exp_ids[0], list) else exp_ids[0]
         _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
         topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
@@ -264,10 +278,26 @@ def run_step1_batch_universal(step1_config):
                 if local_repository_root
                 else {}
             ),
+            **(
+                {'local_raw_repository_root': local_raw_repository_root}
+                if local_raw_repository_root
+                else {}
+            ),
+            **(
+                {'local_processed_repository_root': local_processed_repository_root}
+                if local_processed_repository_root
+                else {}
+            ),
+            **(
+                {'local_nas_repository_root': local_nas_repository_root}
+                if local_nas_repository_root
+                else {}
+            ),
         }
 
-        if local_repository_root:
-            local_log_root = os.path.join(local_repository_root, "_pipeline_jobs")
+        if local_mode:
+            log_root_base = local_processed_repository_root or local_repository_root or local_raw_repository_root
+            local_log_root = os.path.join(log_root_base, "_pipeline_jobs")
             os.makedirs(local_log_root, exist_ok=True)
             for exp_id in exp_ids:
                 if isinstance(exp_id, str):

@@ -72,7 +72,10 @@ def preprocess_pupil_run(userID, expID):
         # this can be removed in the future 
         if not os.path.isfile(os.path.join(exp_dir_processed, vid_filenames[iVid])):
             try:
-                shutil.copyfile(os.path.join(exp_dir_raw, vid_filenames[iVid]),os.path.join(exp_dir_processed, vid_filenames[iVid]))
+                shutil.copyfile(
+                    paths.raw_file_path(userID, expID, vid_filenames[iVid], exp_dir_raw=exp_dir_raw),
+                    os.path.join(exp_dir_processed, vid_filenames[iVid]),
+                )
             except:
                 print('Cropped eye videos not found on server')
 

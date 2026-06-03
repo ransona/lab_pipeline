@@ -11,6 +11,15 @@ def run_step2_batch(step2_config):
     userID = step2_config['userID']
     expIDs = step2_config['expIDs']
     local_repository_root = step2_config.get('local_repository_root')
+    local_raw_repository_root = step2_config.get('local_raw_repository_root')
+    local_processed_repository_root = step2_config.get('local_processed_repository_root')
+    local_nas_repository_root = step2_config.get('local_nas_repository_root')
+    local_mode = bool(
+        local_repository_root
+        or local_raw_repository_root
+        or local_processed_repository_root
+        or local_nas_repository_root
+    )
 
     # options
     pre_secs = step2_config['pre_secs']
@@ -21,7 +30,12 @@ def run_step2_batch(step2_config):
     run_dlc_timestamp = step2_config['run_dlc_timestamp']
     run_cuttraces = step2_config['run_cuttraces']
 
-    with paths.local_repository_context(local_repository_root):
+    with paths.local_repository_context(
+        local_repository_root=local_repository_root,
+        local_raw_repository_root=local_raw_repository_root,
+        local_processed_repository_root=local_processed_repository_root,
+        local_nas_repository_root=local_nas_repository_root,
+    ):
         for expID in expIDs:
             print('** Starting expID...' + expID)
             # save step2 ops to exp dir
@@ -33,7 +47,7 @@ def run_step2_batch(step2_config):
                 run_ephys, run_dlc_timestamp, run_cuttraces
             )
             
-            if local_repository_root or os.name == 'nt':
+            if local_mode or os.name == 'nt':
                 continue
 
             # set permissions all files generated to user; improve this later
