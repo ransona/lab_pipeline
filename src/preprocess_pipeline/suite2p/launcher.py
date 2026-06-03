@@ -1,6 +1,9 @@
 # these scripts are to run commands that need to be run in specific conda environments
 # they should be run from the command line
-from conceivable import thread_limit
+try:
+    from conceivable import thread_limit
+except ImportError:
+    thread_limit = None
 import json
 from pathlib import Path
 import subprocess

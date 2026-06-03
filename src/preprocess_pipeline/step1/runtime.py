@@ -27,6 +27,34 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / 'apps'
 
 
+def _is_local_mode_config(config):
+    return bool(
+        config.get('local_repository_root')
+        or config.get('local_raw_repository_root')
+        or config.get('local_processed_repository_root')
+        or config.get('local_nas_repository_root')
+    )
+
+
+def _conda_executable():
+    conda_exe = os.environ.get('CONDA_EXE')
+    if conda_exe and os.path.exists(conda_exe):
+        return conda_exe
+
+    candidates = []
+    try:
+        candidates.append(Path(sys.executable).parents[2] / 'Scripts' / 'conda.exe')
+    except IndexError:
+        pass
+    candidates.append(Path.home() / 'miniconda3' / 'Scripts' / 'conda.exe')
+    candidates.append(Path.home() / 'anaconda3' / 'Scripts' / 'conda.exe')
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return 'conda'
+
+
 def _find_job_file(job_id, queue_paths=None):
     if queue_paths is None:
         queue_paths = QUEUE_PATHS
@@ -116,13 +144,7 @@ def _suite2p_config_root(queued_command=None):
         if config_root:
             return config_root
         local_config = queued_command.get('config', {})
-        local_mode = bool(
-            local_config.get('local_repository_root')
-            or local_config.get('local_raw_repository_root')
-            or local_config.get('local_processed_repository_root')
-            or local_config.get('local_nas_repository_root')
-        )
-        if local_mode and os.name == 'nt':
+        if _is_local_mode_config(local_config) and os.name == 'nt':
             return WINDOWS_LOCAL_CONFIG_ROOT
     env_root = os.environ.get(LOCAL_CONFIG_ROOT_ENV)
     if env_root:
@@ -248,6 +270,19 @@ def _suite2p_cmd_for_work_unit(
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
     if queued_command["config"].get("register_with_summed_channel", False):
         launcher_args.append("--register-with-summed-channel")
+
+    if _is_local_mode_config(queued_command['config']) and os.name == 'nt':
+        return [
+            _conda_executable(),
+            'run',
+            '--no-capture-output',
+            '--name',
+            suite2p_env,
+            'python',
+            '-u',
+            launcher,
+            *launcher_args,
+        ]
 
     if run_s2p_as_user:
         return [
