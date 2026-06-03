@@ -10,7 +10,7 @@ step1_config = {}
 # Set userID to the local OS username that owns the local repository tree.
 step1_config["userID"] = "adamranson"
 step1_config["expIDs"] = [
-    "2026-05-11_03_ESRC033",
+    "2026-05-17_02_ESYB040",
 ]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
