@@ -18,7 +18,7 @@ step2_config["post_secs"] = 5
 step2_config["run_bonvision"] = True
 step2_config["run_s2p_timestamp"] = True
 step2_config["run_ephys"] = True
-step2_config["run_dlc_timestamp"] = True
+step2_config["run_dlc_timestamp"] = False
 step2_config["run_cuttraces"] = True
 
 settings = {}
