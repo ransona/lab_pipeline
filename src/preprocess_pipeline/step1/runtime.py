@@ -223,6 +223,8 @@ def _suite2p_cmd_for_work_unit(
     ]
     if queued_command["config"].get("runsrdtrans", False):
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
+    if queued_command["config"].get("register_with_summed_channel", False):
+        launcher_args.append("--register-with-summed-channel")
 
     if run_s2p_as_user:
         return [

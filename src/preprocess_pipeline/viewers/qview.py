@@ -424,9 +424,11 @@ def _parse_ops_value(text: str, old_value):
 
 
 class Suite2pOpsEditorDialog(QtWidgets.QDialog):
-    def __init__(self, config_path: Path, parent=None):
+    def __init__(self, config_path: Path, parent=None, default_save_dir: Optional[Path] = None):
         super().__init__(parent)
         self.config_path = Path(config_path)
+        self.default_save_dir = Path(default_save_dir) if default_save_dir else self.config_path.parent
+        self.saved_as_path: Optional[Path] = None
         self.ops = np.load(self.config_path, allow_pickle=True).item()
         if not isinstance(self.ops, dict):
             raise ValueError(f"Suite2p config is not a dict: {self.config_path}")
@@ -437,9 +439,9 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
-        path_label = QtWidgets.QLabel(str(self.config_path))
-        path_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(path_label)
+        self.path_label = QtWidgets.QLabel(str(self.config_path))
+        self.path_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.path_label)
 
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(3)
@@ -449,12 +451,15 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
 
         buttons = QtWidgets.QHBoxLayout()
         self.save_button = QtWidgets.QPushButton("Save")
+        self.save_as_button = QtWidgets.QPushButton("Save As")
         self.close_button = QtWidgets.QPushButton("Close")
         buttons.addStretch(1)
         buttons.addWidget(self.save_button)
+        buttons.addWidget(self.save_as_button)
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
         self.save_button.clicked.connect(self.save)
+        self.save_as_button.clicked.connect(self.save_as)
         self.close_button.clicked.connect(self.close)
         self.populate_tree()
 
@@ -527,6 +532,30 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
         self.dirty = False
         QtWidgets.QMessageBox.information(self, "Suite2p Config", f"Saved:\n{self.config_path}")
 
+    def save_as(self) -> bool:
+        self.default_save_dir.mkdir(parents=True, exist_ok=True)
+        default_path = self.default_save_dir / self.config_path.name
+        path_text, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Suite2p Config As",
+            str(default_path),
+            "NumPy config (*.npy)",
+        )
+        if not path_text:
+            return False
+        new_path = Path(path_text)
+        if new_path.suffix.lower() != ".npy":
+            new_path = new_path.with_suffix(".npy")
+        np.save(new_path, self.ops)
+        self.config_path = new_path
+        self.saved_as_path = new_path
+        self.default_save_dir = new_path.parent
+        self.dirty = False
+        self.path_label.setText(str(self.config_path))
+        self.setWindowTitle(f"Edit Suite2p config: {self.config_path.name}")
+        QtWidgets.QMessageBox.information(self, "Suite2p Config", f"Saved:\n{self.config_path}")
+        return True
+
     def closeEvent(self, event: QtGui.QCloseEvent):
         if self.dirty:
             response = QtWidgets.QMessageBox.question(
@@ -590,7 +619,7 @@ class Suite2pConfigSelector(QtWidgets.QWidget):
         if not config_path.exists():
             QtWidgets.QMessageBox.warning(self, "Edit Suite2p Config", f"Config file not found:\n{config_path}")
             return
-        dialog = Suite2pOpsEditorDialog(config_path, self)
+        dialog = Suite2pOpsEditorDialog(config_path, self, default_save_dir=self.config_dir)
         dialog.exec()
 
 
@@ -1057,9 +1086,13 @@ class StandardConfigWidget(QtWidgets.QWidget):
         layout = QtWidgets.QFormLayout(self)
         self.same_for_both = QtWidgets.QCheckBox("Use same config for both channels")
         self.same_for_both.setChecked(True)
+        self.register_with_summed_channel = QtWidgets.QCheckBox("Register with summed channel")
+        self.register_with_summed_channel.setChecked(False)
+        self.register_with_summed_channel.setEnabled(False)
         self.ch1_combo = Suite2pConfigSelector()
         self.ch2_combo = Suite2pConfigSelector()
         layout.addRow(self.same_for_both)
+        layout.addRow(self.register_with_summed_channel)
         layout.addRow("Channel 1 config", self.ch1_combo)
         layout.addRow("Channel 2 config", self.ch2_combo)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
@@ -1078,8 +1111,11 @@ class StandardConfigWidget(QtWidgets.QWidget):
     def set_channel_count(self, nchannels: int):
         dual = nchannels >= 2
         self.same_for_both.setVisible(dual)
+        self.register_with_summed_channel.setVisible(dual)
+        self.register_with_summed_channel.setEnabled(dual)
         if not dual:
             self.same_for_both.setChecked(True)
+            self.register_with_summed_channel.setChecked(False)
         self.ch2_combo.setVisible(dual)
         self._sync_channel_mode()
 
@@ -1102,6 +1138,7 @@ class StandardConfigWidget(QtWidgets.QWidget):
 
     def apply_preset(self, preset: dict, nchannels: int):
         self.same_for_both.setChecked(preset.get("same_for_both", True))
+        self.register_with_summed_channel.setChecked(preset.get("register_with_summed_channel", False))
         self.ch1_combo.set_value(preset.get("ch1", ""))
         self.ch2_combo.set_value(preset.get("ch2", ""))
         self.set_channel_count(nchannels)
@@ -1109,9 +1146,13 @@ class StandardConfigWidget(QtWidgets.QWidget):
     def preset_state(self) -> dict:
         return {
             "same_for_both": self.same_for_both.isChecked(),
+            "register_with_summed_channel": self.register_with_summed_channel.isChecked(),
             "ch1": self.ch1_combo.value(),
             "ch2": self.ch2_combo.value(),
         }
+
+    def register_with_summed_channel_enabled(self) -> bool:
+        return self.register_with_summed_channel.isVisible() and self.register_with_summed_channel.isChecked()
 
 
 class PathConfigRow(QtWidgets.QWidget):
@@ -1377,11 +1418,13 @@ class Step1Tab(QtWidgets.QWidget):
         self.save_preset_button = QtWidgets.QPushButton("Save")
         self.delete_preset_button = QtWidgets.QPushButton("Delete")
         self.rename_preset_button = QtWidgets.QPushButton("Rename")
+        self.load_s2p_config_button = QtWidgets.QPushButton("Load S2P config")
         self.help_preset_button = QtWidgets.QPushButton("Help")
         preset_buttons.addWidget(self.load_preset_button)
         preset_buttons.addWidget(self.save_preset_button)
         preset_buttons.addWidget(self.delete_preset_button)
         preset_buttons.addWidget(self.rename_preset_button)
+        preset_buttons.addWidget(self.load_s2p_config_button)
         preset_buttons.addStretch(1)
         preset_buttons.addWidget(self.help_preset_button)
         preset_layout.addLayout(preset_buttons)
@@ -1419,6 +1462,7 @@ class Step1Tab(QtWidgets.QWidget):
         self.load_preset_button.clicked.connect(self.load_preset)
         self.delete_preset_button.clicked.connect(self.delete_preset)
         self.rename_preset_button.clicked.connect(self.rename_preset)
+        self.load_s2p_config_button.clicked.connect(self.load_s2p_config_from_file)
         self.help_preset_button.clicked.connect(self.show_preset_help)
         self.preset_list.itemDoubleClicked.connect(lambda _item: self.load_preset())
         self.save_preset_button.clicked.connect(self.save_preset)
@@ -1545,6 +1589,8 @@ class Step1Tab(QtWidgets.QWidget):
             config["runhabituate"] = True
         if self.jump_queue.isChecked():
             config["jump_queue"] = True
+        if self._register_with_summed_channel_requested():
+            config["register_with_summed_channel"] = True
         if self.queue_combo.currentIndex() == 1:
             config["queue"] = "debug"
         suite2p_env = self.suite2p_env.text().strip()
@@ -1556,6 +1602,15 @@ class Step1Tab(QtWidgets.QWidget):
         if self.runsrdtrans.isChecked():
             config["srdtrans"] = json.loads(self.srdtrans_json.toPlainText().strip() or "{}")
         return config
+
+    def _register_with_summed_channel_requested(self) -> bool:
+        if self.detected_descriptor is None or self.detected_descriptor.nchannels < 2:
+            return False
+        if self.detected_descriptor.topology == "standard":
+            return self.standard_widget.register_with_summed_channel_enabled()
+        if self.meso_widget.mode_combo.currentIndex() == 0:
+            return self.meso_widget.global_widget.register_with_summed_channel_enabled()
+        return False
 
     def update_config_preview(self):
         try:
@@ -1758,6 +1813,24 @@ class Step1Tab(QtWidgets.QWidget):
             "channel count, paths, and ROIs. Loading a saved config before adding exp IDs "
             "prevents that compatibility check.",
         )
+
+    def load_s2p_config_from_file(self):
+        config_dir = S2P_CONFIG_ROOT / (self.user_edit.text().strip() or self.username)
+        path_text, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load Suite2p Config",
+            str(config_dir if config_dir.exists() else S2P_CONFIG_ROOT),
+            "NumPy config (*.npy)",
+        )
+        if not path_text:
+            return
+        try:
+            dialog = Suite2pOpsEditorDialog(Path(path_text), self, default_save_dir=config_dir)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Load Suite2p Config", str(exc))
+            return
+        dialog.exec()
+        self.refresh_config_choices()
 
     def submit_job(self):
         try:

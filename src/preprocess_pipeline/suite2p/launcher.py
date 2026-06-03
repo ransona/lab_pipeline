@@ -412,6 +412,121 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
     fix_binary_permissions(output_path)
 
 
+def make_summed_registration_binary(ch1_file, ch2_file, sum_file, nframes, Ly, Lx, batch_size):
+    """Create a temporary int16 binary containing clipped ch1 + ch2 frames."""
+    if os.path.exists(sum_file):
+        os.remove(sum_file)
+    with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch1_file, n_frames=nframes) as ch1, \
+            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch2_file, n_frames=nframes) as ch2, \
+            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=sum_file, n_frames=nframes) as summed:
+        for start in range(0, nframes, batch_size):
+            stop = min(start + batch_size, nframes)
+            frames = ch1[start:stop].astype(np.int32) + ch2[start:stop].astype(np.int32)
+            summed[start:stop] = np.clip(frames, np.iinfo(np.int16).min, np.iinfo(np.int16).max)
+
+
+def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
+    with suite2p_io.BinaryFile(
+        Ly=int(ops["Ly"]),
+        Lx=int(ops["Lx"]),
+        filename=binary_file,
+        n_frames=int(ops["nframes"]),
+    ) as binary:
+        return suite2p_register.shift_frames_and_write(
+            binary,
+            yoff=yoff,
+            xoff=xoff,
+            yoff1=yoff1,
+            xoff1=xoff1,
+            ops=ops,
+        )
+
+
+def run_shared_summed_channel_registration(all_tif_paths, output_path, registration_config_path):
+    """Register two-channel data using ch1 + ch2 for offsets, then apply offsets to both channels."""
+    remove_tree_if_exists(os.path.join(output_path, "suite2p"))
+    remove_tree_if_exists(os.path.join(output_path, "ch2"))
+
+    ops = load_ops_with_inferred_nplanes(registration_config_path, all_tif_paths)
+    if int(ops.get("nchannels", 1)) < 2:
+        raise ValueError("Summed-channel registration requires a two-channel Suite2p config.")
+
+    print("** Running summed-channel shared registration")
+    conversion_ops = ops.copy()
+    conversion_ops["save_mat"] = False
+    conversion_ops["roidetect"] = False
+    conversion_ops["do_registration"] = 0
+    conversion_ops["delete_bin"] = False
+    conversion_ops["move_bin"] = False
+    conversion_ops["keep_movie_raw"] = False
+
+    db = {
+        "data_path": all_tif_paths,
+        "save_path0": output_path,
+    }
+    suite2p.run_s2p(ops=conversion_ops, db=db)
+
+    for plane_dir in get_plane_dirs(output_path):
+        plane_name = os.path.basename(plane_dir)
+        print(f">>>>>>>>>>>>>>>>>>>>> SUMMED REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
+        plane_ops_path = os.path.join(plane_dir, "ops.npy")
+        plane_ops = np.load(plane_ops_path, allow_pickle=True).item()
+        ch1_file = plane_ops["reg_file"]
+        ch2_file = plane_ops.get("reg_file_chan2", os.path.join(plane_dir, "data_chan2.bin"))
+        if not os.path.exists(ch2_file):
+            raise FileNotFoundError(f"Missing channel 2 binary for summed registration: {ch2_file}")
+
+        reg_ops = plane_ops.copy()
+        reg_ops["save_mat"] = False
+        reg_ops["do_registration"] = 2
+        reg_ops["nonrigid"] = False
+        reg_ops["functional_chan"] = 1
+        reg_ops["align_by_chan"] = 1
+        reg_ops["delete_bin"] = False
+        reg_ops["move_bin"] = False
+        reg_ops["save_path"] = plane_dir
+        reg_ops["ops_path"] = plane_ops_path
+        reg_ops["reg_file"] = ch1_file
+        reg_ops["reg_file_chan2"] = ch2_file
+
+        nframes = int(reg_ops["nframes"])
+        Ly = int(reg_ops["Ly"])
+        Lx = int(reg_ops["Lx"])
+        batch_size = int(reg_ops.get("batch_size", 500))
+        summed_file = os.path.join(plane_dir, "data_summed_registration.bin")
+        print(f"Creating summed registration binary: {summed_file}")
+        make_summed_registration_binary(ch1_file, ch2_file, summed_file, nframes, Ly, Lx, batch_size)
+
+        with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=summed_file, n_frames=nframes) as summed_binary:
+            registration_outputs = suite2p_register.registration_wrapper(
+                summed_binary,
+                ops=reg_ops,
+            )
+
+        reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
+        yoff, xoff, _corrXY = reg_ops["yoff"], reg_ops["xoff"], reg_ops["corrXY"]
+        yoff1 = reg_ops.get("yoff1")
+        xoff1 = reg_ops.get("xoff1")
+
+        print("Applying summed-channel registration offsets to channel 1")
+        mean_img_ch1 = register_binary_with_offsets(ch1_file, yoff, xoff, yoff1, xoff1, reg_ops)
+        print("Applying summed-channel registration offsets to channel 2")
+        mean_img_ch2 = register_binary_with_offsets(ch2_file, yoff, xoff, yoff1, xoff1, reg_ops)
+
+        reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
+        reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
+        reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            reg_ops["meanImg"], reg_ops.copy()
+        ).astype(np.float32)
+        reg_ops["register_with_summed_channel"] = True
+        np.save(plane_ops_path, reg_ops)
+
+        if os.path.exists(summed_file):
+            os.remove(summed_file)
+
+    fix_binary_permissions(output_path)
+
+
 def run_extraction_stage(canonical_root, save_root, extraction_config_path, nplanes):
     """Reuse canonical binaries and rerun detection/deconvolution with a per-channel config."""
     clear_detection_outputs(save_root)
@@ -715,7 +830,13 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes):
     update_combined_ops(ch2_root, nplanes)
 
 
-def run_srdtrans_suite2p(all_tif_paths, output_path, config_paths, srdtrans_config):
+def run_srdtrans_suite2p(
+    all_tif_paths,
+    output_path,
+    config_paths,
+    srdtrans_config,
+    register_with_summed_channel=False,
+):
     primary_ops = load_ops_with_inferred_nplanes(config_paths[0], all_tif_paths)
     nplanes = int(primary_ops["nplanes"])
     available_channels = ["ch1"]
@@ -726,7 +847,10 @@ def run_srdtrans_suite2p(all_tif_paths, output_path, config_paths, srdtrans_conf
         if len(effective_config_paths) == 1:
             effective_config_paths = [effective_config_paths[0], effective_config_paths[0]]
 
-    run_shared_registration(all_tif_paths, output_path, effective_config_paths[0])
+    if register_with_summed_channel:
+        run_shared_summed_channel_registration(all_tif_paths, output_path, effective_config_paths[0])
+    else:
+        run_shared_registration(all_tif_paths, output_path, effective_config_paths[0])
     apply_srdtrans_to_registered_planes(output_path, srdtrans_config, available_channels)
 
     if "ch2" in available_channels:
@@ -747,7 +871,15 @@ def resolve_output_path(userID, expID, output_path):
     return exp_dir_processed
 
 
-def s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans_config=None):
+def s2p_launcher_run(
+    userID,
+    expID,
+    tif_path,
+    output_path,
+    config_path,
+    srdtrans_config=None,
+    register_with_summed_channel=False,
+):
     all_tif_paths = tif_path.split(",")
     print("tif_path = " + tif_path)
     print("ExpID = " + expID)
@@ -755,16 +887,31 @@ def s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans
     config_paths = config_path.split(",")
 
     if srdtrans_config:
-        run_srdtrans_suite2p(all_tif_paths, output_path, config_paths, srdtrans_config)
+        run_srdtrans_suite2p(
+            all_tif_paths,
+            output_path,
+            config_paths,
+            srdtrans_config,
+            register_with_summed_channel=register_with_summed_channel,
+        )
         return
 
     if len(config_paths) == 2:
         nplanes = resolve_nplanes(config_paths[0], all_tif_paths)
-        run_shared_registration(all_tif_paths, output_path, config_paths[0])
+        if register_with_summed_channel:
+            run_shared_summed_channel_registration(all_tif_paths, output_path, config_paths[0])
+        else:
+            run_shared_registration(all_tif_paths, output_path, config_paths[0])
         ch2_root = os.path.join(output_path, "ch2")
         run_extraction_stage(output_path, ch2_root, config_paths[1], nplanes)
         run_extraction_stage(output_path, output_path, config_paths[0], nplanes)
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
+        return
+
+    if register_with_summed_channel:
+        nplanes = resolve_nplanes(config_paths[0], all_tif_paths)
+        run_shared_summed_channel_registration(all_tif_paths, output_path, config_paths[0])
+        run_extraction_stage(output_path, output_path, config_paths[0], nplanes)
         return
 
     run_single_config_suite2p(all_tif_paths, output_path, config_paths[0])
@@ -780,11 +927,16 @@ def main():
         if len(sys.argv) >= 6:
             output_path = sys.argv[4]
             config_path = sys.argv[5]
-            if len(sys.argv) >= 7:
-                srdtrans_config = decode_srdtrans_config_arg(sys.argv[6])
+            register_with_summed_channel = False
+            for extra_arg in sys.argv[6:]:
+                if extra_arg == "--register-with-summed-channel":
+                    register_with_summed_channel = True
+                else:
+                    srdtrans_config = decode_srdtrans_config_arg(extra_arg)
         else:
             output_path = None
             config_path = sys.argv[4]
+            register_with_summed_channel = False
     except Exception:
         expID = "2026-05-11_03_ESRC033,2026-05-11_99_ESRC033"
         userID = "adamranson"
@@ -798,9 +950,18 @@ def main():
             os.path.join("/data/common/configs/s2p_configs", userID, "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy"),
         ])
         srdtrans_config = None
+        register_with_summed_channel = False
 
     output_path = resolve_output_path(userID, expID, output_path)
-    s2p_launcher_run(userID, expID, tif_path, output_path, config_path, srdtrans_config=srdtrans_config)
+    s2p_launcher_run(
+        userID,
+        expID,
+        tif_path,
+        output_path,
+        config_path,
+        srdtrans_config=srdtrans_config,
+        register_with_summed_channel=register_with_summed_channel,
+    )
 
 
 if __name__ == "__main__":
