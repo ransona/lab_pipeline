@@ -722,6 +722,83 @@ def apply_srdtrans_to_registered_planes(canonical_root, srdtrans_config, availab
                 _run_srdtrans_on_binary(canonical_plane_dir, "data_chan2.bin", srdtrans_config)
 
 
+def run_final_summed_channel_registration(canonical_root, final_config_path):
+    """Run the post-denoise registration using average(ch1, ch2) and apply it to both channels."""
+    final_config = np.load(final_config_path, allow_pickle=True).item()
+
+    for canonical_plane_dir in get_plane_dirs(canonical_root):
+        plane_name = os.path.basename(canonical_plane_dir)
+        print(f">>>>>>>>>>>>>>>>>>>>> FINAL COMBINED-CHANNEL REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
+        plane_ops_path = os.path.join(canonical_plane_dir, "ops.npy")
+        registration_ops = np.load(plane_ops_path, allow_pickle=True).item()
+
+        ch1_file = os.path.join(canonical_plane_dir, "data.bin")
+        ch2_file = os.path.join(canonical_plane_dir, "data_chan2.bin")
+        if not os.path.exists(ch1_file):
+            raise FileNotFoundError(f"Missing channel 1 binary for final summed registration: {ch1_file}")
+        if not os.path.exists(ch2_file):
+            raise FileNotFoundError(f"Missing channel 2 binary for final summed registration: {ch2_file}")
+
+        reg_ops = copy_ops_for_extraction(registration_ops, final_config)
+        reg_ops["save_mat"] = False
+        reg_ops["do_registration"] = 2
+        reg_ops["functional_chan"] = 1
+        reg_ops["align_by_chan"] = 1
+        reg_ops["nchannels"] = 1
+        reg_ops["delete_bin"] = False
+        reg_ops["move_bin"] = False
+        reg_ops["save_path"] = canonical_plane_dir
+        reg_ops["ops_path"] = plane_ops_path
+        reg_ops["reg_file"] = ch1_file
+        reg_ops["reg_file_chan2"] = ch2_file
+
+        nframes = int(reg_ops["nframes"])
+        Ly = int(reg_ops["Ly"])
+        Lx = int(reg_ops["Lx"])
+        batch_size = int(reg_ops.get("batch_size", 500))
+        scratch_dir, scratch_is_temp = make_combined_registration_tmp_dir(
+            canonical_root, plane_name, canonical_plane_dir
+        )
+        combined_file = os.path.join(scratch_dir, "data_final_combined_registration.bin")
+        try:
+            print(f"Creating averaged two-channel final registration binary: {combined_file}")
+            make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
+
+            with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
+                registration_outputs = suite2p_register.registration_wrapper(
+                    combined_binary,
+                    ops=reg_ops,
+                )
+
+            reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
+            yoff, xoff = reg_ops["yoff"], reg_ops["xoff"]
+            yoff1 = reg_ops.get("yoff1")
+            xoff1 = reg_ops.get("xoff1")
+
+            print("Applying final combined-channel registration offsets to channel 1")
+            mean_img_ch1 = register_binary_with_offsets(ch1_file, yoff, xoff, yoff1, xoff1, reg_ops)
+            print("Applying final combined-channel registration offsets to channel 2")
+            mean_img_ch2 = register_binary_with_offsets(ch2_file, yoff, xoff, yoff1, xoff1, reg_ops)
+
+            reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
+            reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
+            reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+                reg_ops["meanImg"], reg_ops.copy()
+            ).astype(np.float32)
+            reg_ops["register_with_summed_channel"] = True
+            reg_ops["final_register_with_summed_channel"] = True
+            reg_ops["registration_channel_combination"] = "average"
+            reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
+            np.save(plane_ops_path, reg_ops)
+        finally:
+            if scratch_is_temp:
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+            elif os.path.exists(combined_file):
+                os.remove(combined_file)
+
+    fix_binary_permissions(canonical_root)
+
+
 def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel):
     """Run the final Suite2p pass on already rigid-registered binaries."""
     clear_detection_outputs(save_root)
@@ -911,8 +988,13 @@ def run_srdtrans_suite2p(
 
     if "ch2" in available_channels:
         ch2_root = os.path.join(output_path, "ch2")
-        run_final_suite2p_stage(output_path, ch2_root, effective_config_paths[1], nplanes, "ch2")
-        run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
+        if register_with_summed_channel:
+            run_final_summed_channel_registration(output_path, effective_config_paths[0])
+            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes)
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes)
+        else:
+            run_final_suite2p_stage(output_path, ch2_root, effective_config_paths[1], nplanes, "ch2")
+            run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
         return
 
