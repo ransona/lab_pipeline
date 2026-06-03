@@ -11,6 +11,8 @@ from preprocess_pipeline.step1 import runtime
 
 
 CONFIG_ROOT = '/data/common/configs/s2p_configs'
+LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
+WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 DEFAULT_QUEUE_PATH = '/data/common/queues/step1'
 DEBUG_QUEUE_PATH = '/data/common/queues/debug'
 QUEUE_PATHS_BY_HOST = {
@@ -133,12 +135,23 @@ def _normalize_suite2p_plan(suite2p_config, work_unit_ids):
     return plan
 
 
-def _validate_plan_configs(user_id, suite2p_plan, runs2p):
+def _suite2p_config_root(step1_config=None, local_mode=False):
+    if step1_config and step1_config.get('suite2p_config_root'):
+        return step1_config['suite2p_config_root']
+    env_root = os.environ.get(LOCAL_CONFIG_ROOT_ENV)
+    if env_root:
+        return env_root
+    if local_mode and os.name == 'nt':
+        return WINDOWS_LOCAL_CONFIG_ROOT
+    return CONFIG_ROOT
+
+
+def _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=CONFIG_ROOT):
     if not runs2p:
         return
     for plan_item in suite2p_plan:
         for config_name in plan_item['suite2p_configs']:
-            config_path = os.path.join(CONFIG_ROOT, user_id, config_name)
+            config_path = os.path.join(config_root, user_id, config_name)
             if not os.path.exists(config_path):
                 raise FileNotFoundError(
                     'The suite2p config file does not exist: ' + config_path
@@ -228,6 +241,7 @@ def run_step1_batch_universal(step1_config):
         or local_processed_repository_root
         or local_nas_repository_root
     )
+    suite2p_config_root = _suite2p_config_root(step1_config, local_mode=local_mode)
 
     username = getpass.getuser()
     local_output_mode = bool(local_repository_root or local_processed_repository_root)
@@ -252,7 +266,7 @@ def run_step1_batch_universal(step1_config):
         _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
         topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
         suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
-        _validate_plan_configs(user_id, suite2p_plan, runs2p)
+        _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=suite2p_config_root)
 
         common_config = {
             'runhabituate': runhabituate,
@@ -262,6 +276,7 @@ def run_step1_batch_universal(step1_config):
             'topology': topology,
             'suite2p_plan': suite2p_plan,
             'suite2p_config': suite2p_config,
+            'suite2p_config_root': suite2p_config_root,
             'runsrdtrans': runsrdtrans,
             **({'srdtrans': json.loads(json.dumps(srdtrans_config))} if runsrdtrans else {}),
             **(

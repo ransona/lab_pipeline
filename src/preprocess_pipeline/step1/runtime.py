@@ -21,6 +21,8 @@ QUEUE_PATHS = [
     '/data/common/local_pipelines/AdamDellXPS15/queues/step1',
 ]
 CONFIG_ROOT = '/data/common/configs/s2p_configs'
+LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
+WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / 'apps'
 
@@ -108,8 +110,29 @@ def _resolve_work_unit_paths(user_id, exp_ids, work_unit_id):
     return raw_paths, output_path
 
 
-def _suite2p_config_path(user_id, config_names):
-    return ','.join(os.path.join(CONFIG_ROOT, user_id, config_name) for config_name in config_names)
+def _suite2p_config_root(queued_command=None):
+    if queued_command:
+        config_root = queued_command.get('config', {}).get('suite2p_config_root')
+        if config_root:
+            return config_root
+        local_config = queued_command.get('config', {})
+        local_mode = bool(
+            local_config.get('local_repository_root')
+            or local_config.get('local_raw_repository_root')
+            or local_config.get('local_processed_repository_root')
+            or local_config.get('local_nas_repository_root')
+        )
+        if local_mode and os.name == 'nt':
+            return WINDOWS_LOCAL_CONFIG_ROOT
+    env_root = os.environ.get(LOCAL_CONFIG_ROOT_ENV)
+    if env_root:
+        return env_root
+    return CONFIG_ROOT
+
+
+def _suite2p_config_path(user_id, config_names, queued_command=None):
+    config_root = _suite2p_config_root(queued_command)
+    return ','.join(os.path.join(config_root, user_id, config_name) for config_name in config_names)
 
 
 def _should_emit_progress_line(line, progress_state):
@@ -219,7 +242,7 @@ def _suite2p_cmd_for_work_unit(
         exp_id,
         tif_path,
         output_path,
-        _suite2p_config_path(user_id, config_names),
+        _suite2p_config_path(user_id, config_names, queued_command=queued_command),
     ]
     if queued_command["config"].get("runsrdtrans", False):
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))

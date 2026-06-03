@@ -15,6 +15,7 @@ step1_config["expIDs"] = [
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
+step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 step1_config["suite2p_config"] = "ch_1_depth_1.npy"
 

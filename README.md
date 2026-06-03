@@ -322,6 +322,7 @@ For a local workstation or Windows machine, set:
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
+step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 step2_config["local_raw_repository_root"] = r"D:\data\Repository"
 step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
@@ -345,7 +346,7 @@ For local Step 1 and Step 2 processing, install the pipeline on the workstation 
 
 - `sci` or equivalent analysis env: runs the config files, Step 2, BonVision processing, trace cutting, and general pipeline code.
 - `suite2p` env: required for Step 1 Suite2p processing. The Step 1 runner calls this env when `runs2p=True`.
-- Suite2p config files: available under `/data/common/configs/s2p_configs/<userID>/`, or an equivalent mounted path.
+- Suite2p config files: available under `F:\s2p_ops\<userID>\` for local Windows runs, or under `/data/common/configs/s2p_configs/<userID>/` on the server.
 - NAS access: the Windows UNC path `\\ar-lab-nas1\DataServer\Remote_Repository` must be readable for missing metadata fallback.
 - Python packages for Step 2: `numpy`, `scipy`, `pandas`, `scikit-learn`, `matplotlib`, `scikit-image`, `opencv-python`, `tifffile`, and `suite2p` where relevant.
 - BonVision v2 support: `harp` is needed when processing newer BonVision/Harp experiments.
@@ -393,6 +394,7 @@ step1_config["expIDs"] = ["2025-10-30_10_ESYB025"]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
+step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 # Use one Suite2p config for every mesoscope path/ROI work unit.
 step1_config["suite2p_config"] = {
@@ -409,10 +411,16 @@ run_step1_batch_universal(step1_config)
 Suite2p config filenames are resolved from:
 
 ```text
-/data/common/configs/s2p_configs/<userID>/
+<suite2p_config_root>\<userID>\
 ```
 
-For local processing, make sure the required `.npy` Suite2p configs are available at that path in the environment where Python is running. On a native Windows setup this usually means running through WSL or otherwise making an equivalent `/data/common/...` path available.
+For local Windows processing, the default is:
+
+```text
+F:\s2p_ops\<userID>\
+```
+
+You can override this with `step1_config["suite2p_config_root"]` or the environment variable `LAB_PIPELINE_S2P_CONFIG_ROOT`.
 
 For dual-channel mesoscope data, use a default pair:
 
