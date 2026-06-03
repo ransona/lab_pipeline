@@ -14,6 +14,9 @@ Launchers:
 - `run_queue_gui.bat` starts the queue/config GUI
 - `run_imaging_view.bat` starts the combined Suite2p bin / raw TIFF viewer
 - `run_eye_check.bat` starts the eye-check GUI adapter
+- `run_data_manager.bat` starts the data manager GUI
+- `run_experiment_composer.bat` starts the experiment composer GUI
+- `run_sleep_state_gui.bat` starts the sleep state scoring GUI
 
 If username detection fails, edit `_run_remote_gui.bat` and set:
 

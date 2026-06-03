@@ -1,0 +1,131 @@
+{
+  "timeline": {
+    "start": 152.0,
+    "stop": 153.0,
+    "fps": 20.0,
+    "sample_fps": 20.0,
+    "play_fps": 40.0
+  },
+  "canvas": {
+    "size": [
+      512,
+      512
+    ],
+    "bg": 0
+  },
+  "sources": {
+    "StimulusSource_1": {
+      "type": "StimulusSource",
+      "params": {
+        "bonsai_root": "D:\\bonsai_resources\\",
+        "stimulus_base_dir": "/home/adamranson/data/vid_for_decoder/",
+        "fps": 30,
+        "field_azimuth_range": [
+          -180.0,
+          180.0
+        ],
+        "field_elevation_range": [
+          -180.0,
+          180.0
+        ],
+        "output_azimuth_range": [
+          -130.0,
+          -30.0
+        ],
+        "pixels_per_degree": 2.0,
+        "background_gray": 127,
+        "output_azimuth_center": -75.0,
+        "output_azimuth_span": 150.0,
+        "output_elevation_center": 0.0,
+        "output_elevation_span": 130.0,
+        "show_grid": true,
+        "grid_x": [
+          -120.0,
+          -80.0,
+          -40.0,
+          0.0
+        ],
+        "grid_y": [
+          -20.0,
+          0.0,
+          20.0
+        ]
+      }
+    },
+    "S2P_Binary_1": {
+      "type": "S2P_Binary",
+      "params": {
+        "planes": [
+          0
+        ],
+        "height": 512,
+        "width": 512,
+        "spatial_sigma": 1.0,
+        "temporal_window": 6,
+        "enable_spatial_filter": false,
+        "enable_temporal_filter": true,
+        "interpolate": true,
+        "max_frame_mismatch": 20,
+        "tile_layout": {
+          "rows": 1,
+          "cols": 1,
+          "order": [
+            0
+          ],
+          "gap": 0
+        },
+        "stack_isometric": false,
+        "stack_offset_pct": [
+          0.0,
+          0.2
+        ],
+        "stack_rot_x": 314.7,
+        "stack_rot_y": 324.6,
+        "stack_rot_z": 60.2,
+        "stack_border": false,
+        "stack_border_thickness": 2
+      }
+    },
+    "EyeSource_2": {
+      "type": "EyeSource",
+      "params": {
+        "eye": "right",
+        "timestamps_file": "recordings/eye_frame_times.npy",
+        "crop": "False",
+        "plot_detected_pupil": true,
+        "plot_detected_eye": true,
+        "overlay_thickness": 2,
+        "contrast_clip_percentiles": [
+          0.0,
+          90.0
+        ]
+      }
+    }
+  },
+  "elements": {
+    "StimulusSource_1": {
+      "source": "StimulusSource_1",
+      "x": 45,
+      "y": 24,
+      "w": 200,
+      "h": 150,
+      "color": "#F4A261"
+    },
+    "S2P_Binary_1": {
+      "source": "S2P_Binary_1",
+      "x": 49,
+      "y": 192,
+      "w": 400,
+      "h": 300,
+      "color": "#E9C46A"
+    },
+    "EyeSource_2": {
+      "source": "EyeSource_2",
+      "x": 253,
+      "y": 24,
+      "w": 200,
+      "h": 150,
+      "color": "#F4A261"
+    }
+  }
+}
