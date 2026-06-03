@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import suite2p
 from suite2p import io as suite2p_io
 from suite2p.run_s2p import run_plane
@@ -22,6 +23,7 @@ import tifffile
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / "apps"
+DEFAULT_COMBINED_REGISTRATION_TMP_ROOT = Path("/data/fast/lab_pipeline")
 
 
 DETECTION_FILES = [
@@ -427,6 +429,27 @@ def make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes
             combined[start:stop] = np.rint(frames).astype(np.int16)
 
 
+def make_combined_registration_tmp_dir(output_path, plane_name, fallback_dir):
+    tmp_root = Path(
+        os.environ.get(
+            "LAB_PIPELINE_COMBINED_REGISTRATION_TMPDIR",
+            str(DEFAULT_COMBINED_REGISTRATION_TMP_ROOT),
+        )
+    )
+    try:
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        if not os.access(tmp_root, os.W_OK):
+            raise PermissionError(f"not writable: {tmp_root}")
+        prefix = f"{Path(output_path).name}_{plane_name}_"
+        return tempfile.mkdtemp(prefix=prefix, dir=str(tmp_root)), True
+    except OSError as exc:
+        print(
+            f"Combined-channel registration scratch unavailable at {tmp_root} "
+            f"({exc}); using {fallback_dir}"
+        )
+        return fallback_dir, False
+
+
 def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
     with suite2p_io.BinaryFile(
         Ly=int(ops["Ly"]),
@@ -495,37 +518,44 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
         Ly = int(reg_ops["Ly"])
         Lx = int(reg_ops["Lx"])
         batch_size = int(reg_ops.get("batch_size", 500))
-        combined_file = os.path.join(plane_dir, "data_combined_registration.bin")
-        print(f"Creating averaged two-channel registration binary: {combined_file}")
-        make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
+        scratch_dir, scratch_is_temp = make_combined_registration_tmp_dir(
+            output_path, plane_name, plane_dir
+        )
+        combined_file = os.path.join(scratch_dir, "data_combined_registration.bin")
+        try:
+            print(f"Creating averaged two-channel registration binary: {combined_file}")
+            make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
 
-        with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
-            registration_outputs = suite2p_register.registration_wrapper(
-                combined_binary,
-                ops=reg_ops,
-            )
+            with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
+                registration_outputs = suite2p_register.registration_wrapper(
+                    combined_binary,
+                    ops=reg_ops,
+                )
 
-        reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
-        yoff, xoff, _corrXY = reg_ops["yoff"], reg_ops["xoff"], reg_ops["corrXY"]
-        yoff1 = reg_ops.get("yoff1")
-        xoff1 = reg_ops.get("xoff1")
+            reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
+            yoff, xoff, _corrXY = reg_ops["yoff"], reg_ops["xoff"], reg_ops["corrXY"]
+            yoff1 = reg_ops.get("yoff1")
+            xoff1 = reg_ops.get("xoff1")
 
-        print("Applying combined-channel registration offsets to channel 1")
-        mean_img_ch1 = register_binary_with_offsets(ch1_file, yoff, xoff, yoff1, xoff1, reg_ops)
-        print("Applying combined-channel registration offsets to channel 2")
-        mean_img_ch2 = register_binary_with_offsets(ch2_file, yoff, xoff, yoff1, xoff1, reg_ops)
+            print("Applying combined-channel registration offsets to channel 1")
+            mean_img_ch1 = register_binary_with_offsets(ch1_file, yoff, xoff, yoff1, xoff1, reg_ops)
+            print("Applying combined-channel registration offsets to channel 2")
+            mean_img_ch2 = register_binary_with_offsets(ch2_file, yoff, xoff, yoff1, xoff1, reg_ops)
 
-        reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
-        reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
-        reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
-            reg_ops["meanImg"], reg_ops.copy()
-        ).astype(np.float32)
-        reg_ops["register_with_summed_channel"] = True
-        reg_ops["registration_channel_combination"] = "average"
-        np.save(plane_ops_path, reg_ops)
-
-        if os.path.exists(combined_file):
-            os.remove(combined_file)
+            reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
+            reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
+            reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+                reg_ops["meanImg"], reg_ops.copy()
+            ).astype(np.float32)
+            reg_ops["register_with_summed_channel"] = True
+            reg_ops["registration_channel_combination"] = "average"
+            reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
+            np.save(plane_ops_path, reg_ops)
+        finally:
+            if scratch_is_temp:
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+            elif os.path.exists(combined_file):
+                os.remove(combined_file)
 
     fix_binary_permissions(output_path)
 
