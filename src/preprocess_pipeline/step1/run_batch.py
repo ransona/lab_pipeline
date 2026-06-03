@@ -255,6 +255,11 @@ def run_step1_batch_universal(step1_config):
                 else {}
             ),
             **(
+                {'register_with_summed_channel': True}
+                if step1_config.get('register_with_summed_channel', False)
+                else {}
+            ),
+            **(
                 {'local_repository_root': local_repository_root}
                 if local_repository_root
                 else {}

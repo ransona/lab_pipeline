@@ -808,15 +808,25 @@ class QueueTab(QtWidgets.QWidget):
         match = re.match(r"^[* ]+\d{3}\.\s+(.*)$", display_text)
         return match.group(1) if match else None
 
+    def _job_name_from_item(self, item: Optional[QtWidgets.QListWidgetItem]) -> Optional[str]:
+        if item is None:
+            return None
+        stored_name = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if stored_name:
+            return str(stored_name)
+        return self._parse_displayed_job_name(item.text()) or item.text()
+
     def _remember_selection(self):
         items = self.queue_list.selectedItems()
-        self.selected_job_name = self._parse_displayed_job_name(items[0].text()) if items else None
+        self.selected_job_name = self._job_name_from_item(items[0]) if items else None
 
-    def _load_selected_job(self):
-        items = self.queue_list.selectedItems()
-        if not items:
+    def _load_queue_job(self, item: Optional[QtWidgets.QListWidgetItem] = None):
+        if item is None:
+            items = self.queue_list.selectedItems()
+            item = items[0] if items else None
+        if item is None:
             raise ValueError("Select a queued job first.")
-        job_name = self._parse_displayed_job_name(items[0].text())
+        job_name = self._job_name_from_item(item)
         if not job_name:
             raise ValueError("Could not parse the selected job name.")
         job_path = self.current_queue_directory / job_name
@@ -826,11 +836,18 @@ class QueueTab(QtWidgets.QWidget):
             queued_command = pickle.load(handle)
         return job_name, queued_command
 
-    def _load_job_from_list(self, list_widget: QtWidgets.QListWidget, subdirectory: str):
-        items = list_widget.selectedItems()
-        if not items:
+    def _load_job_from_list(
+        self,
+        list_widget: QtWidgets.QListWidget,
+        subdirectory: str,
+        item: Optional[QtWidgets.QListWidgetItem] = None,
+    ):
+        if item is None:
+            items = list_widget.selectedItems()
+            item = items[0] if items else None
+        if item is None:
             raise ValueError("Select a job first.")
-        job_name = items[0].text()
+        job_name = self._job_name_from_item(item)
         job_path = self.current_queue_directory / subdirectory / job_name
         if not job_path.exists():
             raise FileNotFoundError("Selected job file no longer exists.")
@@ -838,25 +855,25 @@ class QueueTab(QtWidgets.QWidget):
             queued_command = pickle.load(handle)
         return job_name, queued_command
 
-    def show_selected_job_config(self):
+    def show_selected_job_config(self, item: Optional[QtWidgets.QListWidgetItem] = None):
         try:
-            job_name, queued_command = self._load_selected_job()
+            job_name, queued_command = self._load_queue_job(item)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Show Job Config", str(exc))
             return
         self._show_job_config_dialog(job_name, queued_command)
 
-    def show_completed_job_config(self):
+    def show_completed_job_config(self, item: Optional[QtWidgets.QListWidgetItem] = None):
         try:
-            job_name, queued_command = self._load_job_from_list(self.completed_jobs_list, "completed")
+            job_name, queued_command = self._load_job_from_list(self.completed_jobs_list, "completed", item)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Show Completed Job Config", str(exc))
             return
         self._show_job_config_dialog(job_name, queued_command)
 
-    def show_failed_job_config(self):
+    def show_failed_job_config(self, item: Optional[QtWidgets.QListWidgetItem] = None):
         try:
-            job_name, queued_command = self._load_job_from_list(self.failed_jobs_list, "failed")
+            job_name, queued_command = self._load_job_from_list(self.failed_jobs_list, "failed", item)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Show Failed Job Config", str(exc))
             return
@@ -927,7 +944,9 @@ class QueueTab(QtWidgets.QWidget):
         for index, job_name in enumerate(queue_files, start=1):
             prefix = f"{index:03}."
             display = f"* {prefix} {job_name}" if self.username in job_name else f"  {prefix} {job_name}"
-            self.queue_list.addItem(display)
+            item = QtWidgets.QListWidgetItem(display)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, job_name)
+            self.queue_list.addItem(item)
 
         if current_selection:
             for row in range(self.queue_list.count()):
@@ -954,7 +973,9 @@ class QueueTab(QtWidgets.QWidget):
             reverse=True,
         )[:50]
         for job_path in jobs:
-            list_widget.addItem(job_path.name)
+            item = QtWidgets.QListWidgetItem(job_path.name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, job_path.name)
+            list_widget.addItem(item)
 
     def refresh_completed_failed_jobs(self):
         self._refresh_job_history_list(self.completed_jobs_list, "completed")
@@ -995,7 +1016,7 @@ class QueueTab(QtWidgets.QWidget):
 
     def remove_selected_job(self):
         try:
-            job_name, queued_command = self._load_selected_job()
+            job_name, queued_command = self._load_queue_job()
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Remove Job", f"Could not read job file:\n{exc}")
             return
