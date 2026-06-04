@@ -5,6 +5,7 @@ import json
 import os
 import pickle
 import re
+import subprocess
 import sys
 import traceback
 from collections import OrderedDict
@@ -18,6 +19,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths
+from preprocess_pipeline.srdtrans import build_model as srdtrans_build
 from preprocess_pipeline.step1 import split_combined_s2p
 from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 from preprocess_pipeline.step2.run_batch import run_step2_batch
@@ -678,6 +680,41 @@ class SplitWorker(QtCore.QObject):
             self.failed.emit(str(exc))
         else:
             self.finished.emit()
+
+
+class CommandWorker(QtCore.QObject):
+    output = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal()
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, command: list[str], cwd: Optional[str] = None):
+        super().__init__()
+        self.command = command
+        self.cwd = cwd
+
+    def run(self):
+        self.output.emit(" ".join(self.command) + "\n")
+        try:
+            process = subprocess.Popen(
+                self.command,
+                cwd=self.cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                self.output.emit(line)
+            return_code = process.wait()
+            if return_code:
+                self.failed.emit(f"Command exited with status {return_code}")
+                return
+        except Exception as exc:
+            self.output.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit()
 
 
 class QueueTab(QtWidgets.QWidget):
@@ -2280,6 +2317,417 @@ class SplitTab(QtWidgets.QWidget):
         self.split_worker = None
 
 
+class BuildSRDTransTab(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.username = getpass.getuser()
+        self.experiments: list[dict] = []
+        self.config_path: Optional[Path] = None
+        self.command_thread = None
+        self.command_worker = None
+        self._build_ui()
+        self.refresh_s2p_configs()
+        self.update_model_preview()
+
+    def _build_ui(self):
+        outer = QtWidgets.QVBoxLayout(self)
+
+        model_group = QtWidgets.QGroupBox("Model")
+        model_form = QtWidgets.QFormLayout(model_group)
+        self.user_edit = QtWidgets.QLineEdit(self.username)
+        self.indicators_edit = QtWidgets.QLineEdit()
+        self.indicators_edit.setPlaceholderText("e.g. jGCaMP8m")
+        self.frame_rate_edit = QtWidgets.QLineEdit()
+        self.frame_rate_edit.setPlaceholderText("effective Hz, e.g. 7.5")
+        self.label_edit = QtWidgets.QLineEdit()
+        self.label_edit.setPlaceholderText("free label, e.g. meso_training_v1")
+        self.model_name_edit = QtWidgets.QLineEdit()
+        self.model_name_edit.setReadOnly(True)
+        self.model_root_edit = QtWidgets.QLineEdit()
+        self.model_root_edit.setReadOnly(True)
+        self.copy_model_root_button = QtWidgets.QPushButton("Copy model path")
+        model_form.addRow("userID", self.user_edit)
+        model_form.addRow("indicator(s)", self.indicators_edit)
+        model_form.addRow("effective frame rate", self.frame_rate_edit)
+        model_form.addRow("free string", self.label_edit)
+        model_form.addRow("model name", self.model_name_edit)
+        model_root_row = QtWidgets.QHBoxLayout()
+        model_root_row.addWidget(self.model_root_edit, 1)
+        model_root_row.addWidget(self.copy_model_root_button)
+        model_form.addRow("model root", model_root_row)
+        outer.addWidget(model_group)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        outer.addWidget(splitter, 1)
+
+        left = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left)
+        add_group = QtWidgets.QGroupBox("Experiments")
+        add_layout = QtWidgets.QVBoxLayout(add_group)
+        row = QtWidgets.QHBoxLayout()
+        self.exp_edit = QtWidgets.QLineEdit()
+        self.exp_edit.setPlaceholderText("YYYY-MM-DD_NN_ANIMALID")
+        self.s2p_combo = EditableConfigCombo()
+        self.browse_s2p_button = QtWidgets.QPushButton("Browse")
+        self.add_exp_button = QtWidgets.QPushButton("Add experiment")
+        row.addWidget(QtWidgets.QLabel("expID"))
+        row.addWidget(self.exp_edit, 1)
+        row.addWidget(QtWidgets.QLabel("Suite2p config"))
+        row.addWidget(self.s2p_combo, 1)
+        row.addWidget(self.browse_s2p_button)
+        row.addWidget(self.add_exp_button)
+        add_layout.addLayout(row)
+        self.experiment_table = QtWidgets.QTableWidget(0, 4)
+        self.experiment_table.setHorizontalHeaderLabels(["expID", "Suite2p config", "Detected", "Registered root"])
+        self.experiment_table.horizontalHeader().setStretchLastSection(True)
+        self.experiment_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        add_layout.addWidget(self.experiment_table)
+        exp_buttons = QtWidgets.QHBoxLayout()
+        self.remove_exp_button = QtWidgets.QPushButton("Remove selected")
+        self.copy_registered_root_button = QtWidgets.QPushButton("Copy registered path")
+        exp_buttons.addWidget(self.remove_exp_button)
+        exp_buttons.addWidget(self.copy_registered_root_button)
+        exp_buttons.addStretch(1)
+        add_layout.addLayout(exp_buttons)
+        left_layout.addWidget(add_group)
+
+        extract_group = QtWidgets.QGroupBox("Training Frame Selection")
+        extract_layout = QtWidgets.QVBoxLayout(extract_group)
+        self.selection_table = QtWidgets.QTableWidget(0, 8)
+        self.selection_table.setHorizontalHeaderLabels(
+            ["Use", "expID", "Work unit", "Plane", "Channel", "Start frame", "N frames", "Registered root"]
+        )
+        self.selection_table.horizontalHeader().setStretchLastSection(True)
+        extract_layout.addWidget(self.selection_table)
+        left_layout.addWidget(extract_group, 1)
+        splitter.addWidget(left)
+
+        right = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right)
+        self.train_params_json = QtWidgets.QPlainTextEdit(
+            json.dumps(srdtrans_build.default_train_params(), indent=2)
+        )
+        self.train_params_json.setMaximumHeight(170)
+        right_layout.addWidget(QtWidgets.QLabel("SRDTrans training params JSON"))
+        right_layout.addWidget(self.train_params_json)
+        action_row = QtWidgets.QHBoxLayout()
+        self.create_button = QtWidgets.QPushButton("Create")
+        self.register_button = QtWidgets.QPushButton("1) Register data")
+        self.extract_button = QtWidgets.QPushButton("2) Extract frames")
+        self.build_button = QtWidgets.QPushButton("3) Build model")
+        action_row.addWidget(self.create_button)
+        action_row.addWidget(self.register_button)
+        action_row.addWidget(self.extract_button)
+        action_row.addWidget(self.build_button)
+        right_layout.addLayout(action_row)
+        self.output = QtWidgets.QPlainTextEdit()
+        self.output.setReadOnly(True)
+        right_layout.addWidget(self.output, 1)
+        splitter.addWidget(right)
+        splitter.setSizes([900, 520])
+
+        for widget in (self.indicators_edit, self.frame_rate_edit, self.label_edit):
+            widget.textChanged.connect(self.update_model_preview)
+        self.user_edit.editingFinished.connect(self.refresh_s2p_configs)
+        self.browse_s2p_button.clicked.connect(self.browse_s2p_config)
+        self.add_exp_button.clicked.connect(self.add_experiment)
+        self.remove_exp_button.clicked.connect(self.remove_selected_experiment)
+        self.copy_registered_root_button.clicked.connect(self.copy_selected_registered_root)
+        self.copy_model_root_button.clicked.connect(self.copy_model_root)
+        self.create_button.clicked.connect(self.create_model)
+        self.register_button.clicked.connect(lambda: self.run_action("register"))
+        self.extract_button.clicked.connect(lambda: self.run_action("extract"))
+        self.build_button.clicked.connect(lambda: self.run_action("build"))
+
+    def refresh_s2p_configs(self):
+        current = self.s2p_combo.value()
+        user_id = self.user_edit.text().strip() or self.username
+        self.s2p_combo.clear()
+        self.s2p_combo.addItems(srdtrans_build.list_s2p_configs(user_id))
+        if current:
+            self.s2p_combo.set_value(current)
+
+    def update_model_preview(self):
+        model_name = srdtrans_build.build_model_name(
+            self.indicators_edit.text(),
+            self.frame_rate_edit.text(),
+            self.label_edit.text(),
+        )
+        self.model_name_edit.setText(model_name)
+        self.model_root_edit.setText(str(srdtrans_build.model_dir(model_name)) if model_name else "")
+        self._update_registered_paths_in_tables()
+
+    def _update_registered_paths_in_tables(self):
+        for row, exp in enumerate(self.experiments):
+            if exp.get("work_units"):
+                root = self._registered_root_for(exp["expID"], exp["work_units"][0]["name"])
+                item = self.experiment_table.item(row, 3)
+                if item is not None:
+                    item.setText(root)
+        for row in range(self.selection_table.rowCount()):
+            exp_item = self.selection_table.item(row, 1)
+            work_item = self.selection_table.item(row, 2)
+            root_item = self.selection_table.item(row, 7)
+            if exp_item is None or work_item is None or root_item is None:
+                continue
+            root_item.setText(self._registered_root_for(exp_item.text(), work_item.text()))
+
+    def browse_s2p_config(self):
+        user_id = self.user_edit.text().strip() or self.username
+        root = S2P_CONFIG_ROOT / user_id
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Suite2p Config",
+            str(root if root.exists() else S2P_CONFIG_ROOT),
+            "NumPy config (*.npy)",
+        )
+        if path:
+            self.s2p_combo.set_value(path)
+
+    def add_experiment(self):
+        user_id = self.user_edit.text().strip() or self.username
+        exp_id = self.exp_edit.text().strip()
+        s2p_config = self.s2p_combo.value()
+        if not exp_id or not s2p_config:
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "expID and Suite2p config are required.")
+            return
+        if any(exp["expID"] == exp_id for exp in self.experiments):
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", f"Experiment already added:\n{exp_id}")
+            return
+        try:
+            descriptor = describe_experiment(user_id, exp_id)
+            work_units = srdtrans_build.experiment_raw_work_units(user_id, exp_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Detect Experiment", str(exc))
+            return
+        self.experiments.append(
+            {
+                "expID": exp_id,
+                "suite2p_config": s2p_config,
+                "summary": descriptor.summary,
+                "topology": descriptor.topology,
+                "nchannels": descriptor.nchannels,
+                "work_units": work_units,
+                "descriptor": descriptor,
+                "training_selections": [],
+            }
+        )
+        self.exp_edit.clear()
+        self.refresh_experiment_table()
+        self.refresh_selection_table()
+
+    def _registered_root_for(self, exp_id: str, work_unit_name: str) -> str:
+        model_name = self.model_name_edit.text().strip()
+        if not model_name:
+            return ""
+        config = {"fast_build_root": str(srdtrans_build.FAST_BUILD_ROOT / srdtrans_build.safe_name(model_name))}
+        return str(srdtrans_build.registered_work_unit_root(config, exp_id, work_unit_name))
+
+    def refresh_experiment_table(self):
+        self.experiment_table.setRowCount(len(self.experiments))
+        for row, exp in enumerate(self.experiments):
+            first_root = ""
+            if exp.get("work_units"):
+                first_root = self._registered_root_for(exp["expID"], exp["work_units"][0]["name"])
+            values = [exp["expID"], exp["suite2p_config"], exp["summary"], first_root]
+            for col, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(str(value))
+                if col != 1:
+                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.experiment_table.setItem(row, col, item)
+        self.experiment_table.resizeColumnsToContents()
+
+    def _nplanes_for_work_unit(self, descriptor: ExperimentDescriptor, work_unit_display: str) -> int:
+        if descriptor.topology == "standard":
+            return int(descriptor.standard.nplanes or 1) if descriptor.standard else 1
+        path_name = work_unit_display.split("/")[0]
+        meta = descriptor.per_path.get(path_name)
+        return int(meta.nplanes or 1) if meta else 1
+
+    def refresh_selection_table(self):
+        rows = []
+        for exp in self.experiments:
+            descriptor = exp["descriptor"]
+            channels = list(range(1, int(exp["nchannels"]) + 1))
+            for work_unit in exp["work_units"]:
+                registered_root = self._registered_root_for(exp["expID"], work_unit["name"])
+                nplanes = self._nplanes_for_work_unit(descriptor, work_unit["display"])
+                for plane in range(nplanes):
+                    for channel in channels:
+                        rows.append(
+                            {
+                                "use": False,
+                                "expID": exp["expID"],
+                                "work_unit": work_unit["name"],
+                                "plane": plane,
+                                "channel": f"ch{channel}",
+                                "start_frame": 0,
+                                "n_frames": 1000,
+                                "registered_root": registered_root,
+                            }
+                        )
+        self.selection_table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            use_item = QtWidgets.QTableWidgetItem()
+            use_item.setFlags(use_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            use_item.setCheckState(
+                QtCore.Qt.CheckState.Checked if values["use"] else QtCore.Qt.CheckState.Unchecked
+            )
+            self.selection_table.setItem(row, 0, use_item)
+            for col, key in enumerate(
+                ["expID", "work_unit", "plane", "channel", "start_frame", "n_frames", "registered_root"],
+                start=1,
+            ):
+                item = QtWidgets.QTableWidgetItem(str(values[key]))
+                if key in {"expID", "work_unit", "registered_root"}:
+                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.selection_table.setItem(row, col, item)
+        self.selection_table.resizeColumnsToContents()
+
+    def remove_selected_experiment(self):
+        row = self.experiment_table.currentRow()
+        if row < 0:
+            return
+        self.experiments.pop(row)
+        self.refresh_experiment_table()
+        self.refresh_selection_table()
+
+    def _selected_registered_root(self) -> str:
+        row = self.experiment_table.currentRow()
+        if row < 0:
+            return self.model_root_edit.text().strip()
+        item = self.experiment_table.item(row, 3)
+        return item.text() if item else ""
+
+    def copy_selected_registered_root(self):
+        QtWidgets.QApplication.clipboard().setText(self._selected_registered_root())
+
+    def copy_model_root(self):
+        QtWidgets.QApplication.clipboard().setText(self.model_root_edit.text().strip())
+
+    def _collect_training_selections(self) -> dict[str, list[dict]]:
+        selections_by_exp: dict[str, list[dict]] = {}
+        for row in range(self.selection_table.rowCount()):
+            use_item = self.selection_table.item(row, 0)
+            if use_item is None or use_item.checkState() != QtCore.Qt.CheckState.Checked:
+                continue
+            selection = {
+                "use": True,
+                "expID": self.selection_table.item(row, 1).text(),
+                "work_unit": self.selection_table.item(row, 2).text(),
+                "plane": int(self.selection_table.item(row, 3).text()),
+                "channel": self.selection_table.item(row, 4).text(),
+                "start_frame": int(self.selection_table.item(row, 5).text()),
+                "n_frames": int(self.selection_table.item(row, 6).text()),
+                "registered_root": self.selection_table.item(row, 7).text(),
+            }
+            selections_by_exp.setdefault(selection["expID"], []).append(selection)
+        return selections_by_exp
+
+    def _experiment_payloads(self) -> list[dict]:
+        selections_by_exp = self._collect_training_selections()
+        payloads = []
+        for row, exp in enumerate(self.experiments):
+            config_item = self.experiment_table.item(row, 1)
+            suite2p_config = config_item.text().strip() if config_item else exp["suite2p_config"]
+            exp["suite2p_config"] = suite2p_config
+            payloads.append(
+                {
+                    "expID": exp["expID"],
+                    "suite2p_config": suite2p_config,
+                    "summary": exp.get("summary", ""),
+                    "topology": exp.get("topology", ""),
+                    "nchannels": exp.get("nchannels", 1),
+                    "work_units": exp["work_units"],
+                    "training_selections": selections_by_exp.get(exp["expID"], []),
+                }
+            )
+        return payloads
+
+    def _build_config(self) -> dict:
+        user_id = self.user_edit.text().strip() or self.username
+        model_name = self.model_name_edit.text().strip()
+        if not model_name:
+            raise ValueError("Model name is empty. Fill indicator(s), effective frame rate, or free string.")
+        if not self.experiments:
+            raise ValueError("Add at least one experiment.")
+        train_params = json.loads(self.train_params_json.toPlainText().strip() or "{}")
+        return srdtrans_build.create_build_config(
+            user_id=user_id,
+            model_name=model_name,
+            indicators=self.indicators_edit.text().strip(),
+            effective_frame_rate=self.frame_rate_edit.text().strip(),
+            label=self.label_edit.text().strip(),
+            experiments=self._experiment_payloads(),
+            train_params=train_params,
+        )
+
+    def create_model(self):
+        try:
+            config = self._build_config()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Create SRDTrans Model", str(exc))
+            return
+        self.config_path = Path(config["model_root"]) / "build_config.json"
+        self.refresh_experiment_table()
+        self.refresh_selection_table()
+        self._append_output(f"** Created model build folder\n{self.config_path}\n")
+
+    def _ensure_config_path(self) -> Path:
+        config = self._build_config()
+        self.config_path = Path(config["model_root"]) / "build_config.json"
+        return self.config_path
+
+    def run_action(self, action: str):
+        if self.command_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "A command is already running.")
+            return
+        try:
+            config_path = self._ensure_config_path()
+            command = srdtrans_build.command_for_action(action, config_path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Build SRDTrans", str(exc))
+            return
+        self._set_action_buttons_enabled(False)
+        self._append_output(f"\n** Starting {action}\n")
+        self.command_thread = QtCore.QThread(self)
+        self.command_worker = CommandWorker(command, cwd=str(Path(__file__).resolve().parents[3]))
+        self.command_worker.moveToThread(self.command_thread)
+        self.command_thread.started.connect(self.command_worker.run)
+        self.command_worker.output.connect(self._append_output)
+        self.command_worker.finished.connect(lambda: self._command_finished(action))
+        self.command_worker.failed.connect(lambda message: self._command_failed(action, message))
+        self.command_worker.finished.connect(self.command_thread.quit)
+        self.command_worker.failed.connect(self.command_thread.quit)
+        self.command_thread.finished.connect(self.command_worker.deleteLater)
+        self.command_thread.finished.connect(self.command_thread.deleteLater)
+        self.command_thread.finished.connect(self._clear_command_worker)
+        self.command_thread.start()
+
+    def _append_output(self, text: str):
+        at_bottom = self.output.verticalScrollBar().value() == self.output.verticalScrollBar().maximum()
+        self.output.moveCursor(QtGui.QTextCursor.MoveOperation.End)
+        self.output.insertPlainText(text)
+        if at_bottom:
+            self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
+
+    def _command_finished(self, action: str):
+        self._append_output(f"\n** {action} finished\n")
+        self._set_action_buttons_enabled(True)
+
+    def _command_failed(self, action: str, message: str):
+        self._append_output(f"\n** {action} failed: {message}\n")
+        self._set_action_buttons_enabled(True)
+
+    def _clear_command_worker(self):
+        self.command_thread = None
+        self.command_worker = None
+
+    def _set_action_buttons_enabled(self, enabled: bool):
+        for button in (self.create_button, self.register_button, self.extract_button, self.build_button):
+            button.setEnabled(enabled)
+
+
 class QueueManagerWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2290,6 +2738,8 @@ class QueueManagerWindow(QtWidgets.QMainWindow):
         tabs.addTab(Step1Tab(), "Step 1")
         tabs.addTab(Step2Tab(), "Step 2")
         tabs.addTab(SplitTab(), "Split")
+        if getpass.getuser() == "adamranson":
+            tabs.addTab(BuildSRDTransTab(), "Build SRDTrans")
         self.setCentralWidget(tabs)
 
 
