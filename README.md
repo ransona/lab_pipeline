@@ -275,6 +275,49 @@ step1_config["suite2p_config"] = {
 
 The GUI in `apps/qview.py` can build these forms for you.
 
+## SRDTrans Denoising
+
+SRDTrans is an optional Step 1 Suite2p path. It is enabled by setting `runsrdtrans=True` and providing `step1_config["srdtrans"]`.
+
+The current processing order is:
+
+1. Suite2p performs an initial shared rigid registration pass.
+2. SRDTrans denoises the registered `data.bin` files in place.
+3. Suite2p runs the final requested registration, normally non-rigid, plus ROI detection and extraction on the denoised binaries.
+
+The pre-denoise registered binaries are overwritten rather than kept as separate copies, to avoid duplicating large binary files.
+
+Example:
+
+```python
+step1_config["runsrdtrans"] = True
+step1_config["srdtrans"] = {
+    "model_root": "/home/adamranson/data/srt_models",
+    "model": "mixed_axon_soma_g8_202412022250",
+    "gpu": "0,1",
+    "channels": ["ch1"],
+}
+```
+
+Supported cases:
+
+- single-channel Suite2p
+- dual-channel Suite2p with one shared config
+- dual-channel Suite2p with separate channel configs; final registration is still shared, then extraction runs separately per channel config
+- multi-plane data
+- channel-specific denoising via `srdtrans["channels"]`, for example `["ch1"]`, `["ch2"]`, or `["ch1", "ch2"]`
+
+For dual-channel data without `Register with summed channel`, one channel/config is used for shared registration and those offsets are applied to both channels, matching the normal dual-channel path. `Register with summed channel` is a separate optional Suite2p setting. When enabled, the initial and final shared-registration offsets are computed from `ch1 + ch2`, then applied back to the separate channel binaries before extraction.
+
+Required SRDTrans fields:
+
+- `model_root`: folder containing SRDTrans model folders
+- `model`: model folder name under `model_root`
+- `gpu`: GPU string passed to SRDTrans, for example `"0"` or `"0,1"`
+- `channels`: channels to denoise
+
+Current caveat: the GUI SRDTrans JSON editor can still be left with an empty `"model": ""`. If `runsrdtrans=True`, make sure `model` is filled in before submitting the job. Otherwise Suite2p can complete the initial registration and then SRDTrans will fail with `ValueError: SRDTrans config requires model_root and model`.
+
 ## Step 2 Configs
 
 Step 2 runs directly, not through the queue listener.

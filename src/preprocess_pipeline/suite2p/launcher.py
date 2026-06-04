@@ -799,6 +799,48 @@ def run_final_summed_channel_registration(canonical_root, final_config_path):
     fix_binary_permissions(canonical_root)
 
 
+def run_final_shared_registration(canonical_root, final_config_path, nplanes):
+    """Run one final post-denoise registration and apply those offsets to both channels."""
+    final_config = np.load(final_config_path, allow_pickle=True).item()
+
+    for canonical_plane_dir in get_plane_dirs(canonical_root):
+        plane_name = os.path.basename(canonical_plane_dir)
+        print(f">>>>>>>>>>>>>>>>>>>>> FINAL SHARED REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
+        plane_ops_path = os.path.join(canonical_plane_dir, "ops.npy")
+        registration_ops = np.load(plane_ops_path, allow_pickle=True).item()
+
+        ch1_file = os.path.join(canonical_plane_dir, "data.bin")
+        ch2_file = os.path.join(canonical_plane_dir, "data_chan2.bin")
+        if not os.path.exists(ch1_file):
+            raise FileNotFoundError(f"Missing channel 1 binary for final shared registration: {ch1_file}")
+        if not os.path.exists(ch2_file):
+            raise FileNotFoundError(f"Missing channel 2 binary for final shared registration: {ch2_file}")
+
+        plane_ops = copy_ops_for_extraction(registration_ops, final_config)
+        plane_ops["save_mat"] = False
+        plane_ops["roidetect"] = False
+        plane_ops["do_registration"] = 2
+        plane_ops["save_path0"] = canonical_root
+        plane_ops["save_path"] = canonical_plane_dir
+        plane_ops["ops_path"] = plane_ops_path
+        plane_ops["move_bin"] = False
+        plane_ops["delete_bin"] = False
+        plane_ops["nchannels"] = 2
+        plane_ops["nplanes"] = int(nplanes)
+        plane_ops["reg_file"] = ch1_file
+        plane_ops["reg_file_chan2"] = ch2_file
+
+        plane_ops = run_plane(plane_ops)
+        plane_ops["nchannels"] = 2
+        plane_ops["nplanes"] = int(nplanes)
+        plane_ops["reg_file"] = ch1_file
+        plane_ops["reg_file_chan2"] = ch2_file
+        plane_ops["final_shared_registration"] = True
+        np.save(plane_ops_path, plane_ops)
+
+    fix_binary_permissions(canonical_root)
+
+
 def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel):
     """Run the final Suite2p pass on already rigid-registered binaries."""
     clear_detection_outputs(save_root)
@@ -993,8 +1035,9 @@ def run_srdtrans_suite2p(
             run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes)
             run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes)
         else:
-            run_final_suite2p_stage(output_path, ch2_root, effective_config_paths[1], nplanes, "ch2")
-            run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
+            run_final_shared_registration(output_path, effective_config_paths[0], nplanes)
+            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes)
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes)
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
         return
 

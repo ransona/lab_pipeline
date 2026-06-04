@@ -1437,12 +1437,14 @@ class Step1Tab(QtWidgets.QWidget):
         preset_buttons = QtWidgets.QHBoxLayout()
         self.load_preset_button = QtWidgets.QPushButton("Load")
         self.save_preset_button = QtWidgets.QPushButton("Save")
+        self.save_preset_as_button = QtWidgets.QPushButton("Save As")
         self.delete_preset_button = QtWidgets.QPushButton("Delete")
         self.rename_preset_button = QtWidgets.QPushButton("Rename")
         self.load_s2p_config_button = QtWidgets.QPushButton("Load S2P config")
         self.help_preset_button = QtWidgets.QPushButton("Help")
         preset_buttons.addWidget(self.load_preset_button)
         preset_buttons.addWidget(self.save_preset_button)
+        preset_buttons.addWidget(self.save_preset_as_button)
         preset_buttons.addWidget(self.delete_preset_button)
         preset_buttons.addWidget(self.rename_preset_button)
         preset_buttons.addWidget(self.load_s2p_config_button)
@@ -1480,6 +1482,8 @@ class Step1Tab(QtWidgets.QWidget):
 
         self.exp_editor.changed.connect(self.on_exp_list_changed)
         self.user_edit.editingFinished.connect(self.on_user_edit_finished)
+        self.active_preset_path: Optional[Path] = None
+        self.save_preset_button.setEnabled(False)
         self.load_preset_button.clicked.connect(self.load_preset)
         self.delete_preset_button.clicked.connect(self.delete_preset)
         self.rename_preset_button.clicked.connect(self.rename_preset)
@@ -1487,11 +1491,14 @@ class Step1Tab(QtWidgets.QWidget):
         self.help_preset_button.clicked.connect(self.show_preset_help)
         self.preset_list.itemDoubleClicked.connect(lambda _item: self.load_preset())
         self.save_preset_button.clicked.connect(self.save_preset)
+        self.save_preset_as_button.clicked.connect(self.save_preset_as)
         self.submit_button.clicked.connect(self.submit_job)
         self.refresh_preset_list()
         self.update_config_preview()
 
     def on_user_edit_finished(self):
+        self.active_preset_path = None
+        self.save_preset_button.setEnabled(False)
         self.refresh_preset_list()
         self.on_exp_list_changed()
 
@@ -1508,7 +1515,7 @@ class Step1Tab(QtWidgets.QWidget):
     def refresh_preset_list(self):
         preset_root = self._preset_root()
         _ensure_preset_dir(preset_root)
-        selected_path = self._selected_preset_path()
+        selected_path = self.active_preset_path if self.active_preset_path else self._selected_preset_path()
         selected_name = selected_path.name if selected_path else None
         self.preset_list.clear()
         for path in sorted(preset_root.glob("*.json")):
@@ -1747,20 +1754,58 @@ class Step1Tab(QtWidgets.QWidget):
             return None
         return "This saved config may be incompatible with the selected expIDs:\n\n- " + "\n- ".join(warnings)
 
+    def _write_preset(self, path: Path):
+        payload = self._preset_payload()
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self.active_preset_path = path
+        self.save_preset_button.setEnabled(True)
+        self.refresh_preset_list()
+
     def save_preset(self):
+        path = self.active_preset_path
+        if path is None:
+            path = self._selected_preset_path()
+        if path is None:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Save Preset",
+                "Load a saved config first, or use Save As to create a new one.",
+            )
+            return
+        response = QtWidgets.QMessageBox.warning(
+            self,
+            "Overwrite Step 1 Config",
+            f"Overwrite saved config '{path.stem}'?\n\n{path}",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._write_preset(path)
+        QtWidgets.QMessageBox.information(self, "Save Preset", f"Saved preset:\n{path}")
+
+    def save_preset_as(self):
         preset_root = self._preset_root()
         _ensure_preset_dir(preset_root)
-        name, ok = QtWidgets.QInputDialog.getText(self, "Save Step 1 Preset", "Preset name:")
+        name, ok = QtWidgets.QInputDialog.getText(self, "Save Step 1 Preset As", "Preset name:")
         if not ok or not name.strip():
             return
         safe_name = _safe_preset_name(name)
         if not safe_name:
             QtWidgets.QMessageBox.warning(self, "Save Preset", "Preset name is not valid.")
             return
-        payload = self._preset_payload()
         path = preset_root / f"{safe_name}.json"
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self.refresh_preset_list()
+        if path.exists():
+            response = QtWidgets.QMessageBox.warning(
+                self,
+                "Overwrite Step 1 Config",
+                f"Overwrite saved config '{path.stem}'?\n\n{path}",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No,
+            )
+            if response != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
+        self._write_preset(path)
         QtWidgets.QMessageBox.information(self, "Save Preset", f"Saved preset:\n{path}")
 
     def load_preset(self):
@@ -1781,6 +1826,9 @@ class Step1Tab(QtWidgets.QWidget):
             if response != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
         self._apply_preset_payload(payload)
+        self.active_preset_path = path
+        self.save_preset_button.setEnabled(True)
+        self.refresh_preset_list()
 
     def delete_preset(self):
         path = self._selected_preset_path()
@@ -1797,6 +1845,9 @@ class Step1Tab(QtWidgets.QWidget):
         if response != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         path.unlink()
+        if self.active_preset_path == path:
+            self.active_preset_path = None
+            self.save_preset_button.setEnabled(False)
         self.refresh_preset_list()
 
     def rename_preset(self):
@@ -1821,6 +1872,8 @@ class Step1Tab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "Rename Preset", f"Preset already exists:\n{new_path}")
             return
         path.rename(new_path)
+        if self.active_preset_path == path:
+            self.active_preset_path = new_path
         self.refresh_preset_list()
 
     def show_preset_help(self):
