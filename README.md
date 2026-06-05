@@ -58,6 +58,103 @@ The repo is organised around workflow, not around old script-vs-library splits:
 - `legacy/`
   - archived historical code snapshots kept for reference only
 
+## Resolving Experiment Paths
+
+Use the path resolver whenever code needs to locate raw or processed experiment data without hard-coding full directories. Given only a `userID` and an `expID`, it derives the `animalID`, the raw repository path, and the processed repository path using the lab's standard `animalID/expID` folder layout.
+
+The old `organise_paths.find_paths(userID, expID)` helper has been replaced by:
+
+```python
+from preprocess_pipeline.shared import paths
+
+animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(
+    userID,
+    expID,
+)
+```
+
+The return values are:
+
+- `animalID`: animal ID parsed from the experiment ID.
+- `remote_repository_root`: root of the raw remote repository.
+- `processed_root`: root of the processed repository for that user.
+- `exp_dir_processed`: processed experiment folder.
+- `exp_dir_raw`: raw experiment folder.
+
+If you are running from one of this repo's `apps/` shims or `configs/` examples, `src/` is already added to `sys.path`. In your own external script, either install the repo in editable mode or add `src/` explicitly:
+
+```python
+from pathlib import Path
+import sys
+
+LAB_PIPELINE = Path("/home/adamranson/code/lab_pipeline")
+sys.path.insert(0, str(LAB_PIPELINE / "src"))
+
+from preprocess_pipeline.shared import paths
+
+userID = "adamranson"
+expID = "2026-02-23_02_ESRC033"
+
+(
+    animalID,
+    remote_repository_root,
+    processed_root,
+    exp_dir_processed,
+    exp_dir_raw,
+) = paths.find_paths(userID, expID)
+
+print("animalID:", animalID)
+print("remote_repository_root:", remote_repository_root)
+print("processed_root:", processed_root)
+print("exp_dir_processed:", exp_dir_processed)
+print("exp_dir_raw:", exp_dir_raw)
+```
+
+On the server, this prints:
+
+```text
+animalID: ESRC033
+remote_repository_root: /data/Remote_Repository
+processed_root: /home/adamranson/data/Repository
+exp_dir_processed: /home/adamranson/data/Repository/ESRC033/2026-02-23_02_ESRC033
+exp_dir_raw: /data/Remote_Repository/ESRC033/2026-02-23_02_ESRC033
+```
+
+For habituation data, use `userID="habit"` when resolving already-moved habituation experiments:
+
+```python
+from preprocess_pipeline.shared import paths
+
+print(paths.find_paths("habit", "2026-01-19_01_ESRC026"))
+```
+
+Example output:
+
+```text
+('ESRC026', '/data/Remote_Repository', '/data/common/habituation', '/data/common/habituation/ESRC026/2026-01-19_01_ESRC026', '/data/common/habituation/ESRC026/2026-01-19_01_ESRC026')
+```
+
+For local Windows or non-server processing, pass local roots directly:
+
+```python
+from preprocess_pipeline.shared import paths
+
+paths.find_paths(
+    "adamranson",
+    "2025-10-30_10_ESYB025",
+    local_raw_repository_root=r"D:\data\Repository",
+    local_processed_repository_root=r"D:\processed\Repository",
+    local_nas_repository_root=r"\\ar-lab-nas1\DataServer\Remote_Repository",
+)
+```
+
+The same local roots can also be set through environment variables:
+
+- `LAB_PIPELINE_LOCAL_REPOSITORY_ROOT`
+- `LAB_PIPELINE_LOCAL_RAW_REPOSITORY_ROOT`
+- `LAB_PIPELINE_LOCAL_PROCESSED_REPOSITORY_ROOT`
+- `LAB_PIPELINE_LOCAL_NAS_REPOSITORY_ROOT`
+
 ## How To Use It
 
 The usual workflow is:
