@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 
-import organise_paths
+from preprocess_pipeline.shared import paths
 from core.canvas_composer import CanvasComposer
 from core.timeline import Timeline
 from core.writer import VideoWriter
@@ -229,7 +229,7 @@ def main():
     with open(args.template, "r", encoding="utf-8") as f:
         template = json.load(f)
 
-    _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = organise_paths.find_paths(
+    _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = paths.find_paths(
         args.userID, args.expID
     )
     sources = _build_sources(template.get("sources", {}), args.expID, args.userID, exp_dir_processed)

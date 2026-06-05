@@ -12,7 +12,7 @@ from scipy.interpolate import interp1d
 from sklearn.mixture import GaussianMixture
 from typing import Dict, Optional, Tuple
 
-import organise_paths
+from preprocess_pipeline.shared import paths
 
 
 # ---------------------------------------------------------------------
@@ -928,7 +928,7 @@ def run_sleep_scoring(
     step_idx += 1
     _report_progress(progress_callback, step_idx, total_steps, "Locating paths and loading data")
     print("[1/9] locating paths and loading data")
-    animal_id, _, _, exp_dir_processed, _ = organise_paths.find_paths(user_id, exp_id)
+    animal_id, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
 
     sleep_score_folder = ensure_dir(os.path.join(exp_dir_processed, "sleep_score"))
     figs_folder = ensure_dir(os.path.join(sleep_score_folder, "figs"))

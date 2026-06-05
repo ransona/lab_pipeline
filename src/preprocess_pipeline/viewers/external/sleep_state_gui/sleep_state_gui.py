@@ -22,7 +22,7 @@ from matplotlib.widgets import SpanSelector, Slider
 from scipy import signal
 from scipy.interpolate import interp1d
 
-import organise_paths
+from preprocess_pipeline.shared import paths
 from sleep_score import (
     run_sleep_scoring,
     score_from_epoch_features,
@@ -1116,7 +1116,7 @@ class VideoAnalysisApp(QMainWindow):
 
         # paths
         self.animalID, self.remote_repository_root, self.processed_root, \
-            self.exp_dir_processed, self.exp_dir_raw = organise_paths.find_paths(self.userID, self.expID)
+            self.exp_dir_processed, self.exp_dir_raw = paths.find_paths(self.userID, self.expID)
         self.exp_dir_processed_recordings = os.path.join(self.exp_dir_processed, 'recordings')
 
         # metadata with state labels (if present)
@@ -1656,7 +1656,7 @@ class VideoAnalysisApp(QMainWindow):
             return
 
         try:
-            organise_paths.find_paths(user_id, exp_id)
+            paths.find_paths(user_id, exp_id)
         except Exception as e:
             QMessageBox.critical(self, "Path Error", f"Error resolving paths:\n{e}")
             return

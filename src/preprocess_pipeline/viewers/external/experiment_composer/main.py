@@ -6,7 +6,7 @@ from sources.stimulus_video_source import StimulusVideoSource
 from sources.line_plot_source import LinePlotSource
 import os
 import numpy as np
-import organise_paths
+from preprocess_pipeline.shared import paths
 import pickle
 
 
@@ -20,7 +20,7 @@ def main():
     expID = "2025-07-04_06_ESPM154"
     userID = "pmateosaparicio"
 
-    animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = organise_paths.find_paths(userID, expID)
+    animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
     exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')    
     Ch = 0

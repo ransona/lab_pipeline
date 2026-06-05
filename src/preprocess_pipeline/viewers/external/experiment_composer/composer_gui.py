@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-import organise_paths
+from preprocess_pipeline.shared import paths
 from core.canvas_composer import CanvasComposer
 from core.timeline import Timeline
 from core.writer import VideoWriter
@@ -915,7 +915,7 @@ class ComposerWindow(QtWidgets.QMainWindow):
 
     def _build_composer(self, exp_id: str, user_id: str, t_start: float, t_stop: float, sample_fps: float, progress_cb=None):
         timeline = Timeline(t_start, t_stop, sample_fps)
-        _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = organise_paths.find_paths(user_id, exp_id)
+        _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = paths.find_paths(user_id, exp_id)
 
         sources = {}
         for name, spec in self.sources.items():
@@ -1191,7 +1191,7 @@ class ComposerWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = organise_paths.find_paths(user_id, exp_id)
+            _animal_id, _remote, _processed_root, exp_dir_processed, _exp_dir_raw = paths.find_paths(user_id, exp_id)
             default_dir = os.path.join(exp_dir_processed, "composer")
         except Exception:
             default_dir = os.path.join(os.getcwd(), "output_videos")
