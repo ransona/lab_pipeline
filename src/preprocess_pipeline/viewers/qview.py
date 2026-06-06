@@ -5,11 +5,15 @@ import json
 import os
 import pickle
 import re
+import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 import traceback
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -1432,6 +1436,8 @@ class Step1Tab(QtWidgets.QWidget):
         exp_box = QtWidgets.QGroupBox("expIDs")
         exp_box_layout = QtWidgets.QVBoxLayout(exp_box)
         exp_box_layout.addWidget(self.exp_editor)
+        self.picker_button = QtWidgets.QPushButton("Picker")
+        exp_box_layout.addWidget(self.picker_button)
         left_form.addRow(exp_box)
 
         self.runs2p = QtWidgets.QCheckBox()
@@ -1530,6 +1536,7 @@ class Step1Tab(QtWidgets.QWidget):
         self.save_preset_button.clicked.connect(self.save_preset)
         self.save_preset_as_button.clicked.connect(self.save_preset_as)
         self.submit_button.clicked.connect(self.submit_job)
+        self.picker_button.clicked.connect(self.open_picker)
         self.refresh_preset_list()
         self.update_config_preview()
 
@@ -1949,6 +1956,28 @@ class Step1Tab(QtWidgets.QWidget):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Step 1", str(exc))
 
+    def open_picker(self):
+        dialog = PickerSelectDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        if not dialog.selected_experiments:
+            return
+        users = sorted({user_id for user_id, _exp_id in dialog.selected_experiments})
+        if len(users) != 1:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Picker",
+                "Selected experiments belong to multiple users. Step 1 configs support one userID, so no experiments were added.",
+            )
+            return
+        self.user_edit.setText(users[0])
+        self.on_user_edit_finished()
+        current = self.exp_editor.values()
+        for _user_id, exp_id in dialog.selected_experiments:
+            if exp_id not in current:
+                current.append(exp_id)
+        self.exp_editor.set_values(current)
+
 
 class Step2Tab(QtWidgets.QWidget):
     def __init__(self, parent=None):
@@ -1979,6 +2008,8 @@ class Step2Tab(QtWidgets.QWidget):
         form.addRow("userID", self.user_edit)
         self.exp_editor = ExperimentListEditor()
         form.addRow("expIDs", self.exp_editor)
+        self.picker_button = QtWidgets.QPushButton("Picker")
+        form.addRow("", self.picker_button)
         self.pre_secs = QtWidgets.QDoubleSpinBox()
         self.pre_secs.setRange(0, 600)
         self.pre_secs.setValue(5)
@@ -2028,6 +2059,7 @@ class Step2Tab(QtWidgets.QWidget):
         self.load_preset_button.clicked.connect(self.load_preset)
         self.save_preset_button.clicked.connect(self.save_preset)
         self.run_button.clicked.connect(self.run_step2)
+        self.picker_button.clicked.connect(self.open_picker)
 
     def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox(title)
@@ -2104,6 +2136,27 @@ class Step2Tab(QtWidgets.QWidget):
             return
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         self._apply_preset_payload(payload)
+
+    def open_picker(self):
+        dialog = PickerSelectDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        if not dialog.selected_experiments:
+            return
+        users = sorted({user_id for user_id, _exp_id in dialog.selected_experiments})
+        if len(users) != 1:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Picker",
+                "Selected experiments belong to multiple users. Step 2 configs support one userID, so no experiments were added.",
+            )
+            return
+        self.user_edit.setText(users[0])
+        current = self.exp_editor.values()
+        for _user_id, exp_id in dialog.selected_experiments:
+            if exp_id not in current:
+                current.append(exp_id)
+        self.exp_editor.set_values(current)
 
     def run_step2(self):
         try:
@@ -2315,6 +2368,630 @@ class SplitTab(QtWidgets.QWidget):
     def _clear_split_worker(self):
         self.split_thread = None
         self.split_worker = None
+
+
+def _picker_db_path() -> Path:
+    root = Path.home() / ".config" / "lab_pipeline"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "experiment_picker.sqlite"
+
+
+def _picker_backup_path(db_path: Path, backup_date: date) -> Path:
+    return db_path.with_name(f"{db_path.stem}_backup_{backup_date.isoformat()}{db_path.suffix}")
+
+
+def _picker_backup_dates(db_path: Path) -> list[date]:
+    pattern = f"{db_path.stem}_backup_*{db_path.suffix}"
+    dates: list[date] = []
+    prefix = f"{db_path.stem}_backup_"
+    for candidate in db_path.parent.glob(pattern):
+        name = candidate.name
+        if not name.startswith(prefix) or not name.endswith(db_path.suffix):
+            continue
+        date_text = name[len(prefix) : -len(db_path.suffix)]
+        try:
+            dates.append(date.fromisoformat(date_text))
+        except ValueError:
+            continue
+    return dates
+
+
+def backup_picker_db_if_due(today: Optional[date] = None) -> Optional[Path]:
+    db_path = _picker_db_path()
+    if not db_path.exists():
+        return None
+    today = today or date.today()
+    backup_dates = _picker_backup_dates(db_path)
+    if backup_dates and max(backup_dates).strftime("%Y-%m") == today.strftime("%Y-%m"):
+        return None
+    backup_path = _picker_backup_path(db_path, today)
+    if backup_path.exists():
+        return None
+    shutil.copy2(db_path, backup_path)
+    return backup_path
+
+
+def _list_pipeline_users() -> list[str]:
+    users = {getpass.getuser()}
+    home_root = Path("/home")
+    if home_root.exists():
+        for entry in home_root.iterdir():
+            if (entry / "data" / "Repository").exists():
+                users.add(entry.name)
+    config_root = Path("/data/common/configs/s2p_configs")
+    if config_root.exists():
+        for entry in config_root.iterdir():
+            if entry.is_dir():
+                users.add(entry.name)
+    return sorted(users)
+
+
+def _experiment_id_from_folder(path_text: str) -> str:
+    path = Path(path_text)
+    if re.match(r"^\d{4}-\d{2}-\d{2}_\d+_.+", path.name):
+        return path.name
+    raise ValueError(f"Selected folder does not look like an experiment folder: {path}")
+
+
+def _format_descriptor_payload(payload: dict) -> str:
+    if payload.get("error"):
+        return f"Metadata error:\n{payload['error']}"
+    lines = [
+        f"expID: {payload.get('exp_id', '')}",
+        f"topology: {payload.get('topology', '')}",
+        f"channels: {payload.get('nchannels', '')}",
+        f"summary: {payload.get('summary', '')}",
+    ]
+    if payload.get("standard"):
+        standard = payload["standard"]
+        lines.extend(
+            [
+                "",
+                "Standard imaging:",
+                f"  nplanes: {standard.get('nplanes')}",
+                f"  scan_frame_rate: {standard.get('scan_frame_rate')}",
+                f"  fs per plane: {standard.get('fs')}",
+                f"  tif: {standard.get('tif_path')}",
+            ]
+        )
+    if payload.get("per_path"):
+        lines.append("")
+        lines.append("Mesoscope imaging:")
+        for path_name, meta in payload["per_path"].items():
+            lines.extend(
+                [
+                    f"  {path_name}:",
+                    f"    nplanes: {meta.get('nplanes')}",
+                    f"    nrois: {meta.get('nrois')}",
+                    f"    nchannels: {meta.get('nchannels')}",
+                    f"    scan_frame_rate: {meta.get('scan_frame_rate')}",
+                    f"    fs per ROI/plane: {meta.get('fs_per_roi')}",
+                    f"    rois: {', '.join(meta.get('roi_names', []))}",
+                ]
+            )
+    if payload.get("comments"):
+        lines.append("")
+        lines.append("Comments / imaging notes:")
+        lines.extend(f"  {item}" for item in payload["comments"])
+    return "\n".join(lines)
+
+
+def _descriptor_to_payload(descriptor: ExperimentDescriptor, user_id: str) -> dict:
+    payload = {
+        "exp_id": descriptor.exp_id,
+        "user_id": user_id,
+        "topology": descriptor.topology,
+        "nchannels": descriptor.nchannels,
+        "summary": descriptor.summary,
+        "work_units": descriptor.work_units,
+        "per_path": {},
+        "standard": None,
+    }
+    if descriptor.standard is not None:
+        payload["standard"] = {
+            "nplanes": descriptor.standard.nplanes,
+            "nchannels": descriptor.standard.nchannels,
+            "scan_frame_rate": descriptor.standard.scan_frame_rate,
+            "fs": descriptor.standard.fs,
+            "tif_path": descriptor.standard.tif_path,
+        }
+    for path_name, meta in descriptor.per_path.items():
+        payload["per_path"][path_name] = {
+            "nplanes": meta.nplanes,
+            "nrois": meta.nrois,
+            "nchannels": meta.nchannels,
+            "scan_frame_rate": meta.scan_frame_rate,
+            "fs_per_roi": meta.fs_per_roi,
+            "roi_names": meta.roi_names,
+        }
+    payload["comments"] = _load_experiment_comments(user_id, descriptor.exp_id)
+    return payload
+
+
+def _load_experiment_comments(user_id: str, exp_id: str) -> list[str]:
+    comments: list[str] = []
+    try:
+        _, _, _, exp_dir_processed, exp_dir_raw = paths.find_paths(user_id, exp_id)
+    except Exception:
+        return comments
+    for root_text in (exp_dir_raw, exp_dir_processed):
+        root = Path(root_text)
+        if not root.exists():
+            continue
+        metadata_path = root / "metadata.pickle"
+        if metadata_path.exists():
+            try:
+                with metadata_path.open("rb") as handle:
+                    metadata = pickle.load(handle)
+                if isinstance(metadata, dict):
+                    for key, value in sorted(metadata.items()):
+                        key_text = str(key).lower()
+                        if "comment" in key_text or "imaging" in key_text or "note" in key_text:
+                            comments.append(f"{metadata_path.name}:{key} = {value}")
+            except Exception as exc:
+                comments.append(f"{metadata_path.name}: could not read metadata ({exc})")
+        for candidate in sorted(root.glob("*comment*")) + sorted(root.glob("*note*")):
+            if candidate.is_file() and candidate.stat().st_size < 20000:
+                try:
+                    text = candidate.read_text(encoding="utf-8", errors="replace").strip()
+                    if text:
+                        comments.append(f"{candidate.name}: {text[:1000]}")
+                except Exception:
+                    pass
+    return comments
+
+
+def _load_processing_config_text(user_id: str, exp_id: str) -> str:
+    try:
+        _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+    except Exception as exc:
+        return f"Could not resolve processed path: {exc}"
+    config_path = Path(exp_dir_processed) / "pipeline_config.pickle"
+    if not config_path.exists():
+        return f"No pipeline_config.pickle found:\n{config_path}"
+    try:
+        with config_path.open("rb") as handle:
+            data = pickle.load(handle)
+        return json.dumps(data, indent=2, default=str)
+    except Exception as exc:
+        return f"Could not read {config_path}:\n{exc}"
+
+
+class PickerStore:
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = db_path or _picker_db_path()
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.row_factory = sqlite3.Row
+        self._init_db()
+
+    def _init_db(self):
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS nodes (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+                node_type TEXT NOT NULL CHECK(node_type IN ('group', 'experiment')),
+                name TEXT NOT NULL,
+                user_id TEXT,
+                exp_id TEXT,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS metadata_cache (
+                user_id TEXT NOT NULL,
+                exp_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                cached_at REAL NOT NULL,
+                PRIMARY KEY (user_id, exp_id)
+            );
+            """
+        )
+        count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        if count == 0:
+            now = time.time()
+            self.conn.execute(
+                "INSERT INTO nodes(parent_id, node_type, name, created_at, updated_at) VALUES(NULL, 'group', 'Experiments', ?, ?)",
+                (now, now),
+            )
+        self.conn.commit()
+
+    def root_id(self) -> int:
+        row = self.conn.execute("SELECT id FROM nodes WHERE parent_id IS NULL ORDER BY id LIMIT 1").fetchone()
+        return int(row["id"])
+
+    def children(self, parent_id: Optional[int]) -> list[sqlite3.Row]:
+        if parent_id is None:
+            cursor = self.conn.execute("SELECT * FROM nodes WHERE parent_id IS NULL ORDER BY node_type DESC, name")
+        else:
+            cursor = self.conn.execute("SELECT * FROM nodes WHERE parent_id=? ORDER BY node_type DESC, name", (parent_id,))
+        return list(cursor.fetchall())
+
+    def get_node(self, node_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+
+    def add_group(self, parent_id: int, name: str) -> int:
+        now = time.time()
+        cursor = self.conn.execute(
+            "INSERT INTO nodes(parent_id, node_type, name, created_at, updated_at) VALUES(?, 'group', ?, ?, ?)",
+            (parent_id, name, now, now),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def add_experiment(self, parent_id: int, user_id: str, exp_id: str, notes: str = "") -> int:
+        now = time.time()
+        cursor = self.conn.execute(
+            """
+            INSERT INTO nodes(parent_id, node_type, name, user_id, exp_id, notes, created_at, updated_at)
+            VALUES(?, 'experiment', ?, ?, ?, ?, ?, ?)
+            """,
+            (parent_id, f"{user_id} / {exp_id}", user_id, exp_id, notes, now, now),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def delete_node(self, node_id: int):
+        if node_id == self.root_id():
+            raise ValueError("Cannot delete the root group.")
+        self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+        self.conn.commit()
+
+    def rename_group(self, node_id: int, name: str):
+        now = time.time()
+        self.conn.execute("UPDATE nodes SET name=?, updated_at=? WHERE id=? AND node_type='group'", (name, now, node_id))
+        self.conn.commit()
+
+    def update_notes(self, node_id: int, notes: str):
+        now = time.time()
+        self.conn.execute("UPDATE nodes SET notes=?, updated_at=? WHERE id=?", (notes, now, node_id))
+        self.conn.commit()
+
+    def cached_metadata(self, user_id: str, exp_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT metadata_json FROM metadata_cache WHERE user_id=? AND exp_id=?",
+            (user_id, exp_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["metadata_json"])
+
+    def cache_metadata(self, user_id: str, exp_id: str, payload: dict):
+        self.conn.execute(
+            """
+            INSERT INTO metadata_cache(user_id, exp_id, metadata_json, cached_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(user_id, exp_id) DO UPDATE SET metadata_json=excluded.metadata_json, cached_at=excluded.cached_at
+            """,
+            (user_id, exp_id, json.dumps(payload, default=str), time.time()),
+        )
+        self.conn.commit()
+
+    def metadata_for(self, user_id: str, exp_id: str, refresh: bool = False) -> dict:
+        if not refresh:
+            cached = self.cached_metadata(user_id, exp_id)
+            if cached is not None:
+                return cached
+        try:
+            payload = _descriptor_to_payload(describe_experiment(user_id, exp_id), user_id)
+        except Exception as exc:
+            payload = {"user_id": user_id, "exp_id": exp_id, "error": str(exc)}
+        self.cache_metadata(user_id, exp_id, payload)
+        return payload
+
+    def experiments_under(self, node_id: int) -> list[tuple[str, str]]:
+        node = self.get_node(node_id)
+        if node is None:
+            return []
+        if node["node_type"] == "experiment":
+            return [(node["user_id"], node["exp_id"])]
+        results: list[tuple[str, str]] = []
+        for child in self.children(node_id):
+            results.extend(self.experiments_under(int(child["id"])))
+        return results
+
+
+class PickerSelectDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Pick Experiments")
+        self.resize(720, 620)
+        self.store = PickerStore()
+        self.selected_experiments: list[tuple[str, str]] = []
+        layout = QtWidgets.QVBoxLayout(self)
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["Groups / Experiments"])
+        self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        layout.addWidget(self.tree, 1)
+        info = QtWidgets.QLabel("Select experiments or groups. Groups are flattened into all child experiments.")
+        layout.addWidget(info)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.populate()
+
+    def populate(self):
+        self.tree.clear()
+
+        def add_children(parent_item, parent_id):
+            for row in self.store.children(parent_id):
+                if row["node_type"] == "group":
+                    item = QtWidgets.QTreeWidgetItem([row["name"]])
+                else:
+                    item = QtWidgets.QTreeWidgetItem([f"{row['user_id']} / {row['exp_id']}"])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(row["id"]))
+                parent_item.addChild(item)
+                if row["node_type"] == "group":
+                    add_children(item, int(row["id"]))
+
+        for root in self.store.children(None):
+            root_item = QtWidgets.QTreeWidgetItem([root["name"]])
+            root_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(root["id"]))
+            self.tree.addTopLevelItem(root_item)
+            add_children(root_item, int(root["id"]))
+            root_item.setExpanded(True)
+
+    def accept(self):
+        selected: list[tuple[str, str]] = []
+        seen = set()
+        for item in self.tree.selectedItems():
+            node_id = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            for user_id, exp_id in self.store.experiments_under(int(node_id)):
+                key = (user_id, exp_id)
+                if key not in seen:
+                    selected.append(key)
+                    seen.add(key)
+        self.selected_experiments = selected
+        super().accept()
+
+
+class ExperimentPickerTab(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.store = PickerStore()
+        self.current_node_id: Optional[int] = None
+        self._build_ui()
+        self.refresh_tree()
+
+    def _build_ui(self):
+        outer = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left)
+        button_row = QtWidgets.QHBoxLayout()
+        self.add_group_button = QtWidgets.QPushButton("Add Group")
+        self.add_subgroup_button = QtWidgets.QPushButton("Add Subgroup")
+        self.add_exp_button = QtWidgets.QPushButton("Add Experiment")
+        self.add_folder_button = QtWidgets.QPushButton("Add From Folder")
+        self.rename_button = QtWidgets.QPushButton("Rename")
+        self.delete_button = QtWidgets.QPushButton("Delete")
+        for button in (
+            self.add_group_button,
+            self.add_subgroup_button,
+            self.add_exp_button,
+            self.add_folder_button,
+            self.rename_button,
+            self.delete_button,
+        ):
+            button_row.addWidget(button)
+        left_layout.addLayout(button_row)
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["Groups / Experiments"])
+        left_layout.addWidget(self.tree, 1)
+        outer.addWidget(left, 1)
+
+        right = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right)
+        self.details = QtWidgets.QPlainTextEdit()
+        self.details.setReadOnly(True)
+        self.processing = QtWidgets.QPlainTextEdit()
+        self.processing.setReadOnly(True)
+        self.notes = QtWidgets.QPlainTextEdit()
+        self.save_notes_button = QtWidgets.QPushButton("Save Notes")
+        self.refresh_metadata_button = QtWidgets.QPushButton("Refresh Metadata")
+        right_layout.addWidget(QtWidgets.QLabel("Experiment Metadata"))
+        right_layout.addWidget(self.details, 2)
+        right_layout.addWidget(QtWidgets.QLabel("Current Processing Config"))
+        right_layout.addWidget(self.processing, 2)
+        right_layout.addWidget(QtWidgets.QLabel("Notes"))
+        right_layout.addWidget(self.notes, 1)
+        note_buttons = QtWidgets.QHBoxLayout()
+        note_buttons.addWidget(self.save_notes_button)
+        note_buttons.addWidget(self.refresh_metadata_button)
+        note_buttons.addStretch(1)
+        right_layout.addLayout(note_buttons)
+        outer.addWidget(right, 1)
+
+        self.add_group_button.clicked.connect(self.add_group)
+        self.add_subgroup_button.clicked.connect(self.add_subgroup)
+        self.add_exp_button.clicked.connect(self.add_experiment)
+        self.add_folder_button.clicked.connect(self.add_from_folder)
+        self.rename_button.clicked.connect(self.rename_selected)
+        self.delete_button.clicked.connect(self.delete_selected)
+        self.save_notes_button.clicked.connect(self.save_notes)
+        self.refresh_metadata_button.clicked.connect(lambda: self.show_selected(refresh=True))
+        self.tree.itemSelectionChanged.connect(self.show_selected)
+
+    def selected_group_id(self) -> int:
+        item = self.tree.currentItem()
+        if item is None:
+            return self.store.root_id()
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        node = self.store.get_node(node_id)
+        if node is None:
+            return self.store.root_id()
+        if node["node_type"] == "group":
+            return node_id
+        return int(node["parent_id"] or self.store.root_id())
+
+    def refresh_tree(self):
+        selected_id = self.current_node_id
+        self.tree.clear()
+
+        def add_children(parent_item, parent_id):
+            for row in self.store.children(parent_id):
+                text = row["name"] if row["node_type"] == "group" else f"{row['user_id']} / {row['exp_id']}"
+                item = QtWidgets.QTreeWidgetItem([text])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(row["id"]))
+                parent_item.addChild(item)
+                if row["node_type"] == "group":
+                    font = item.font(0)
+                    font.setBold(True)
+                    item.setFont(0, font)
+                    add_children(item, int(row["id"]))
+                if selected_id == int(row["id"]):
+                    self.tree.setCurrentItem(item)
+
+        for row in self.store.children(None):
+            item = QtWidgets.QTreeWidgetItem([row["name"]])
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(row["id"]))
+            font = item.font(0)
+            font.setBold(True)
+            item.setFont(0, font)
+            self.tree.addTopLevelItem(item)
+            add_children(item, int(row["id"]))
+            item.setExpanded(True)
+            if selected_id == int(row["id"]):
+                self.tree.setCurrentItem(item)
+        self.tree.expandToDepth(1)
+
+    def add_group(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "Add Group", "Group name:")
+        if not ok or not name.strip():
+            return
+        self.current_node_id = self.store.add_group(self.store.root_id(), name.strip())
+        self.refresh_tree()
+
+    def add_subgroup(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "Add Subgroup", "Subgroup name:")
+        if not ok or not name.strip():
+            return
+        self.current_node_id = self.store.add_group(self.selected_group_id(), name.strip())
+        self.refresh_tree()
+
+    def add_experiment(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Add Experiment")
+        layout = QtWidgets.QFormLayout(dialog)
+        user_combo = QtWidgets.QComboBox()
+        user_combo.setEditable(True)
+        user_combo.addItems(_list_pipeline_users())
+        user_combo.setCurrentText(getpass.getuser())
+        exp_edit = QtWidgets.QLineEdit()
+        exp_edit.setPlaceholderText("YYYY-MM-DD_NN_ANIMALID")
+        notes_edit = QtWidgets.QPlainTextEdit()
+        notes_edit.setMaximumHeight(90)
+        layout.addRow("userID", user_combo)
+        layout.addRow("expID", exp_edit)
+        layout.addRow("notes", notes_edit)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        user_id = user_combo.currentText().strip()
+        exp_id = exp_edit.text().strip()
+        if not user_id or not exp_id:
+            return
+        self.current_node_id = self.store.add_experiment(self.selected_group_id(), user_id, exp_id, notes_edit.toPlainText())
+        self.refresh_tree()
+
+    def add_from_folder(self):
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Select Experiment Folder",
+            "/data/Remote_Repository",
+        )
+        if not folder:
+            return
+        try:
+            exp_id = _experiment_id_from_folder(folder)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Add From Folder", str(exc))
+            return
+        user_id, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Experiment User",
+            "userID for processed output:",
+            _list_pipeline_users(),
+            0,
+            True,
+        )
+        if not ok or not user_id.strip():
+            return
+        self.current_node_id = self.store.add_experiment(self.selected_group_id(), user_id.strip(), exp_id)
+        self.refresh_tree()
+
+    def rename_selected(self):
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        node = self.store.get_node(node_id)
+        if node is None or node["node_type"] != "group":
+            QtWidgets.QMessageBox.information(self, "Rename", "Only groups can be renamed.")
+            return
+        name, ok = QtWidgets.QInputDialog.getText(self, "Rename Group", "Group name:", text=node["name"])
+        if ok and name.strip():
+            self.current_node_id = node_id
+            self.store.rename_group(node_id, name.strip())
+            self.refresh_tree()
+
+    def delete_selected(self):
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        node = self.store.get_node(node_id)
+        if node is None:
+            return
+        response = QtWidgets.QMessageBox.question(self, "Delete", f"Delete {node['name']} and all children?")
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.store.delete_node(node_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Delete", str(exc))
+            return
+        self.current_node_id = None
+        self.refresh_tree()
+
+    def show_selected(self, refresh: bool = False):
+        item = self.tree.currentItem()
+        if item is None:
+            self.current_node_id = None
+            self.details.clear()
+            self.processing.clear()
+            self.notes.clear()
+            return
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        self.current_node_id = node_id
+        node = self.store.get_node(node_id)
+        if node is None:
+            return
+        self.notes.setPlainText(node["notes"] or "")
+        if node["node_type"] == "group":
+            experiments = self.store.experiments_under(node_id)
+            self.details.setPlainText(
+                f"Group: {node['name']}\nExperiments in group: {len(experiments)}"
+            )
+            self.processing.clear()
+            return
+        metadata = self.store.metadata_for(node["user_id"], node["exp_id"], refresh=refresh)
+        self.details.setPlainText(_format_descriptor_payload(metadata))
+        self.processing.setPlainText(_load_processing_config_text(node["user_id"], node["exp_id"]))
+
+    def save_notes(self):
+        if self.current_node_id is None:
+            return
+        self.store.update_notes(self.current_node_id, self.notes.toPlainText())
+        self.refresh_tree()
 
 
 class BuildSRDTransTab(QtWidgets.QWidget):
@@ -2733,8 +3410,20 @@ class QueueManagerWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Lab Queue Manager")
         self.resize(1400, 900)
+        try:
+            backup_picker_db_if_due()
+        except Exception as exc:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: QtWidgets.QMessageBox.warning(
+                    self,
+                    "Picker Backup",
+                    f"Could not back up Picker database:\n{exc}",
+                ),
+            )
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(QueueTab(), "Queue")
+        tabs.addTab(ExperimentPickerTab(), "Picker")
         tabs.addTab(Step1Tab(), "Step 1")
         tabs.addTab(Step2Tab(), "Step 2")
         tabs.addTab(SplitTab(), "Split")

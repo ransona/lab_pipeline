@@ -200,13 +200,23 @@ Step 1 queue target:
 From the GUI:
 
 1. Open the `Step 1` tab.
-2. Add one or more `expIDs`.
+2. Add one or more `expIDs`, or click `Picker` to insert saved experiments/groups.
 3. Wait for the experiment summary to appear.
 4. Pick the correct Suite2p config form for the detected topology.
 5. Leave the queue selector on `Normal` or switch it to `Debug`.
 6. Click `Submit Step 1 Job`.
 
-Step 2 is not queued. The `Step 2` tab is for building the config, but Step 2 itself still runs directly from the config file.
+Step 2 is not queued. The `Step 2` tab builds and runs the Step 2 config directly, and also has a `Picker` button for inserting saved experiments/groups.
+
+The `Picker` tab stores a personal hierarchical experiment tree in:
+
+```text
+~/.config/lab_pipeline/experiment_picker.sqlite
+```
+
+Use it to make groups and subgroups, add experiments by `userID`/`expID` or by selecting an experiment folder, and attach notes to each experiment. Experiment imaging metadata is cached in the SQLite file, but processing information is read live from each processed experiment's `pipeline_config.pickle` so it reflects the most recent pipeline execution. Step 1 now writes that `pipeline_config.pickle` into each processed experiment folder when a job runs.
+
+When qView starts, it backs up the Picker database at most once per calendar month if the database already exists. Backups are written next to the database as `experiment_picker_backup_YYYY-MM-DD.sqlite`.
 
 If you need the listener manually, the new queue listener can be run with:
 

@@ -113,6 +113,15 @@ def _all_exp_ids(exp_id):
     return exp_id.split(',') if ',' in exp_id else [exp_id]
 
 
+def _write_pipeline_config_for_experiments(user_id, exp_ids, queued_command):
+    for current_exp_id in exp_ids:
+        _, exp_dir_processed = _find_exp_paths(user_id, current_exp_id)
+        os.makedirs(exp_dir_processed, exist_ok=True)
+        config_path = os.path.join(exp_dir_processed, 'pipeline_config.pickle')
+        with open(config_path, 'wb') as f:
+            pickle.dump(queued_command, f)
+
+
 def _work_unit_mode(work_unit_id):
     return 'standard' if work_unit_id == 'root' else 'meso'
 
@@ -374,6 +383,7 @@ def run_preprocess_step1_universal(
     if queued_command is None:
         queued_command = _load_queued_command(jobID, queue_paths=[queue_path])
     exp_ids = _all_exp_ids(expID)
+    _write_pipeline_config_for_experiments(userID, exp_ids, queued_command)
     first_exp_raw, first_exp_processed = _find_exp_paths(userID, exp_ids[0])
     os.makedirs(first_exp_processed, exist_ok=True)
 
