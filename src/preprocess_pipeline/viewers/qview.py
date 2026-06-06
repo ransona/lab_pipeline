@@ -2416,13 +2416,19 @@ def _list_pipeline_users() -> list[str]:
     home_root = Path("/home")
     if home_root.exists():
         for entry in home_root.iterdir():
-            if (entry / "data" / "Repository").exists():
-                users.add(entry.name)
+            try:
+                if (entry / "data" / "Repository").exists():
+                    users.add(entry.name)
+            except OSError:
+                continue
     config_root = Path("/data/common/configs/s2p_configs")
     if config_root.exists():
         for entry in config_root.iterdir():
-            if entry.is_dir():
-                users.add(entry.name)
+            try:
+                if entry.is_dir():
+                    users.add(entry.name)
+            except OSError:
+                continue
     return sorted(users)
 
 
@@ -2873,60 +2879,71 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.refresh_tree()
 
     def add_experiment(self):
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Add Experiment")
-        layout = QtWidgets.QFormLayout(dialog)
-        user_combo = QtWidgets.QComboBox()
-        user_combo.setEditable(True)
-        user_combo.addItems(_list_pipeline_users())
-        user_combo.setCurrentText(getpass.getuser())
-        exp_edit = QtWidgets.QLineEdit()
-        exp_edit.setPlaceholderText("YYYY-MM-DD_NN_ANIMALID")
-        notes_edit = QtWidgets.QPlainTextEdit()
-        notes_edit.setMaximumHeight(90)
-        layout.addRow("userID", user_combo)
-        layout.addRow("expID", exp_edit)
-        layout.addRow("notes", notes_edit)
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        user_id = user_combo.currentText().strip()
-        exp_id = exp_edit.text().strip()
-        if not user_id or not exp_id:
-            return
-        self.current_node_id = self.store.add_experiment(self.selected_group_id(), user_id, exp_id, notes_edit.toPlainText())
-        self.refresh_tree()
+        try:
+            dialog = QtWidgets.QDialog(self)
+            dialog.setWindowTitle("Add Experiment")
+            layout = QtWidgets.QFormLayout(dialog)
+            user_combo = QtWidgets.QComboBox()
+            user_combo.setEditable(True)
+            user_combo.addItems(_list_pipeline_users())
+            user_combo.setCurrentText(getpass.getuser())
+            exp_edit = QtWidgets.QLineEdit()
+            exp_edit.setPlaceholderText("YYYY-MM-DD_NN_ANIMALID")
+            notes_edit = QtWidgets.QPlainTextEdit()
+            notes_edit.setMaximumHeight(90)
+            layout.addRow("userID", user_combo)
+            layout.addRow("expID", exp_edit)
+            layout.addRow("notes", notes_edit)
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            )
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            layout.addRow(buttons)
+            if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            user_id = user_combo.currentText().strip()
+            exp_id = exp_edit.text().strip()
+            if not user_id or not exp_id:
+                return
+            self.current_node_id = self.store.add_experiment(
+                self.selected_group_id(),
+                user_id,
+                exp_id,
+                notes_edit.toPlainText(),
+            )
+            self.refresh_tree()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Add Experiment", str(exc))
 
     def add_from_folder(self):
-        folder = QtWidgets.QFileDialog.getExistingDirectory(
-            self,
-            "Select Experiment Folder",
-            "/data/Remote_Repository",
-        )
-        if not folder:
-            return
         try:
-            exp_id = _experiment_id_from_folder(folder)
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                self,
+                "Select Experiment Folder",
+                "/data/Remote_Repository",
+            )
+            if not folder:
+                return
+            try:
+                exp_id = _experiment_id_from_folder(folder)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Add From Folder", str(exc))
+                return
+            user_id, ok = QtWidgets.QInputDialog.getItem(
+                self,
+                "Experiment User",
+                "userID for processed output:",
+                _list_pipeline_users(),
+                0,
+                True,
+            )
+            if not ok or not user_id.strip():
+                return
+            self.current_node_id = self.store.add_experiment(self.selected_group_id(), user_id.strip(), exp_id)
+            self.refresh_tree()
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Add From Folder", str(exc))
-            return
-        user_id, ok = QtWidgets.QInputDialog.getItem(
-            self,
-            "Experiment User",
-            "userID for processed output:",
-            _list_pipeline_users(),
-            0,
-            True,
-        )
-        if not ok or not user_id.strip():
-            return
-        self.current_node_id = self.store.add_experiment(self.selected_group_id(), user_id.strip(), exp_id)
-        self.refresh_tree()
+            QtWidgets.QMessageBox.critical(self, "Add From Folder", str(exc))
 
     def rename_selected(self):
         item = self.tree.currentItem()
