@@ -231,6 +231,16 @@ The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/
 
 The main GUI entry points are `qview.py`, `imaging_view.py`, and `eye_check.py`. See `Apps And Launchers` at the top of this README for Linux commands and Windows `.bat` launchers.
 
+In the qView `Build SRDTrans` tab, `1) Register data` launches in a detached `tmux` session and writes a log under the model folder, for example:
+
+```text
+/data/common/srdtrans_models/<model_name>/logs/register_YYYYMMDD_HHMMSS.log
+```
+
+qView tails that log while it remains open, but the registration continues if the GUI or SSH session disconnects. The GUI shows the exact `tmux attach -t ...` command after launch.
+
+The `Build SRDTrans` tab can resume a partially built model with `Load existing`. Select the model's `build_config.json`; the GUI reloads experiments, Suite2p configs, frame selections, training parameters, and the latest registration log. If a matching detached registration tmux session is still running, qView reconnects to it and resumes tailing the log.
+
 ## Step 1 Configs
 
 Step 1 config files define:

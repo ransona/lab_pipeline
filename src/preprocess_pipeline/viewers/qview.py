@@ -6,6 +6,7 @@ import os
 import pickle
 import re
 import shutil
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import time
 import traceback
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -3019,6 +3020,13 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.config_path: Optional[Path] = None
         self.command_thread = None
         self.command_worker = None
+        self.detached_timer = QtCore.QTimer(self)
+        self.detached_timer.setInterval(3000)
+        self.detached_timer.timeout.connect(self._poll_detached_command)
+        self.detached_session: Optional[str] = None
+        self.detached_log_path: Optional[Path] = None
+        self.detached_log_offset = 0
+        self.detached_action: Optional[str] = None
         self._build_ui()
         self.refresh_s2p_configs()
         self.update_model_preview()
@@ -3106,10 +3114,12 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         right_layout.addWidget(self.train_params_json)
         action_row = QtWidgets.QHBoxLayout()
         self.create_button = QtWidgets.QPushButton("Create")
+        self.load_button = QtWidgets.QPushButton("Load existing")
         self.register_button = QtWidgets.QPushButton("1) Register data")
         self.extract_button = QtWidgets.QPushButton("2) Extract frames")
         self.build_button = QtWidgets.QPushButton("3) Build model")
         action_row.addWidget(self.create_button)
+        action_row.addWidget(self.load_button)
         action_row.addWidget(self.register_button)
         action_row.addWidget(self.extract_button)
         action_row.addWidget(self.build_button)
@@ -3129,6 +3139,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.copy_registered_root_button.clicked.connect(self.copy_selected_registered_root)
         self.copy_model_root_button.clicked.connect(self.copy_model_root)
         self.create_button.clicked.connect(self.create_model)
+        self.load_button.clicked.connect(self.load_existing_model)
         self.register_button.clicked.connect(lambda: self.run_action("register"))
         self.extract_button.clicked.connect(lambda: self.run_action("extract"))
         self.build_button.clicked.connect(lambda: self.run_action("build"))
@@ -3238,18 +3249,28 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         meta = descriptor.per_path.get(path_name)
         return int(meta.nplanes or 1) if meta else 1
 
+    def _selection_key(self, selection: dict) -> tuple[str, str, int, str]:
+        return (
+            str(selection["expID"]),
+            str(selection["work_unit"]),
+            int(selection["plane"]),
+            str(selection["channel"]),
+        )
+
     def refresh_selection_table(self):
         rows = []
         for exp in self.experiments:
-            descriptor = exp["descriptor"]
-            channels = list(range(1, int(exp["nchannels"]) + 1))
-            for work_unit in exp["work_units"]:
-                registered_root = self._registered_root_for(exp["expID"], work_unit["name"])
-                nplanes = self._nplanes_for_work_unit(descriptor, work_unit["display"])
-                for plane in range(nplanes):
-                    for channel in channels:
-                        rows.append(
-                            {
+            saved = {self._selection_key(selection): selection for selection in exp.get("training_selections", [])}
+            used_keys = set()
+            descriptor = exp.get("descriptor")
+            if descriptor is not None:
+                channels = list(range(1, int(exp["nchannels"]) + 1))
+                for work_unit in exp["work_units"]:
+                    registered_root = self._registered_root_for(exp["expID"], work_unit["name"])
+                    nplanes = self._nplanes_for_work_unit(descriptor, work_unit.get("display", work_unit["name"]))
+                    for plane in range(nplanes):
+                        for channel in channels:
+                            row = {
                                 "use": False,
                                 "expID": exp["expID"],
                                 "work_unit": work_unit["name"],
@@ -3259,7 +3280,29 @@ class BuildSRDTransTab(QtWidgets.QWidget):
                                 "n_frames": 1000,
                                 "registered_root": registered_root,
                             }
-                        )
+                            key = self._selection_key(row)
+                            if key in saved:
+                                row.update(saved[key])
+                                row["use"] = bool(saved[key].get("use", True))
+                                used_keys.add(key)
+                            rows.append(row)
+            for key, selection in saved.items():
+                if key in used_keys:
+                    continue
+                row = {
+                    "use": bool(selection.get("use", True)),
+                    "expID": selection["expID"],
+                    "work_unit": selection["work_unit"],
+                    "plane": int(selection["plane"]),
+                    "channel": str(selection["channel"]),
+                    "start_frame": int(selection.get("start_frame", 0)),
+                    "n_frames": int(selection.get("n_frames", 1000)),
+                    "registered_root": selection.get(
+                        "registered_root",
+                        self._registered_root_for(selection["expID"], selection["work_unit"]),
+                    ),
+                }
+                rows.append(row)
         self.selection_table.setRowCount(len(rows))
         for row, values in enumerate(rows):
             use_item = QtWidgets.QTableWidgetItem()
@@ -3367,6 +3410,80 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.refresh_selection_table()
         self._append_output(f"** Created model build folder\n{self.config_path}\n")
 
+    def load_existing_model(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load SRDTrans build config",
+            str(srdtrans_build.MODEL_ROOT),
+            "Build config (build_config.json);;JSON (*.json)",
+        )
+        if not path:
+            return
+        try:
+            self._load_build_config(Path(path))
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Load SRDTrans Model", str(exc))
+
+    def _load_build_config(self, config_path: Path):
+        config = srdtrans_build.read_build_config(config_path)
+        self.config_path = config_path
+        self.detached_timer.stop()
+        self.detached_session = None
+        self.detached_log_path = None
+        self.detached_log_offset = 0
+        self.detached_action = None
+
+        for widget, value in (
+            (self.user_edit, config.get("userID", self.username)),
+            (self.indicators_edit, config.get("indicators", "")),
+            (self.frame_rate_edit, config.get("effective_frame_rate", "")),
+            (self.label_edit, config.get("label", "")),
+        ):
+            was_blocked = widget.blockSignals(True)
+            widget.setText(str(value))
+            widget.blockSignals(was_blocked)
+        self.model_name_edit.setText(str(config.get("model_name", config_path.parent.name)))
+        self.model_root_edit.setText(str(config.get("model_root", config_path.parent)))
+        self.train_params_json.setPlainText(
+            json.dumps(config.get("train_params", srdtrans_build.default_train_params()), indent=2)
+        )
+        self.refresh_s2p_configs()
+
+        self.experiments = []
+        user_id = self.user_edit.text().strip() or self.username
+        for payload in config.get("experiments", []):
+            exp_id = payload["expID"]
+            descriptor = None
+            summary = payload.get("summary", "")
+            topology = payload.get("topology", "")
+            nchannels = payload.get("nchannels", 1)
+            try:
+                descriptor = describe_experiment(user_id, exp_id)
+                summary = descriptor.summary
+                topology = descriptor.topology
+                nchannels = descriptor.nchannels
+            except Exception as exc:
+                summary = summary or f"Could not re-detect experiment metadata: {exc}"
+            work_units = payload.get("work_units") or (
+                srdtrans_build.experiment_raw_work_units(user_id, exp_id) if descriptor is not None else []
+            )
+            self.experiments.append(
+                {
+                    "expID": exp_id,
+                    "suite2p_config": payload.get("suite2p_config", ""),
+                    "summary": summary,
+                    "topology": topology,
+                    "nchannels": nchannels,
+                    "work_units": work_units,
+                    "descriptor": descriptor,
+                    "training_selections": payload.get("training_selections", []),
+                }
+            )
+        self.refresh_experiment_table()
+        self.refresh_selection_table()
+        self._append_output(f"\n** Loaded SRDTrans build config\n{config_path}\n")
+        self._reconnect_register_monitor(config_path)
+
     def _ensure_config_path(self) -> Path:
         config = self._build_config()
         self.config_path = Path(config["model_root"]) / "build_config.json"
@@ -3376,11 +3493,17 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         if self.command_thread is not None:
             QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "A command is already running.")
             return
+        if self.detached_timer.isActive():
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "A detached command is already being monitored.")
+            return
         try:
             config_path = self._ensure_config_path()
             command = srdtrans_build.command_for_action(action, config_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Build SRDTrans", str(exc))
+            return
+        if action == "register":
+            self._run_register_in_tmux(command, config_path)
             return
         self._set_action_buttons_enabled(False)
         self._append_output(f"\n** Starting {action}\n")
@@ -3397,6 +3520,157 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.command_thread.finished.connect(self.command_thread.deleteLater)
         self.command_thread.finished.connect(self._clear_command_worker)
         self.command_thread.start()
+
+    def _tmux_session_exists(self, session_name: str) -> bool:
+        return subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+
+    def _tmux_session_names(self) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return []
+        if result.returncode != 0:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def _register_session_base(self, model_root: Path) -> str:
+        return f"srdtrans_register_{srdtrans_build.safe_name(model_root.name)}"
+
+    def _matching_register_session(self, model_root: Path) -> Optional[str]:
+        base = self._register_session_base(model_root)
+        initial_name = base[:80]
+        for session_name in self._tmux_session_names():
+            if session_name == initial_name or session_name.startswith(f"{base[:70]}_"):
+                return session_name
+        return None
+
+    def _latest_register_log(self, model_root: Path) -> Optional[Path]:
+        logs = sorted((model_root / "logs").glob("register_*.log"), key=lambda path: path.stat().st_mtime)
+        return logs[-1] if logs else None
+
+    def _tail_existing_log(self, log_path: Path, max_bytes: int = 50000) -> int:
+        if not log_path.exists():
+            return 0
+        size = log_path.stat().st_size
+        offset = max(0, size - max_bytes)
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            handle.seek(offset)
+            text = handle.read()
+            end_offset = handle.tell()
+        if offset:
+            text = "[... earlier log output omitted ...]\n" + text
+        if text:
+            self._append_output(text)
+        return end_offset
+
+    def _reconnect_register_monitor(self, config_path: Path):
+        model_root = config_path.parent
+        log_path = self._latest_register_log(model_root)
+        session_name = self._matching_register_session(model_root)
+        if log_path is None:
+            self._append_output("No register log found for this model yet.\n")
+            self._set_action_buttons_enabled(True)
+            return
+
+        if session_name is None:
+            self._append_output(f"Latest register log:\n{log_path}\n")
+            self._tail_existing_log(log_path, max_bytes=30000)
+            self._set_action_buttons_enabled(True)
+            return
+
+        self.detached_session = session_name
+        self.detached_log_path = log_path
+        self.detached_log_offset = self._tail_existing_log(log_path, max_bytes=50000)
+        self.detached_action = "register"
+        self._set_action_buttons_enabled(False)
+        self._append_output(
+            "\n** Reconnected to running register tmux session\n"
+            f"tmux session: {session_name}\n"
+            f"log file: {log_path}\n"
+            f"watch command: tmux attach -t {session_name}\n\n"
+        )
+        self.detached_timer.start()
+
+    def _run_register_in_tmux(self, command: list[str], config_path: Path):
+        model_root = config_path.parent
+        log_root = model_root / "logs"
+        log_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = log_root / f"register_{timestamp}.log"
+        session_base = self._register_session_base(model_root)
+        session_name = session_base[:80]
+        suffix = 1
+        while self._tmux_session_exists(session_name):
+            session_name = f"{session_base[:70]}_{suffix}"
+            suffix += 1
+
+        repo_root = Path(__file__).resolve().parents[3]
+        command_text = " ".join(shlex.quote(part) for part in command)
+        quoted_log = shlex.quote(str(log_path))
+        shell_script = (
+            f"cd {shlex.quote(str(repo_root))}; "
+            f"echo '[lab_pipeline] started register at $(date)' >> {quoted_log}; "
+            f"echo '[lab_pipeline] command: {command_text}' >> {quoted_log}; "
+            f"{command_text} >> {quoted_log} 2>&1; "
+            "status=$?; "
+            f"echo '[lab_pipeline] finished register at $(date) with status '$status >> {quoted_log}; "
+            "exit $status"
+        )
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, "bash", "-lc", shell_script],
+                check=True,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Build SRDTrans", f"Could not launch tmux register job:\n{exc}")
+            return
+
+        self.detached_session = session_name
+        self.detached_log_path = log_path
+        self.detached_log_offset = 0
+        self.detached_action = "register"
+        self._set_action_buttons_enabled(False)
+        self._append_output(
+            "\n** Started register in detached tmux\n"
+            f"tmux session: {session_name}\n"
+            f"log file: {log_path}\n"
+            f"watch command: tmux attach -t {session_name}\n"
+            "qView will tail this log while it remains open. The tmux job continues if qView or SSH disconnects.\n\n"
+        )
+        self.detached_timer.start()
+
+    def _poll_detached_command(self):
+        if self.detached_log_path is None or self.detached_session is None:
+            self.detached_timer.stop()
+            self._set_action_buttons_enabled(True)
+            return
+        if self.detached_log_path.exists():
+            with self.detached_log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(self.detached_log_offset)
+                text = handle.read()
+                self.detached_log_offset = handle.tell()
+            if text:
+                self._append_output(text)
+        if self._tmux_session_exists(self.detached_session):
+            return
+        action = self.detached_action or "command"
+        self.detached_timer.stop()
+        self._append_output(f"\n** Detached {action} tmux session ended\n")
+        self.detached_session = None
+        self.detached_log_path = None
+        self.detached_action = None
+        self.detached_log_offset = 0
+        self._set_action_buttons_enabled(True)
 
     def _append_output(self, text: str):
         at_bottom = self.output.verticalScrollBar().value() == self.output.verticalScrollBar().maximum()
@@ -3418,7 +3692,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.command_worker = None
 
     def _set_action_buttons_enabled(self, enabled: bool):
-        for button in (self.create_button, self.register_button, self.extract_button, self.build_button):
+        for button in (self.create_button, self.load_button, self.register_button, self.extract_button, self.build_button):
             button.setEnabled(enabled)
 
 
