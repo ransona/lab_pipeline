@@ -225,8 +225,16 @@ def main(debug=False, queue_path=None):
                                     f'for {nextExpID}'
                                 )
                                 continue
+                            check_hashes = not debug
+                            if debug:
+                                print('Debug queue: checking file sizes only; skipping hash verification')
                             # you always need to have your nas data verified (contains experiment log, timeline, bonvision etc)
-                            ready,comment = file_check.verify_file_data('nas',exp_dir_raw,exp_dir_processed)
+                            ready,comment = file_check.verify_file_data(
+                                'nas',
+                                exp_dir_raw,
+                                exp_dir_processed,
+                                check_hashes=check_hashes,
+                            )
                             matrix_notify.main(queued_command['userID'],'----------')
 
                             if not ready:
@@ -238,7 +246,12 @@ def main(debug=False, queue_path=None):
 
                             if queued_command['config']['runs2p']:
                             # if you want to do suite2p you need to have your scanimage data verified
-                                ready,comment = file_check.verify_file_data('scanimage',exp_dir_raw,exp_dir_processed)
+                                ready,comment = file_check.verify_file_data(
+                                    'scanimage',
+                                    exp_dir_raw,
+                                    exp_dir_processed,
+                                    check_hashes=check_hashes,
+                                )
                                 if not ready:
                                     files_ready = False
                                     matrix_notify.main(queued_command['userID'],'Awaiting SI data integrity verification: ' + comment) 
@@ -248,7 +261,12 @@ def main(debug=False, queue_path=None):
 
                                 if queued_command['config']['rundlc']:
                                 # if you want to do dlc you need to have your video data verified
-                                    ready,comment = file_check.verify_file_data('cams',exp_dir_raw,exp_dir_processed)
+                                    ready,comment = file_check.verify_file_data(
+                                        'cams',
+                                        exp_dir_raw,
+                                        exp_dir_processed,
+                                        check_hashes=check_hashes,
+                                    )
                                     if not ready:
                                         files_ready = False
                                         matrix_notify.main(queued_command['userID'],'Awaiting video data integrity verification: ' + comment)          

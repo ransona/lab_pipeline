@@ -12,8 +12,11 @@ step1_config["expIDs"] = [
     "2026-02-23_02_ESRC033",
 ]
 
-# One config string for the standard single-work-unit path.
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+# nplanes/nchannels are inferred from raw data; functional_chan is the analysis choice.
+step1_config["suite2p_config"] = {
+    "config": "ch_1_depth_1.npy",
+    "functional_chan": 1,
+}
 
 step1_config["runs2p"] = True
 step1_config["rundlc"] = True

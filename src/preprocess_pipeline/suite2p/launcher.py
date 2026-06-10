@@ -9,12 +9,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import suite2p
-from suite2p import io as suite2p_io
-from suite2p.run_s2p import run_plane
-from suite2p.registration import register as suite2p_register
 from preprocess_pipeline.shared import paths
 from preprocess_pipeline.srdtrans.launcher import encode_config_arg as encode_srdtrans_config_arg, decode_config_arg as decode_srdtrans_config_arg
+from preprocess_pipeline.suite2p import backend as suite2p_backend
 import numpy as np
 import os
 import re
@@ -71,6 +68,26 @@ def count_meso_rois_for_tif(first_tif_path):
     return max(1, len(rois))
 
 
+def parse_channel_count(value):
+    """Parse ScanImage channelSave-style metadata into a channel count."""
+    if value is None:
+        return 1
+    if isinstance(value, (list, tuple)):
+        return max(1, len(value))
+    if hasattr(value, "tolist"):
+        try:
+            return parse_channel_count(value.tolist())
+        except Exception:
+            pass
+    if isinstance(value, str):
+        numbers = re.findall(r"\d+", value)
+        return max(1, len(numbers)) if numbers else 1
+    try:
+        return 1 if int(value) > 0 else 1
+    except Exception:
+        return 1
+
+
 def infer_standard_scanimage_metadata(first_tif_path):
     """Infer plane count and per-plane fs from ScanImage metadata embedded in standard TIFFs."""
     with tifffile.TiffFile(first_tif_path) as tif:
@@ -100,7 +117,8 @@ def infer_standard_scanimage_metadata(first_tif_path):
                         fs = float(scan_frame_rate) / float(nplanes)
                 except Exception:
                     fs = None
-                return nplanes, fs, scan_frame_rate
+                nchannels = parse_channel_count(frame_data.get("SI.hChannels.channelSave"))
+                return nplanes, fs, scan_frame_rate, nchannels
 
     with open(first_tif_path, "rb") as file:
         description = file.read(400000).decode("latin1", errors="ignore")
@@ -126,7 +144,12 @@ def infer_standard_scanimage_metadata(first_tif_path):
                 fs = float(match.group(1)) / float(nplanes)
             except Exception:
                 fs = None
-        return nplanes, fs, float(match.group(1)) if match else None
+        channel_match = re.search(
+            rf"{re.escape('SI.hChannels.channelSave')}\s*=\s*([^\r\n]+)",
+            description,
+        )
+        nchannels = parse_channel_count(channel_match.group(1)) if channel_match else 1
+        return nplanes, fs, float(match.group(1)) if match else None, nchannels
 
     raise ValueError(f"Could not infer nplanes from standard TIFF metadata: {first_tif_path}")
 
@@ -172,30 +195,33 @@ def infer_meso_scanimage_metadata(first_tif_path):
 
     fs = None
     scan_frame_rate = header.get("SI.hRoiManager.scanFrameRate")
+    nchannels = parse_channel_count(header.get("SI.hChannels.channelSave"))
     nrois = count_meso_rois_for_tif(first_tif_path)
     try:
         if scan_frame_rate is not None:
             fs = float(scan_frame_rate) / float(nplanes) / float(nrois)
     except Exception:
         fs = None
-    return nplanes, fs, scan_frame_rate, nrois
+    return nplanes, fs, scan_frame_rate, nrois, nchannels
 
 def infer_scanimage_sampling(first_tif_path):
     """Dispatch plane-count and fs inference by raw-data topology."""
     if is_meso_tif_path(first_tif_path):
-        nplanes, fs, scan_frame_rate, nrois = infer_meso_scanimage_metadata(first_tif_path)
+        nplanes, fs, scan_frame_rate, nrois, nchannels = infer_meso_scanimage_metadata(first_tif_path)
         details = {
             "mode": "meso",
             "source": "SI_meta.pickle",
             "scan_frame_rate": scan_frame_rate,
             "nrois": nrois,
+            "nchannels": nchannels,
         }
         return nplanes, fs, details
-    nplanes, fs, scan_frame_rate = infer_standard_scanimage_metadata(first_tif_path)
+    nplanes, fs, scan_frame_rate, nchannels = infer_standard_scanimage_metadata(first_tif_path)
     details = {
         "mode": "standard",
         "source": first_tif_path,
         "scan_frame_rate": scan_frame_rate,
+        "nchannels": nchannels,
     }
     return nplanes, fs, details
 
@@ -216,12 +242,27 @@ def resolve_first_tif_path(data_path):
     return tif_candidates[0]
 
 
-def load_ops_with_inferred_nplanes(config_path, all_tif_paths):
+def load_ops_with_inferred_nplanes(config_path, all_tif_paths, functional_chan=None):
     """Load Suite2p ops and optionally populate nplanes/fs from raw ScanImage metadata."""
     ops = np.load(config_path, allow_pickle=True).item()
-    if ops.get("nplanes", 1) == 0:
+    if suite2p_backend.is_suite2p_1x():
+        suite2p_backend.validate_suite2p_1x_config(ops, source=str(config_path))
+    nplanes_value = ops.get("nplanes")
+    nchannels_value = ops.get("nchannels")
+    needs_sampling_inference = (
+        nplanes_value is None
+        or int(nplanes_value) == 0
+        or nchannels_value is None
+        or int(nchannels_value) == 0
+    )
+    details = None
+    inferred_fs = None
+    if needs_sampling_inference:
         first_tif_path = resolve_first_tif_path(all_tif_paths[0])
-        ops["nplanes"], inferred_fs, details = infer_scanimage_sampling(first_tif_path)
+        inferred_nplanes, inferred_fs, details = infer_scanimage_sampling(first_tif_path)
+
+    if nplanes_value is None or int(nplanes_value) == 0:
+        ops["nplanes"] = inferred_nplanes
         print(f"Inferred nplanes={ops['nplanes']} from {details['source']}")
         if inferred_fs is not None:
             ops["fs"] = float(inferred_fs)
@@ -237,12 +278,34 @@ def load_ops_with_inferred_nplanes(config_path, all_tif_paths):
                     f"{ops['fs']} as scanFrameRate({details['scan_frame_rate']})"
                     f" / nplanes({ops['nplanes']})"
                 )
+    if nchannels_value is None or int(nchannels_value) == 0:
+        ops["nchannels"] = int(details["nchannels"])
+        print(f"Inferred nchannels={ops['nchannels']} from ScanImage channelSave")
+    if functional_chan is not None:
+        ops["functional_chan"] = int(functional_chan)
+        print(f"Using functional_chan={ops['functional_chan']} from pipeline config")
+    elif ops.get("functional_chan") is None:
+        ops["functional_chan"] = 1
     return ops
 
 
 def resolve_nplanes(config_path, all_tif_paths):
     """Resolve the effective Suite2p nplanes value for this run."""
-    return int(load_ops_with_inferred_nplanes(config_path, all_tif_paths)["nplanes"])
+    ops = load_ops_with_inferred_nplanes(config_path, all_tif_paths)
+    if "nplanes" not in ops:
+        raise KeyError(f"Could not resolve nplanes from {config_path}")
+    return int(ops["nplanes"])
+
+
+def load_suite2p_settings(config_path, functional_chan=None):
+    ops = np.load(config_path, allow_pickle=True).item()
+    if suite2p_backend.is_suite2p_1x():
+        suite2p_backend.validate_suite2p_1x_config(ops, source=str(config_path))
+    if functional_chan is not None:
+        ops["functional_chan"] = int(functional_chan)
+    elif ops.get("functional_chan") is None:
+        ops["functional_chan"] = 1
+    return ops
 
 
 def fix_binary_permissions(save_root):
@@ -352,6 +415,7 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
         "ops_path",
         "save_path",
         "date_proc",
+        "fs",
         "refImg",
         "meanImg",
         "meanImgE",
@@ -414,7 +478,15 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
     np.save(plane_ops["ops_path"], plane_ops)
 
 
-def run_shared_registration(all_tif_paths, output_path, registration_config_path):
+def is_no_usable_roi_exception(exc):
+    """Detect Suite2p failures that mean detection yielded no usable ROI statistics."""
+    message = str(exc)
+    if isinstance(exc, np.linalg.LinAlgError) and "Array must not contain infs or NaNs" in message:
+        return True
+    return "no ROIs were found" in message
+
+
+def run_shared_registration(all_tif_paths, output_path, registration_config_path, registration_ops=None):
     """Run the initial rigid registration pass and write canonical binaries."""
     # The shared-registration path always forces a fresh registration pass.
     # If a prior partial two-channel run left stale per-plane ops/binaries behind,
@@ -422,9 +494,11 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
     remove_tree_if_exists(os.path.join(output_path, "suite2p"))
     remove_tree_if_exists(os.path.join(output_path, "ch2"))
 
-    ops = load_ops_with_inferred_nplanes(registration_config_path, all_tif_paths)
+    ops = registration_ops.copy() if registration_ops is not None else load_ops_with_inferred_nplanes(
+        registration_config_path,
+        all_tif_paths,
+    )
     ops["save_mat"] = False
-    ops["functional_chan"] = 1
     ops["roidetect"] = False
     ops["do_registration"] = 2
     ops["nonrigid"] = False
@@ -433,7 +507,7 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
         "data_path": all_tif_paths,
         "save_path0": output_path,
     }
-    suite2p.run_s2p(ops=ops, db=db)
+    suite2p_backend.run_s2p_compat(ops=ops, db=db)
     fix_binary_permissions(output_path)
 
 
@@ -441,9 +515,9 @@ def make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes
     """Create a temporary int16 binary containing the average of ch1 and ch2."""
     if os.path.exists(combined_file):
         os.remove(combined_file)
-    with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch1_file, n_frames=nframes) as ch1, \
-            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=ch2_file, n_frames=nframes) as ch2, \
-            suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined:
+    with suite2p_backend.binary_file(Ly=Ly, Lx=Lx, filename=ch1_file, n_frames=nframes) as ch1, \
+            suite2p_backend.binary_file(Ly=Ly, Lx=Lx, filename=ch2_file, n_frames=nframes) as ch2, \
+            suite2p_backend.binary_file(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes, write=True) as combined:
         for start in range(0, nframes, batch_size):
             stop = min(start + batch_size, nframes)
             frames = (
@@ -474,13 +548,14 @@ def make_combined_registration_tmp_dir(output_path, plane_name, fallback_dir):
 
 
 def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
-    with suite2p_io.BinaryFile(
+    with suite2p_backend.binary_file(
         Ly=int(ops["Ly"]),
         Lx=int(ops["Lx"]),
         filename=binary_file,
         n_frames=int(ops["nframes"]),
+        write=True,
     ) as binary:
-        return suite2p_register.shift_frames_and_write(
+        return suite2p_backend.shift_frames_and_write_compat(
             binary,
             yoff=yoff,
             xoff=xoff,
@@ -490,12 +565,15 @@ def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
         )
 
 
-def run_shared_summed_channel_registration(all_tif_paths, output_path, registration_config_path):
+def run_shared_summed_channel_registration(all_tif_paths, output_path, registration_config_path, registration_ops=None):
     """Register two-channel data using average(ch1, ch2), then apply offsets to both channels."""
     remove_tree_if_exists(os.path.join(output_path, "suite2p"))
     remove_tree_if_exists(os.path.join(output_path, "ch2"))
 
-    ops = load_ops_with_inferred_nplanes(registration_config_path, all_tif_paths)
+    ops = registration_ops.copy() if registration_ops is not None else load_ops_with_inferred_nplanes(
+        registration_config_path,
+        all_tif_paths,
+    )
     if int(ops.get("nchannels", 1)) < 2:
         raise ValueError("Summed-channel registration requires a two-channel Suite2p config.")
 
@@ -512,7 +590,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
         "data_path": all_tif_paths,
         "save_path0": output_path,
     }
-    suite2p.run_s2p(ops=conversion_ops, db=db)
+    suite2p_backend.run_s2p_compat(ops=conversion_ops, db=db)
 
     for plane_dir in get_plane_dirs(output_path):
         plane_name = os.path.basename(plane_dir)
@@ -549,13 +627,13 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
             print(f"Creating averaged two-channel registration binary: {combined_file}")
             make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
 
-            with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
-                registration_outputs = suite2p_register.registration_wrapper(
+            with suite2p_backend.binary_file(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes, write=True) as combined_binary:
+                registration_outputs = suite2p_backend.registration_wrapper_compat(
                     combined_binary,
                     ops=reg_ops,
                 )
 
-            reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
+            reg_ops = suite2p_backend.merge_registration_outputs(reg_ops, registration_outputs)
             yoff, xoff, _corrXY = reg_ops["yoff"], reg_ops["xoff"], reg_ops["corrXY"]
             yoff1 = reg_ops.get("yoff1")
             xoff1 = reg_ops.get("xoff1")
@@ -567,7 +645,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
 
             reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
             reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
-            reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            reg_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 reg_ops["meanImg"], reg_ops.copy()
             ).astype(np.float32)
             reg_ops["register_with_summed_channel"] = True
@@ -583,12 +661,12 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
     fix_binary_permissions(output_path)
 
 
-def run_extraction_stage(canonical_root, save_root, extraction_config_path, nplanes):
+def run_extraction_stage(canonical_root, save_root, extraction_config_path, nplanes, functional_chan=None):
     """Reuse canonical binaries and rerun detection/deconvolution with a per-channel config."""
     clear_detection_outputs(save_root)
 
     canonical_plane_dirs = get_plane_dirs(canonical_root)
-    extraction_config = np.load(extraction_config_path, allow_pickle=True).item()
+    extraction_config = load_suite2p_settings(extraction_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in canonical_plane_dirs:
         plane_name = os.path.basename(canonical_plane_dir)
@@ -623,7 +701,7 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
         if save_root != canonical_root and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
-            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
         for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
@@ -631,11 +709,11 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
                 del plane_ops[key]
 
         try:
-            plane_ops = run_plane(plane_ops)
-        except ValueError as exc:
-            if "no ROIs were found" not in str(exc):
+            plane_ops = suite2p_backend.run_plane_compat(plane_ops)
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            if not is_no_usable_roi_exception(exc):
                 raise
-            print(f"No ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
+            print(f"No usable ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
             write_empty_detection_outputs(plane_save_dir, plane_ops)
             continue
 
@@ -646,7 +724,7 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
         if save_root != canonical_root and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
-            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
         for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
@@ -660,7 +738,7 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
         np.save(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and extraction_config.get("combined", True) and extraction_config.get("roidetect", True):
-        suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
+        suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
         update_combined_ops(save_root, nplanes)
 
     fix_binary_permissions(save_root)
@@ -722,9 +800,9 @@ def apply_srdtrans_to_registered_planes(canonical_root, srdtrans_config, availab
                 _run_srdtrans_on_binary(canonical_plane_dir, "data_chan2.bin", srdtrans_config)
 
 
-def run_final_summed_channel_registration(canonical_root, final_config_path):
+def run_final_summed_channel_registration(canonical_root, final_config_path, functional_chan=None):
     """Run the post-denoise registration using average(ch1, ch2) and apply it to both channels."""
-    final_config = np.load(final_config_path, allow_pickle=True).item()
+    final_config = load_suite2p_settings(final_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in get_plane_dirs(canonical_root):
         plane_name = os.path.basename(canonical_plane_dir)
@@ -744,7 +822,7 @@ def run_final_summed_channel_registration(canonical_root, final_config_path):
         reg_ops["do_registration"] = 2
         reg_ops["functional_chan"] = 1
         reg_ops["align_by_chan"] = 1
-        reg_ops["nchannels"] = 1
+        reg_ops["nchannels"] = 2
         reg_ops["delete_bin"] = False
         reg_ops["move_bin"] = False
         reg_ops["save_path"] = canonical_plane_dir
@@ -764,13 +842,13 @@ def run_final_summed_channel_registration(canonical_root, final_config_path):
             print(f"Creating averaged two-channel final registration binary: {combined_file}")
             make_combined_registration_binary(ch1_file, ch2_file, combined_file, nframes, Ly, Lx, batch_size)
 
-            with suite2p_io.BinaryFile(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes) as combined_binary:
-                registration_outputs = suite2p_register.registration_wrapper(
+            with suite2p_backend.binary_file(Ly=Ly, Lx=Lx, filename=combined_file, n_frames=nframes, write=True) as combined_binary:
+                registration_outputs = suite2p_backend.registration_wrapper_compat(
                     combined_binary,
                     ops=reg_ops,
                 )
 
-            reg_ops = suite2p_register.save_registration_outputs_to_ops(registration_outputs, reg_ops)
+            reg_ops = suite2p_backend.merge_registration_outputs(reg_ops, registration_outputs)
             yoff, xoff = reg_ops["yoff"], reg_ops["xoff"]
             yoff1 = reg_ops.get("yoff1")
             xoff1 = reg_ops.get("xoff1")
@@ -782,7 +860,7 @@ def run_final_summed_channel_registration(canonical_root, final_config_path):
 
             reg_ops["meanImg"] = mean_img_ch1.astype(np.float32)
             reg_ops["meanImg_chan2"] = mean_img_ch2.astype(np.float32)
-            reg_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            reg_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 reg_ops["meanImg"], reg_ops.copy()
             ).astype(np.float32)
             reg_ops["register_with_summed_channel"] = True
@@ -799,9 +877,9 @@ def run_final_summed_channel_registration(canonical_root, final_config_path):
     fix_binary_permissions(canonical_root)
 
 
-def run_final_shared_registration(canonical_root, final_config_path, nplanes):
+def run_final_shared_registration(canonical_root, final_config_path, nplanes, functional_chan=None):
     """Run one final post-denoise registration and apply those offsets to both channels."""
-    final_config = np.load(final_config_path, allow_pickle=True).item()
+    final_config = load_suite2p_settings(final_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in get_plane_dirs(canonical_root):
         plane_name = os.path.basename(canonical_plane_dir)
@@ -830,7 +908,7 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes):
         plane_ops["reg_file"] = ch1_file
         plane_ops["reg_file_chan2"] = ch2_file
 
-        plane_ops = run_plane(plane_ops)
+        plane_ops = suite2p_backend.run_plane_compat(plane_ops)
         plane_ops["nchannels"] = 2
         plane_ops["nplanes"] = int(nplanes)
         plane_ops["reg_file"] = ch1_file
@@ -841,12 +919,12 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes):
     fix_binary_permissions(canonical_root)
 
 
-def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel):
+def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel, functional_chan=None):
     """Run the final Suite2p pass on already rigid-registered binaries."""
     clear_detection_outputs(save_root)
 
     canonical_plane_dirs = get_plane_dirs(canonical_root)
-    final_config = np.load(final_config_path, allow_pickle=True).item()
+    final_config = load_suite2p_settings(final_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in canonical_plane_dirs:
         plane_name = os.path.basename(canonical_plane_dir)
@@ -877,7 +955,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
         if source_channel == "ch2" and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
-            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
         for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
@@ -885,11 +963,11 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
                 del plane_ops[key]
 
         try:
-            plane_ops = run_plane(plane_ops)
-        except ValueError as exc:
-            if "no ROIs were found" not in str(exc):
+            plane_ops = suite2p_backend.run_plane_compat(plane_ops)
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            if not is_no_usable_roi_exception(exc):
                 raise
-            print(f"No ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
+            print(f"No usable ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
             write_empty_detection_outputs(plane_save_dir, plane_ops)
             continue
 
@@ -901,7 +979,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
         if source_channel == "ch2" and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
-            plane_ops["meanImgE"] = suite2p_register.compute_enhanced_mean_image(
+            plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
         for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
@@ -915,15 +993,15 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
         np.save(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and final_config.get("combined", True) and final_config.get("roidetect", True):
-        suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
+        suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
         update_combined_ops(save_root, nplanes)
 
     fix_binary_permissions(save_root)
 
 
-def run_single_config_suite2p(all_tif_paths, output_path, config_path):
+def run_single_config_suite2p(all_tif_paths, output_path, config_path, functional_chan=None):
     """Single-config launcher path, including the legacy functional_chan==3 special case."""
-    ops = load_ops_with_inferred_nplanes(config_path, all_tif_paths)
+    ops = load_ops_with_inferred_nplanes(config_path, all_tif_paths, functional_chan=functional_chan)
     ops["save_mat"] = False
 
     if ops["functional_chan"] == 3:
@@ -932,7 +1010,7 @@ def run_single_config_suite2p(all_tif_paths, output_path, config_path):
             "save_path0": output_path,
         }
         ops["functional_chan"] = 1
-        suite2p.run_s2p(ops=ops, db=db)
+        suite2p_backend.run_s2p_compat(ops=ops, db=db)
         fix_binary_permissions(output_path)
 
         db = {
@@ -940,7 +1018,7 @@ def run_single_config_suite2p(all_tif_paths, output_path, config_path):
             "save_path0": os.path.join(output_path, "ch2"),
         }
         ops["functional_chan"] = 2
-        suite2p.run_s2p(ops=ops, db=db)
+        suite2p_backend.run_s2p_compat(ops=ops, db=db)
         fix_binary_permissions(os.path.join(output_path, "ch2"))
         return
 
@@ -948,7 +1026,7 @@ def run_single_config_suite2p(all_tif_paths, output_path, config_path):
         "data_path": all_tif_paths,
         "save_path0": output_path,
     }
-    suite2p.run_s2p(ops=ops, db=db)
+    suite2p_backend.run_s2p_compat(ops=ops, db=db)
     fix_binary_permissions(output_path)
 
 
@@ -1009,10 +1087,15 @@ def run_srdtrans_suite2p(
     all_tif_paths,
     output_path,
     config_paths,
+    functional_chans,
     srdtrans_config,
     register_with_summed_channel=False,
 ):
-    primary_ops = load_ops_with_inferred_nplanes(config_paths[0], all_tif_paths)
+    primary_ops = load_ops_with_inferred_nplanes(
+        config_paths[0],
+        all_tif_paths,
+        functional_chan=functional_chans[0],
+    )
     nplanes = int(primary_ops["nplanes"])
     available_channels = ["ch1"]
 
@@ -1021,27 +1104,38 @@ def run_srdtrans_suite2p(
         available_channels.append("ch2")
         if len(effective_config_paths) == 1:
             effective_config_paths = [effective_config_paths[0], effective_config_paths[0]]
+            functional_chans = [functional_chans[0], 2]
 
     if register_with_summed_channel:
-        run_shared_summed_channel_registration(all_tif_paths, output_path, effective_config_paths[0])
+        run_shared_summed_channel_registration(
+            all_tif_paths,
+            output_path,
+            effective_config_paths[0],
+            registration_ops=primary_ops,
+        )
     else:
-        run_shared_registration(all_tif_paths, output_path, effective_config_paths[0])
+        run_shared_registration(
+            all_tif_paths,
+            output_path,
+            effective_config_paths[0],
+            registration_ops=primary_ops,
+        )
     apply_srdtrans_to_registered_planes(output_path, srdtrans_config, available_channels)
 
     if "ch2" in available_channels:
         ch2_root = os.path.join(output_path, "ch2")
         if register_with_summed_channel:
-            run_final_summed_channel_registration(output_path, effective_config_paths[0])
-            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes)
-            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes)
+            run_final_summed_channel_registration(output_path, effective_config_paths[0], functional_chans[0])
+            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes, functional_chans[1])
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0])
         else:
-            run_final_shared_registration(output_path, effective_config_paths[0], nplanes)
-            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes)
-            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes)
+            run_final_shared_registration(output_path, effective_config_paths[0], nplanes, functional_chans[0])
+            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes, functional_chans[1])
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0])
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
         return
 
-    run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1")
+    run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1", functional_chans[0])
 
 
 def resolve_output_path(userID, expID, output_path):
@@ -1060,42 +1154,80 @@ def s2p_launcher_run(
     config_path,
     srdtrans_config=None,
     register_with_summed_channel=False,
+    functional_chans=None,
 ):
     all_tif_paths = tif_path.split(",")
     print("tif_path = " + tif_path)
     print("ExpID = " + expID)
     print("output_path = " + output_path)
     config_paths = config_path.split(",")
+    if functional_chans is None:
+        functional_chans = list(range(1, len(config_paths) + 1))
+    else:
+        functional_chans = [int(chan) for chan in functional_chans]
+    if len(functional_chans) == 1 and len(config_paths) == 2:
+        functional_chans = [functional_chans[0], 2]
+    if len(functional_chans) != len(config_paths):
+        raise ValueError(
+            f"Expected {len(config_paths)} functional channel value(s), got {len(functional_chans)}"
+        )
+    print("functional_chans = " + ",".join(str(chan) for chan in functional_chans))
 
     if srdtrans_config:
         run_srdtrans_suite2p(
             all_tif_paths,
             output_path,
             config_paths,
+            functional_chans,
             srdtrans_config,
             register_with_summed_channel=register_with_summed_channel,
         )
         return
 
     if len(config_paths) == 2:
-        nplanes = resolve_nplanes(config_paths[0], all_tif_paths)
+        primary_ops = load_ops_with_inferred_nplanes(
+            config_paths[0],
+            all_tif_paths,
+            functional_chan=functional_chans[0],
+        )
+        nplanes = int(primary_ops["nplanes"])
         if register_with_summed_channel:
-            run_shared_summed_channel_registration(all_tif_paths, output_path, config_paths[0])
+            run_shared_summed_channel_registration(
+                all_tif_paths,
+                output_path,
+                config_paths[0],
+                registration_ops=primary_ops,
+            )
         else:
-            run_shared_registration(all_tif_paths, output_path, config_paths[0])
+            run_shared_registration(
+                all_tif_paths,
+                output_path,
+                config_paths[0],
+                registration_ops=primary_ops,
+            )
         ch2_root = os.path.join(output_path, "ch2")
-        run_extraction_stage(output_path, ch2_root, config_paths[1], nplanes)
-        run_extraction_stage(output_path, output_path, config_paths[0], nplanes)
+        run_extraction_stage(output_path, ch2_root, config_paths[1], nplanes, functional_chans[1])
+        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0])
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
         return
 
     if register_with_summed_channel:
-        nplanes = resolve_nplanes(config_paths[0], all_tif_paths)
-        run_shared_summed_channel_registration(all_tif_paths, output_path, config_paths[0])
-        run_extraction_stage(output_path, output_path, config_paths[0], nplanes)
+        primary_ops = load_ops_with_inferred_nplanes(
+            config_paths[0],
+            all_tif_paths,
+            functional_chan=functional_chans[0],
+        )
+        nplanes = int(primary_ops["nplanes"])
+        run_shared_summed_channel_registration(
+            all_tif_paths,
+            output_path,
+            config_paths[0],
+            registration_ops=primary_ops,
+        )
+        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0])
         return
 
-    run_single_config_suite2p(all_tif_paths, output_path, config_paths[0])
+    run_single_config_suite2p(all_tif_paths, output_path, config_paths[0], functional_chans[0])
 
 
 def main():
@@ -1109,15 +1241,20 @@ def main():
             output_path = sys.argv[4]
             config_path = sys.argv[5]
             register_with_summed_channel = False
+            functional_chans = None
             for extra_arg in sys.argv[6:]:
                 if extra_arg == "--register-with-summed-channel":
                     register_with_summed_channel = True
+                elif extra_arg.startswith("--functional-chans="):
+                    value = extra_arg.split("=", 1)[1]
+                    functional_chans = [int(chan) for chan in value.split(",") if chan]
                 else:
                     srdtrans_config = decode_srdtrans_config_arg(extra_arg)
         else:
             output_path = None
             config_path = sys.argv[4]
             register_with_summed_channel = False
+            functional_chans = None
     except Exception:
         expID = "2026-05-11_03_ESRC033,2026-05-11_99_ESRC033"
         userID = "adamranson"
@@ -1132,6 +1269,7 @@ def main():
         ])
         srdtrans_config = None
         register_with_summed_channel = False
+        functional_chans = None
 
     output_path = resolve_output_path(userID, expID, output_path)
     s2p_launcher_run(
@@ -1142,6 +1280,7 @@ def main():
         config_path,
         srdtrans_config=srdtrans_config,
         register_with_summed_channel=register_with_summed_channel,
+        functional_chans=functional_chans,
     )
 
 

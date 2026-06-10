@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import glob
 import json
@@ -14,6 +16,11 @@ from typing import Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRDTRANS_REPO = Path("/home/adamranson/code/SRDTrans")
 SRDTRANS_TEST = SRDTRANS_REPO / "test.py"
+PATCH_PROGRESS_RE = re.compile(
+    r"^\[Model (?P<model>[^\]]+)\] \[Stack (?P<stack>[^\]]+)\] "
+    r"\[Patch (?P<patch>\d+)/(?P<total>\d+)\] "
+    r"\[Time Cost: (?P<time>[^\]]+)\] \[ETA: (?P<eta>[^\]]+)\]"
+)
 
 
 def _load_model_patch_shape(model_root: Path, model_name: str) -> Tuple[int, int]:
@@ -61,6 +68,40 @@ def _normalize_config(config: Optional[dict]) -> dict:
         cfg.setdefault("patch_x", patch_x)
         cfg.setdefault("patch_t", patch_t)
     return cfg
+
+
+def _run_with_filtered_output(cmd: list[str], progress_interval: int = 1000) -> None:
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    last_report_by_key: dict[tuple[str, str, int], int] = {}
+    for raw_line in process.stdout:
+        line = raw_line.rstrip("\r\n")
+        match = PATCH_PROGRESS_RE.match(line)
+        if match:
+            patch = int(match.group("patch"))
+            total = int(match.group("total"))
+            key = (match.group("model"), match.group("stack"), total)
+            should_report = patch == 1 or patch == total or patch % progress_interval == 0
+            if not should_report and patch - last_report_by_key.get(key, 0) < progress_interval:
+                continue
+            last_report_by_key[key] = patch
+            print(
+                f"[SRDTrans] {match.group('model')} {match.group('stack')} "
+                f"patch {patch}/{total} time {match.group('time')} ETA {match.group('eta')}",
+                flush=True,
+            )
+            continue
+        if line:
+            print(line, flush=True)
+    return_code = process.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, cmd)
 
 
 def denoise_binary_inplace(plane_dir: str, input_filename: str, config: Optional[dict] = None) -> None:
@@ -116,7 +157,7 @@ def denoise_binary_inplace(plane_dir: str, input_filename: str, config: Optional
         "--GPU",
         str(cfg["gpu"]),
     ]
-    subprocess.run(cmd, check=True)
+    _run_with_filtered_output(cmd, int(cfg.get("progress_interval", 1000)))
 
     matches = glob.glob(str(output_root / "**" / input_filename), recursive=True)
     if len(matches) != 1:

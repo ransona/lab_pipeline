@@ -14,8 +14,8 @@ step1_config["expIDs"] = [
 
 # Reuse the successful dual-channel Suite2p config pair from the completed debug job.
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 
 step1_config["runs2p"] = True

@@ -143,7 +143,7 @@ paths.find_paths(
     "adamranson",
     "2025-10-30_10_ESYB025",
     local_raw_repository_root=r"D:\data\Repository",
-    local_processed_repository_root=r"D:\processed\Repository",
+    local_processed_repository_root=r"F:\Local_Repository_Processed",
     local_nas_repository_root=r"\\ar-lab-nas1\DataServer\Remote_Repository",
 )
 ```
@@ -231,15 +231,17 @@ The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/
 
 The main GUI entry points are `qview.py`, `imaging_view.py`, and `eye_check.py`. See `Apps And Launchers` at the top of this README for Linux commands and Windows `.bat` launchers.
 
-In the qView `Build SRDTrans` tab, `1) Register data` launches in a detached `tmux` session and writes a log under the model folder, for example:
+In the qView `Build SRDTrans` tab, `1) Register data`, `2) Extract frames`, and `3) Build model` launch in detached `tmux` sessions and write logs under the model folder, for example:
 
 ```text
-/data/common/srdtrans_models/<model_name>/logs/register_YYYYMMDD_HHMMSS.log
+/data/common/srdtrans_models/<model_name>/logs/<action>_YYYYMMDD_HHMMSS.log
 ```
 
-qView tails that log while it remains open, but the registration continues if the GUI or SSH session disconnects. The GUI shows the exact `tmux attach -t ...` command after launch.
+qView tails that log while it remains open, but the action continues if the GUI or SSH session disconnects. The GUI shows the exact `tmux attach -t ...` command after launch. Use `Save config` after editing frame selections if you want to persist changes before launching an action.
 
-The `Build SRDTrans` tab can resume a partially built model with `Load existing`. Select the model's `build_config.json`; the GUI reloads experiments, Suite2p configs, frame selections, training parameters, and the latest registration log. If a matching detached registration tmux session is still running, qView reconnects to it and resumes tailing the log.
+The `Build SRDTrans` tab can resume a partially built model with `Load existing`. Select the model's `build_config.json`; the GUI reloads experiments, Suite2p configs, frame selections, training parameters, and the latest action log. If a matching detached action tmux session is still running, qView reconnects to it and resumes tailing the log.
+
+Detached SRDTrans build tmux sessions self-expire after seven days. qView also cleans up stale `srdtrans_register_*`, `srdtrans_extract_*`, and `srdtrans_build_*` sessions older than seven days on startup.
 
 ## Step 1 Configs
 
@@ -258,14 +260,17 @@ Step 1 config files define:
 - optional `suite2p_env`
 - optional `settings`
 
-The universal Step 1 submitter supports these `suite2p_config` shapes:
+The universal Step 1 submitter supports these `suite2p_config` shapes. `nplanes` and `nchannels` are always inferred from the raw ScanImage metadata. `functional_chan` is an analysis choice and should be supplied here, not saved inside the reusable Suite2p settings file.
 
-### 1. One config string
+### 1. One reusable Suite2p settings file
 
 Use the same Suite2p config for every work unit.
 
 ```python
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {
+    "config": "ch_1_depth_1.npy",
+    "functional_chan": 1,
+}
 ```
 
 ### 2. One or two configs in a list
@@ -274,8 +279,8 @@ For standard dual-channel data, pass one config per channel.
 
 ```python
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 ```
 
@@ -285,9 +290,9 @@ Use this when most work units share a config, but a few need special handling.
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R002": "ch_1_depth_1_special.npy",
+        "P1/R002": {"config": "ch_1_depth_1_special.npy", "functional_chan": 1},
     },
 }
 ```
@@ -297,8 +302,8 @@ You can also use a default dual-channel pair:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -309,9 +314,9 @@ This is the most explicit form. Use work-unit IDs such as `root` for standard da
 
 ```python
 step1_config["suite2p_config"] = {
-    "root": "ch_1_depth_1.npy",
-    "P1/R001": "ch_1_depth_1.npy",
-    "P1/R002": "ch_1_depth_1.npy",
+    "root": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "P1/R001": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "P1/R002": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
 }
 ```
 
@@ -320,13 +325,13 @@ For explicit dual-channel overrides:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
     "overrides": {
         "P1/R002": [
-            "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-            "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+            {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+            {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
         ],
     },
 }
@@ -338,22 +343,22 @@ Single experiment:
 
 ```python
 step1_config["expIDs"] = ["2026-05-11_03_ESRC033"]
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {"config": "ch_1_depth_1.npy", "functional_chan": 1}
 ```
 
 Combined experiment:
 
 ```python
 step1_config["expIDs"] = [["2026-05-11_03_ESRC033", "2026-05-11_99_ESRC033"]]
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {"config": "ch_1_depth_1.npy", "functional_chan": 1}
 ```
 
 Dual-channel standard experiment:
 
 ```python
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 ```
 
@@ -363,7 +368,7 @@ Same config for all paths and ROIs:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
 }
 ```
 
@@ -372,8 +377,8 @@ Same dual-channel pair for all paths and ROIs:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -382,10 +387,10 @@ Explicit per-path or per-ROI overrides:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R001": "ch_1_depth_1.npy",
-        "P1/R002": "ch_1_depth_1_special.npy",
+        "P1/R001": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+        "P1/R002": {"config": "ch_1_depth_1_special.npy", "functional_chan": 1},
     },
 }
 ```
@@ -413,6 +418,7 @@ step1_config["srdtrans"] = {
     "model": "mixed_axon_soma_g8_202412022250",
     "gpu": "0,1",
     "channels": ["ch1"],
+    "progress_interval": 1000,
 }
 ```
 
@@ -432,6 +438,7 @@ Required SRDTrans fields:
 - `model`: model folder name under `model_root`
 - `gpu`: GPU string passed to SRDTrans, for example `"0"` or `"0,1"`
 - `channels`: channels to denoise
+- `progress_interval`: optional patch-progress print interval; default is `1000`
 
 Current caveat: the GUI SRDTrans JSON editor can still be left with an empty `"model": ""`. If `runsrdtrans=True`, make sure `model` is filled in before submitting the job. Otherwise Suite2p can complete the initial registration and then SRDTrans will fail with `ValueError: SRDTrans config requires model_root and model`.
 
@@ -480,12 +487,12 @@ For a local workstation or Windows machine, set:
 
 ```python
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
-step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 step2_config["local_raw_repository_root"] = r"D:\data\Repository"
-step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step2_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step2_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 ```
 
@@ -493,7 +500,7 @@ Local mode:
 
 - bypasses the queue
 - reads imaging data from `<local_raw_repository_root>/<animalID>/<expID>`
-- writes outputs under `<local_processed_repository_root>/<animalID>/<expID>`
+- writes outputs under `<local_processed_repository_root>/<userID>/<animalID>/<expID>`
 - falls back to `<local_nas_repository_root>/<animalID>/<expID>` for missing named metadata files
 - is intended for direct Step 1 and Step 2 execution
 - still uses the normal Suite2p config files and local envs
@@ -532,7 +539,7 @@ D:\data\Repository\
 For mesoscope experiments, the pipeline detects the `P*/R*` folders automatically. Each ROI folder becomes a Suite2p work unit, for example `P1/R001` and `P1/R002`. Outputs are written under `local_processed_repository_root`:
 
 ```text
-D:\processed\Repository\ESYB025\2025-10-30_10_ESYB025\
+F:\Local_Repository_Processed\<userID>\ESYB025\2025-10-30_10_ESYB025\
   P1\R001\suite2p\
   P1\R002\suite2p\
 ```
@@ -552,13 +559,14 @@ step1_config = {}
 step1_config["userID"] = getpass.getuser()
 step1_config["expIDs"] = ["2025-10-30_10_ESYB025"]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
-step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
+step1_config["suite2p_env"] = "suite2p_1.1.0"
 
 # Use one Suite2p config for every mesoscope path/ROI work unit.
 step1_config["suite2p_config"] = {
-    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
 }
 
 step1_config["runs2p"] = True
@@ -587,8 +595,8 @@ For dual-channel mesoscope data, use a default pair:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -597,10 +605,10 @@ For explicit per-ROI control:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R001": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "P1/R002": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "P1/R001": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        "P1/R002": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
     },
 }
 ```
@@ -612,7 +620,7 @@ conda activate sci
 python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
 ```
 
-The Step 1 runner will call the local `suite2p` conda environment for Suite2p work. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
+The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. In the Suite2p 1.1 compatibility branch, set `step1_config["suite2p_env"] = "suite2p_1.1.0"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
 
 After Step 1 finishes, create a local Step 2 config:
 
@@ -629,7 +637,7 @@ step2_config = {}
 step2_config["userID"] = getpass.getuser()
 step2_config["expIDs"] = ["2025-10-30_10_ESYB025"]
 step2_config["local_raw_repository_root"] = r"D:\data\Repository"
-step2_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step2_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step2_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step2_config["pre_secs"] = 5
 step2_config["post_secs"] = 5

@@ -1,6 +1,7 @@
 import glob
 import os
 import shutil
+import sys
 
 import numpy as np
 
@@ -12,6 +13,29 @@ SPINES_GUI_ARTIFACT_PATTERNS = [
     "extraction_*.txt",
     "*mode*.npy",
 ]
+
+
+def ensure_numpy_core_pickle_compat():
+    """Allow NumPy 1.x environments to read object arrays saved by NumPy 2.x."""
+    if "numpy._core" in sys.modules:
+        return
+    try:
+        import numpy.core as numpy_core
+
+        sys.modules.setdefault("numpy._core", numpy_core)
+        for module_name in ("multiarray", "numeric", "fromnumeric", "shape_base", "_methods"):
+            try:
+                module = __import__(f"numpy.core.{module_name}", fromlist=["*"])
+            except Exception:
+                continue
+            sys.modules.setdefault(f"numpy._core.{module_name}", module)
+    except Exception:
+        return
+
+
+def load_npy(path, **kwargs):
+    ensure_numpy_core_pickle_compat()
+    return np.load(path, **kwargs)
 
 
 def split_combined_suite2p():
@@ -90,9 +114,10 @@ def split_combined_channel(userID, split_root, channel_root):
     if len(plane_dirs) == 0:
         raise FileNotFoundError(f"No plane folders found in {suite2p_combined_path}")
 
-    plane0_ops = np.load(os.path.join(plane_dirs[0], "ops.npy"), allow_pickle=True).item()
+    plane0_ops = load_plane_metadata(plane_dirs[0])
     layout_mode = infer_layout_mode_from_split_root(split_root)
-    exp_ids = [extract_exp_id_from_data_path(path, layout_mode) for path in plane0_ops["data_path"]]
+    source_data_paths = get_source_data_paths(plane0_ops, plane_dirs[0])
+    exp_ids = [extract_exp_id_from_data_path(path, layout_mode) for path in source_data_paths]
     animal_ids = [exp_id[14:] for exp_id in exp_ids]
     if len(set(animal_ids)) > 1:
         raise Exception("Combined multiple animals not permitted")
@@ -104,13 +129,15 @@ def split_combined_channel(userID, split_root, channel_root):
         plane_name = os.path.basename(plane_dir)
         print(f"Plane {plane_name}")
 
-        plane_ops = np.load(os.path.join(plane_dir, "ops.npy"), allow_pickle=True).item()
-        frames_per_folder = plane_ops["frames_per_folder"]
-        F = np.load(os.path.join(plane_dir, "F.npy"))
-        Fneu = np.load(os.path.join(plane_dir, "Fneu.npy"))
-        spks = np.load(os.path.join(plane_dir, "spks.npy"))
-        iscell = np.load(os.path.join(plane_dir, "iscell.npy"))
-        stat = np.load(os.path.join(plane_dir, "stat.npy"), allow_pickle=True)
+        plane_ops = load_plane_metadata(plane_dir)
+        plane_db = load_optional_plane_dict(plane_dir, "db.npy")
+        plane_settings = load_optional_plane_dict(plane_dir, "settings.npy")
+        frames_per_folder = get_frames_per_folder(plane_ops, plane_dir, len(exp_ids))
+        F = load_npy(os.path.join(plane_dir, "F.npy"))
+        Fneu = load_npy(os.path.join(plane_dir, "Fneu.npy"))
+        spks = load_npy(os.path.join(plane_dir, "spks.npy"))
+        iscell = load_npy(os.path.join(plane_dir, "iscell.npy"))
+        stat = load_npy(os.path.join(plane_dir, "stat.npy"), allow_pickle=True)
 
         for iExp, exp_id in enumerate(exp_ids):
             frames_in_exp = int(frames_per_folder[iExp])
@@ -161,6 +188,19 @@ def split_combined_channel(userID, split_root, channel_root):
                 frames_in_exp=frames_in_exp,
             )
             np.save(os.path.join(dest_plane_dir, "ops.npy"), split_ops)
+            if plane_db:
+                split_db = rewrite_ops_for_split(
+                    plane_ops=plane_db,
+                    exp_dir_raw=exp_dir_raw2,
+                    dest_channel_root=dest_channel_root,
+                    dest_plane_dir=dest_plane_dir,
+                    frames_in_exp=frames_in_exp,
+                )
+                split_db["db_path"] = os.path.join(dest_plane_dir, "db.npy")
+                split_db["settings_path"] = os.path.join(dest_plane_dir, "settings.npy")
+                np.save(split_db["db_path"], split_db)
+            if plane_settings:
+                np.save(os.path.join(dest_plane_dir, "settings.npy"), plane_settings)
 
     for exp_id in exp_ids:
         (
@@ -194,6 +234,7 @@ def base_processed_root(split_root):
 
 
 def extract_exp_id_from_data_path(data_path, layout_mode):
+    data_path = os.fspath(data_path)
     if layout_mode == "meso":
         return os.path.basename(os.path.dirname(os.path.dirname(data_path)))
     return os.path.basename(data_path)
@@ -229,6 +270,53 @@ def copy_spines_gui_artifacts(suite2p_combined_path, dest_channel_root):
 
     if copied:
         print(f"Copied {copied} SpinesGUI artifact(s) to {dest_dir}")
+
+
+def load_optional_plane_dict(plane_dir, filename):
+    path = os.path.join(plane_dir, filename)
+    if not os.path.exists(path):
+        return {}
+    value = load_npy(path, allow_pickle=True).item()
+    if not isinstance(value, dict):
+        raise TypeError(f"Expected {path} to contain a dict, got {type(value).__name__}")
+    return value
+
+
+def load_plane_metadata(plane_dir):
+    ops = load_optional_plane_dict(plane_dir, "ops.npy")
+    if not ops:
+        raise FileNotFoundError(f"Missing ops.npy in {plane_dir}")
+    db = load_optional_plane_dict(plane_dir, "db.npy")
+    merged = dict(db)
+    merged.update(ops)
+    return merged
+
+
+def get_source_data_paths(plane_metadata, plane_dir):
+    data_paths = plane_metadata.get("data_path")
+    if data_paths is None:
+        raise KeyError(f"Missing data_path in Suite2p metadata for {plane_dir}")
+    if isinstance(data_paths, (str, os.PathLike)):
+        data_paths = [data_paths]
+    return [os.fspath(data_path) for data_path in data_paths]
+
+
+def get_frames_per_folder(plane_metadata, plane_dir, expected_count):
+    frames_per_folder = plane_metadata.get("frames_per_folder")
+    if frames_per_folder is None or len(frames_per_folder) == 0:
+        frames_per_folder = plane_metadata.get("frames_per_file")
+    if frames_per_folder is None or len(frames_per_folder) == 0:
+        if expected_count == 1 and plane_metadata.get("nframes") is not None:
+            frames_per_folder = [int(plane_metadata["nframes"])]
+        else:
+            raise KeyError(f"Missing frames_per_folder in Suite2p metadata for {plane_dir}")
+    frames_per_folder = np.asarray(frames_per_folder, dtype=np.int64)
+    if len(frames_per_folder) != expected_count:
+        raise ValueError(
+            f"Suite2p metadata mismatch for {plane_dir}: data_path has {expected_count} "
+            f"source experiment(s), frames_per_folder has {len(frames_per_folder)} value(s)"
+        )
+    return frames_per_folder
 
 
 def rewrite_ops_for_split(plane_ops, exp_dir_raw, dest_channel_root, dest_plane_dir, frames_in_exp):
@@ -288,6 +376,12 @@ def split_s2p_vid(path_to_source_bin, path_to_dest_bin, Ly, Lx, start_frame, fra
                 f"Frame {start_frame + frames_written}-{start_frame + frames_written + frames_to_read - 1}"
             )
             read_data = np.fromfile(fid, dtype=np.int16, count=Ly * Lx * frames_to_read)
+            expected_values = Ly * Lx * frames_to_read
+            if read_data.size != expected_values:
+                raise IOError(
+                    f"Could not read requested split frames from {path_to_source_bin}: "
+                    f"expected {expected_values} int16 values, got {read_data.size}"
+                )
             read_data.tofile(fid2)
             frames_written += frames_to_read
 

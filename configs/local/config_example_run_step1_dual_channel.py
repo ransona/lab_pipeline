@@ -13,13 +13,13 @@ step1_config["expIDs"] = [
     "2026-05-11_01_ESRC033",
 ]
 step1_config["local_raw_repository_root"] = r"D:\data\Repository"
-step1_config["local_processed_repository_root"] = r"D:\processed\Repository"
+step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 
 step1_config["runs2p"] = True

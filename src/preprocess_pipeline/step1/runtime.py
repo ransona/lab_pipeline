@@ -161,9 +161,24 @@ def _suite2p_config_root(queued_command=None):
     return CONFIG_ROOT
 
 
+def _suite2p_config_name(config_entry):
+    if isinstance(config_entry, dict):
+        return config_entry['config']
+    return config_entry
+
+
+def _suite2p_functional_chan(config_entry, default_value=1):
+    if isinstance(config_entry, dict):
+        return int(config_entry.get('functional_chan', default_value))
+    return int(default_value)
+
+
 def _suite2p_config_path(user_id, config_names, queued_command=None):
     config_root = _suite2p_config_root(queued_command)
-    return ','.join(os.path.join(config_root, user_id, config_name) for config_name in config_names)
+    return ','.join(
+        os.path.join(config_root, user_id, _suite2p_config_name(config_entry))
+        for config_entry in config_names
+    )
 
 
 def _should_emit_progress_line(line, progress_state):
@@ -275,6 +290,11 @@ def _suite2p_cmd_for_work_unit(
         output_path,
         _suite2p_config_path(user_id, config_names, queued_command=queued_command),
     ]
+    functional_chans = [
+        _suite2p_functional_chan(config_entry, index + 1)
+        for index, config_entry in enumerate(config_names)
+    ]
+    launcher_args.append('--functional-chans=' + ','.join(str(chan) for chan in functional_chans))
     if queued_command["config"].get("runsrdtrans", False):
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
     if queued_command["config"].get("register_with_summed_channel", False):
