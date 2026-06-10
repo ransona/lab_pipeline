@@ -17,6 +17,9 @@ step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processe
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
+# Use the Suite2p 1.1 environment for this compatibility branch.
+step1_config["suite2p_env"] = "suite2p_1.1.0"
+
 step1_config["suite2p_config"] = [
     {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
     {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},

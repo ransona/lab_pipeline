@@ -286,6 +286,7 @@ def load_ops_with_inferred_nplanes(config_path, all_tif_paths, functional_chan=N
         print(f"Using functional_chan={ops['functional_chan']} from pipeline config")
     elif ops.get("functional_chan") is None:
         ops["functional_chan"] = 1
+    apply_sparsery_spatial_scale_from_diameter(ops)
     return ops
 
 
@@ -305,7 +306,86 @@ def load_suite2p_settings(config_path, functional_chan=None):
         ops["functional_chan"] = int(functional_chan)
     elif ops.get("functional_chan") is None:
         ops["functional_chan"] = 1
+    apply_sparsery_spatial_scale_from_diameter(ops)
     return ops
+
+
+def apply_sparsery_spatial_scale_from_diameter(ops):
+    """Resolve Suite2p 1.x sparsery auto spatial scale from requested ROI diameter."""
+    detection = ops.get("detection")
+    if not isinstance(detection, dict):
+        return
+    if detection.get("algorithm") != "sparsery":
+        return
+    sparsery_settings = detection.setdefault("sparsery_settings", {})
+    current_scale = sparsery_settings.get("spatial_scale", 0)
+    try:
+        current_scale = int(current_scale)
+    except (TypeError, ValueError):
+        current_scale = 0
+    if current_scale > 0:
+        return
+
+    diameter = ops.get("diameter")
+    if diameter is None:
+        return
+    diameter_values = np.asarray(diameter, dtype=float).ravel()
+    diameter_values = diameter_values[np.isfinite(diameter_values)]
+    if diameter_values.size == 0:
+        return
+
+    requested_diameter = float(np.mean(diameter_values))
+    scale_to_pixels = {1: 6.0, 2: 12.0, 3: 24.0, 4: 48.0}
+    spatial_scale = min(
+        scale_to_pixels,
+        key=lambda scale: abs(scale_to_pixels[scale] - requested_diameter),
+    )
+    sparsery_settings["spatial_scale"] = int(spatial_scale)
+    print(
+        "Resolved sparsery spatial_scale="
+        f"{spatial_scale} from diameter={diameter} "
+        f"(nearest template {scale_to_pixels[spatial_scale]:g}px)"
+    )
+
+
+def set_suite2p_run_flag(ops, key, value):
+    """Set a Suite2p run flag in both legacy flat ops and Suite2p 1.x settings."""
+    ops[key] = value
+    if isinstance(ops.get("run"), dict):
+        ops["run"][key] = value
+
+
+def set_suite2p_registration_flag(ops, key, value):
+    """Set a Suite2p registration flag in both legacy flat ops and Suite2p 1.x settings."""
+    ops[key] = value
+    if isinstance(ops.get("registration"), dict):
+        ops["registration"][key] = value
+
+
+def set_suite2p_io_flag(ops, key, value):
+    """Set a Suite2p IO flag in both legacy flat ops and Suite2p 1.x settings."""
+    ops[key] = value
+    if isinstance(ops.get("io"), dict):
+        ops["io"][key] = value
+
+
+def suite2p_detection_enabled(ops):
+    if isinstance(ops.get("run"), dict):
+        return bool(ops["run"].get("do_detection", True))
+    return bool(ops.get("roidetect", True))
+
+
+def suite2p_combined_enabled(ops):
+    if isinstance(ops.get("io"), dict):
+        return bool(ops["io"].get("combined", True))
+    return bool(ops.get("combined", True))
+
+
+def describe_suite2p_stage(stage_name, config_path, functional_chan=None):
+    print(f"** Suite2p stage: {stage_name}")
+    print(f"Suite2p config: {config_path}")
+    if functional_chan is not None:
+        print(f"Suite2p functional_chan: {functional_chan}")
 
 
 def fix_binary_permissions(save_root):
@@ -488,6 +568,11 @@ def is_no_usable_roi_exception(exc):
 
 def run_shared_registration(all_tif_paths, output_path, registration_config_path, registration_ops=None):
     """Run the initial rigid registration pass and write canonical binaries."""
+    describe_suite2p_stage(
+        "initial shared rigid registration",
+        registration_config_path,
+        registration_ops.get("functional_chan") if registration_ops else None,
+    )
     # The shared-registration path always forces a fresh registration pass.
     # If a prior partial two-channel run left stale per-plane ops/binaries behind,
     # Suite2p will try to reuse them and can fail before it rebuilds chan2 paths.
@@ -498,10 +583,11 @@ def run_shared_registration(all_tif_paths, output_path, registration_config_path
         registration_config_path,
         all_tif_paths,
     )
-    ops["save_mat"] = False
+    set_suite2p_io_flag(ops, "save_mat", False)
     ops["roidetect"] = False
-    ops["do_registration"] = 2
-    ops["nonrigid"] = False
+    set_suite2p_run_flag(ops, "do_detection", False)
+    set_suite2p_run_flag(ops, "do_registration", 2)
+    set_suite2p_registration_flag(ops, "nonrigid", False)
 
     db = {
         "data_path": all_tif_paths,
@@ -567,6 +653,11 @@ def register_binary_with_offsets(binary_file, yoff, xoff, yoff1, xoff1, ops):
 
 def run_shared_summed_channel_registration(all_tif_paths, output_path, registration_config_path, registration_ops=None):
     """Register two-channel data using average(ch1, ch2), then apply offsets to both channels."""
+    describe_suite2p_stage(
+        "initial summed-channel binary conversion",
+        registration_config_path,
+        registration_ops.get("functional_chan") if registration_ops else None,
+    )
     remove_tree_if_exists(os.path.join(output_path, "suite2p"))
     remove_tree_if_exists(os.path.join(output_path, "ch2"))
 
@@ -579,11 +670,12 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
 
     print("** Running combined-channel shared registration")
     conversion_ops = ops.copy()
-    conversion_ops["save_mat"] = False
+    set_suite2p_io_flag(conversion_ops, "save_mat", False)
     conversion_ops["roidetect"] = False
-    conversion_ops["do_registration"] = 0
-    conversion_ops["delete_bin"] = False
-    conversion_ops["move_bin"] = False
+    set_suite2p_run_flag(conversion_ops, "do_detection", False)
+    set_suite2p_run_flag(conversion_ops, "do_registration", 0)
+    set_suite2p_io_flag(conversion_ops, "delete_bin", False)
+    set_suite2p_io_flag(conversion_ops, "move_bin", False)
     conversion_ops["keep_movie_raw"] = False
 
     db = {
@@ -603,13 +695,13 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
             raise FileNotFoundError(f"Missing channel 2 binary for summed registration: {ch2_file}")
 
         reg_ops = plane_ops.copy()
-        reg_ops["save_mat"] = False
-        reg_ops["do_registration"] = 2
-        reg_ops["nonrigid"] = False
+        set_suite2p_io_flag(reg_ops, "save_mat", False)
+        set_suite2p_run_flag(reg_ops, "do_registration", 2)
+        set_suite2p_registration_flag(reg_ops, "nonrigid", False)
         reg_ops["functional_chan"] = 1
         reg_ops["align_by_chan"] = 1
-        reg_ops["delete_bin"] = False
-        reg_ops["move_bin"] = False
+        set_suite2p_io_flag(reg_ops, "delete_bin", False)
+        set_suite2p_io_flag(reg_ops, "move_bin", False)
         reg_ops["save_path"] = plane_dir
         reg_ops["ops_path"] = plane_ops_path
         reg_ops["reg_file"] = ch1_file
@@ -663,6 +755,11 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
 
 def run_extraction_stage(canonical_root, save_root, extraction_config_path, nplanes, functional_chan=None):
     """Reuse canonical binaries and rerun detection/deconvolution with a per-channel config."""
+    describe_suite2p_stage(
+        "extraction into " + save_root,
+        extraction_config_path,
+        functional_chan,
+    )
     clear_detection_outputs(save_root)
 
     canonical_plane_dirs = get_plane_dirs(canonical_root)
@@ -687,13 +784,13 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
                 replace_file(reg_file, output_reg_file)
 
         plane_ops = copy_ops_for_extraction(registration_ops, extraction_config)
-        plane_ops["save_mat"] = False
-        plane_ops["do_registration"] = 0
+        set_suite2p_io_flag(plane_ops, "save_mat", False)
+        set_suite2p_run_flag(plane_ops, "do_registration", 0)
         plane_ops["save_path0"] = save_root
         plane_ops["save_path"] = plane_save_dir
         plane_ops["ops_path"] = os.path.join(plane_save_dir, "ops.npy")
-        plane_ops["move_bin"] = False
-        plane_ops["delete_bin"] = False
+        set_suite2p_io_flag(plane_ops, "move_bin", False)
+        set_suite2p_io_flag(plane_ops, "delete_bin", False)
         plane_ops["nchannels"] = 1
         plane_ops["functional_chan"] = 1
         plane_ops["nplanes"] = int(nplanes)
@@ -737,7 +834,7 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
                 os.remove(extra_path)
         np.save(plane_ops["ops_path"], plane_ops)
 
-    if len(canonical_plane_dirs) > 1 and extraction_config.get("combined", True) and extraction_config.get("roidetect", True):
+    if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(extraction_config) and suite2p_detection_enabled(extraction_config):
         suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
         update_combined_ops(save_root, nplanes)
 
@@ -802,6 +899,11 @@ def apply_srdtrans_to_registered_planes(canonical_root, srdtrans_config, availab
 
 def run_final_summed_channel_registration(canonical_root, final_config_path, functional_chan=None):
     """Run the post-denoise registration using average(ch1, ch2) and apply it to both channels."""
+    describe_suite2p_stage(
+        "final summed-channel registration",
+        final_config_path,
+        functional_chan,
+    )
     final_config = load_suite2p_settings(final_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in get_plane_dirs(canonical_root):
@@ -818,13 +920,13 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
             raise FileNotFoundError(f"Missing channel 2 binary for final summed registration: {ch2_file}")
 
         reg_ops = copy_ops_for_extraction(registration_ops, final_config)
-        reg_ops["save_mat"] = False
-        reg_ops["do_registration"] = 2
+        set_suite2p_io_flag(reg_ops, "save_mat", False)
+        set_suite2p_run_flag(reg_ops, "do_registration", 2)
         reg_ops["functional_chan"] = 1
         reg_ops["align_by_chan"] = 1
         reg_ops["nchannels"] = 2
-        reg_ops["delete_bin"] = False
-        reg_ops["move_bin"] = False
+        set_suite2p_io_flag(reg_ops, "delete_bin", False)
+        set_suite2p_io_flag(reg_ops, "move_bin", False)
         reg_ops["save_path"] = canonical_plane_dir
         reg_ops["ops_path"] = plane_ops_path
         reg_ops["reg_file"] = ch1_file
@@ -879,6 +981,11 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
 
 def run_final_shared_registration(canonical_root, final_config_path, nplanes, functional_chan=None):
     """Run one final post-denoise registration and apply those offsets to both channels."""
+    describe_suite2p_stage(
+        "final shared registration",
+        final_config_path,
+        functional_chan,
+    )
     final_config = load_suite2p_settings(final_config_path, functional_chan=functional_chan)
 
     for canonical_plane_dir in get_plane_dirs(canonical_root):
@@ -895,14 +1002,15 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes, fu
             raise FileNotFoundError(f"Missing channel 2 binary for final shared registration: {ch2_file}")
 
         plane_ops = copy_ops_for_extraction(registration_ops, final_config)
-        plane_ops["save_mat"] = False
+        set_suite2p_io_flag(plane_ops, "save_mat", False)
         plane_ops["roidetect"] = False
-        plane_ops["do_registration"] = 2
+        set_suite2p_run_flag(plane_ops, "do_detection", False)
+        set_suite2p_run_flag(plane_ops, "do_registration", 2)
         plane_ops["save_path0"] = canonical_root
         plane_ops["save_path"] = canonical_plane_dir
         plane_ops["ops_path"] = plane_ops_path
-        plane_ops["move_bin"] = False
-        plane_ops["delete_bin"] = False
+        set_suite2p_io_flag(plane_ops, "move_bin", False)
+        set_suite2p_io_flag(plane_ops, "delete_bin", False)
         plane_ops["nchannels"] = 2
         plane_ops["nplanes"] = int(nplanes)
         plane_ops["reg_file"] = ch1_file
@@ -921,6 +1029,11 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes, fu
 
 def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplanes, source_channel, functional_chan=None):
     """Run the final Suite2p pass on already rigid-registered binaries."""
+    describe_suite2p_stage(
+        f"final Suite2p extraction from {source_channel}",
+        final_config_path,
+        functional_chan,
+    )
     clear_detection_outputs(save_root)
 
     canonical_plane_dirs = get_plane_dirs(canonical_root)
@@ -940,18 +1053,18 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
         )
 
         plane_ops = copy_ops_for_extraction(registration_ops, final_config)
-        plane_ops["save_mat"] = False
+        set_suite2p_io_flag(plane_ops, "save_mat", False)
         plane_ops["save_path0"] = save_root
         plane_ops["save_path"] = plane_save_dir
         plane_ops["ops_path"] = os.path.join(plane_save_dir, "ops.npy")
-        plane_ops["move_bin"] = False
-        plane_ops["delete_bin"] = False
+        set_suite2p_io_flag(plane_ops, "move_bin", False)
+        set_suite2p_io_flag(plane_ops, "delete_bin", False)
         plane_ops["nchannels"] = 1
         plane_ops["functional_chan"] = 1
         plane_ops["align_by_chan"] = 1
         plane_ops["nplanes"] = int(nplanes)
         plane_ops["reg_file"] = output_reg_file
-        plane_ops["do_registration"] = 2
+        set_suite2p_run_flag(plane_ops, "do_registration", 2)
         if source_channel == "ch2" and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
@@ -992,7 +1105,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
                 os.remove(extra_path)
         np.save(plane_ops["ops_path"], plane_ops)
 
-    if len(canonical_plane_dirs) > 1 and final_config.get("combined", True) and final_config.get("roidetect", True):
+    if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(final_config) and suite2p_detection_enabled(final_config):
         suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
         update_combined_ops(save_root, nplanes)
 
@@ -1001,8 +1114,9 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
 
 def run_single_config_suite2p(all_tif_paths, output_path, config_path, functional_chan=None):
     """Single-config launcher path, including the legacy functional_chan==3 special case."""
+    describe_suite2p_stage("single-config Suite2p run", config_path, functional_chan)
     ops = load_ops_with_inferred_nplanes(config_path, all_tif_paths, functional_chan=functional_chan)
-    ops["save_mat"] = False
+    set_suite2p_io_flag(ops, "save_mat", False)
 
     if ops["functional_chan"] == 3:
         db = {

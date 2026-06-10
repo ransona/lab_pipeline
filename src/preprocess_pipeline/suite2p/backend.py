@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 from typing import Optional
 
 import numpy as np
@@ -6,6 +8,21 @@ import suite2p
 from suite2p import io as suite2p_io
 from suite2p.run_s2p import run_plane as suite2p_run_plane
 from suite2p.registration import register as suite2p_register
+
+
+def ensure_suite2p_console_logging() -> None:
+    """Attach Suite2p API logger output to stderr for queue log capture."""
+    s2p_logger = logging.getLogger("suite2p")
+    s2p_logger.setLevel(logging.DEBUG)
+    for handler in s2p_logger.handlers:
+        if getattr(handler, "_lab_pipeline_console", False):
+            return
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    handler._lab_pipeline_console = True
+    s2p_logger.addHandler(handler)
 
 
 def suite2p_version() -> str:
@@ -85,6 +102,7 @@ def split_suite2p_1x_config(config: dict, db: Optional[dict] = None) -> tuple[di
 
 
 def run_s2p_compat(ops: dict, db: dict):
+    ensure_suite2p_console_logging()
     if not is_suite2p_1x():
         return suite2p.run_s2p(ops=ops, db=db)
     db_out, settings_out = split_suite2p_1x_config(ops, db)
@@ -125,6 +143,7 @@ def _plane_db_settings_from_ops(plane_ops: dict) -> tuple[dict, dict]:
 
 
 def run_plane_compat(plane_ops: dict) -> dict:
+    ensure_suite2p_console_logging()
     if not is_suite2p_1x():
         result = suite2p_run_plane(plane_ops)
         if "ops_path" not in result and result.get("save_path"):
@@ -156,6 +175,7 @@ def binary_file(Ly: int, Lx: int, filename: str, n_frames: Optional[int] = None,
 
 
 def registration_wrapper_compat(binary, ops: dict) -> dict:
+    ensure_suite2p_console_logging()
     if not is_suite2p_1x():
         return suite2p_register.registration_wrapper(binary, ops=ops)
     _, settings = split_suite2p_1x_config(ops)

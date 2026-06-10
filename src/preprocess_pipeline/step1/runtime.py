@@ -183,10 +183,20 @@ def _suite2p_config_path(user_id, config_names, queued_command=None):
 
 def _should_emit_progress_line(line, progress_state):
     stripped = line.strip()
+    message = re.sub(
+        r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \[(?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+',
+        '',
+        stripped,
+    )
+    if message:
+        stripped = message
     lowered = stripped.lower()
 
     if not stripped:
         return True
+
+    if stripped in {'warn(', 'warnings.warn('}:
+        return False
 
     if any(
         token in lowered
@@ -231,6 +241,17 @@ def _should_emit_progress_line(line, progress_state):
     if re.match(r'^(25|50|75|100)% complete$', stripped):
         return True
 
+    suite2p_tqdm = re.match(r'^(\d+)%\|.*\|\s*(\d+)/(\d+)\s*\[', stripped)
+    if suite2p_tqdm:
+        percent = int(suite2p_tqdm.group(1))
+        current = int(suite2p_tqdm.group(2))
+        total = int(suite2p_tqdm.group(3))
+        key = (total, (percent // 25) * 25)
+        if current == total or (key[1] >= 25 and key not in progress_state['suite2p_tqdm_milestones']):
+            progress_state['suite2p_tqdm_milestones'].add(key)
+            return True
+        return False
+
     return True
 
 
@@ -239,6 +260,7 @@ def _stream_subprocess(cmd, log_path, raw_log_path):
         'last_binary_frame': 0,
         'last_registered_frame': 0,
         'dlc_percent_milestones': set(),
+        'suite2p_tqdm_milestones': set(),
     }
     with subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
