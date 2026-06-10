@@ -40,6 +40,7 @@ MAX_LOG_LINES = 10000
 INITIAL_LOG_LINES = 10000
 S2P_CONFIG_ROOT = Path("/data/common/configs/s2p_configs")
 CONFIG_ROOT = S2P_CONFIG_ROOT.parent
+SRDTRANS_TMUX_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _step1_preset_root(username: str) -> Path:
@@ -60,6 +61,42 @@ def _safe_preset_name(name: str) -> str:
 
 def _queue_listener_log_path(queue_directory: Path) -> Path:
     return queue_directory / "qlistener-log.txt"
+
+
+def cleanup_expired_srdtrans_tmux_sessions(ttl_seconds: int = SRDTRANS_TMUX_TTL_SECONDS) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}\t#{session_created}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+
+    now = time.time()
+    killed: list[str] = []
+    for line in result.stdout.splitlines():
+        try:
+            session_name, created_text = line.split("\t", 1)
+            created = float(created_text)
+        except ValueError:
+            continue
+        if not re.match(r"^srdtrans_(register|extract|build)_", session_name):
+            continue
+        if now - created < ttl_seconds:
+            continue
+        subprocess.run(
+            ["tmux", "kill-session", "-t", f"={session_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        killed.append(session_name)
+    return killed
 
 
 def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
@@ -3115,11 +3152,13 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         action_row = QtWidgets.QHBoxLayout()
         self.create_button = QtWidgets.QPushButton("Create")
         self.load_button = QtWidgets.QPushButton("Load existing")
+        self.save_config_button = QtWidgets.QPushButton("Save config")
         self.register_button = QtWidgets.QPushButton("1) Register data")
         self.extract_button = QtWidgets.QPushButton("2) Extract frames")
         self.build_button = QtWidgets.QPushButton("3) Build model")
         action_row.addWidget(self.create_button)
         action_row.addWidget(self.load_button)
+        action_row.addWidget(self.save_config_button)
         action_row.addWidget(self.register_button)
         action_row.addWidget(self.extract_button)
         action_row.addWidget(self.build_button)
@@ -3140,6 +3179,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.copy_model_root_button.clicked.connect(self.copy_model_root)
         self.create_button.clicked.connect(self.create_model)
         self.load_button.clicked.connect(self.load_existing_model)
+        self.save_config_button.clicked.connect(self.save_current_config)
         self.register_button.clicked.connect(lambda: self.run_action("register"))
         self.extract_button.clicked.connect(lambda: self.run_action("extract"))
         self.build_button.clicked.connect(lambda: self.run_action("build"))
@@ -3410,6 +3450,16 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.refresh_selection_table()
         self._append_output(f"** Created model build folder\n{self.config_path}\n")
 
+    def save_current_config(self):
+        try:
+            config_path = self._ensure_config_path()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Save SRDTrans Config", str(exc))
+            return
+        self.refresh_experiment_table()
+        self.refresh_selection_table()
+        self._append_output(f"\n** Saved SRDTrans build config\n{config_path}\n")
+
     def load_existing_model(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -3482,7 +3532,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.refresh_experiment_table()
         self.refresh_selection_table()
         self._append_output(f"\n** Loaded SRDTrans build config\n{config_path}\n")
-        self._reconnect_register_monitor(config_path)
+        self._reconnect_detached_monitor(config_path)
 
     def _ensure_config_path(self) -> Path:
         config = self._build_config()
@@ -3502,28 +3552,11 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Build SRDTrans", str(exc))
             return
-        if action == "register":
-            self._run_register_in_tmux(command, config_path)
-            return
-        self._set_action_buttons_enabled(False)
-        self._append_output(f"\n** Starting {action}\n")
-        self.command_thread = QtCore.QThread(self)
-        self.command_worker = CommandWorker(command, cwd=str(Path(__file__).resolve().parents[3]))
-        self.command_worker.moveToThread(self.command_thread)
-        self.command_thread.started.connect(self.command_worker.run)
-        self.command_worker.output.connect(self._append_output)
-        self.command_worker.finished.connect(lambda: self._command_finished(action))
-        self.command_worker.failed.connect(lambda message: self._command_failed(action, message))
-        self.command_worker.finished.connect(self.command_thread.quit)
-        self.command_worker.failed.connect(self.command_thread.quit)
-        self.command_thread.finished.connect(self.command_worker.deleteLater)
-        self.command_thread.finished.connect(self.command_thread.deleteLater)
-        self.command_thread.finished.connect(self._clear_command_worker)
-        self.command_thread.start()
+        self._run_action_in_tmux(action, command, config_path)
 
     def _tmux_session_exists(self, session_name: str) -> bool:
         return subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
+            ["tmux", "has-session", "-t", f"={session_name}"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode == 0
@@ -3543,19 +3576,22 @@ class BuildSRDTransTab(QtWidgets.QWidget):
             return []
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
-    def _register_session_base(self, model_root: Path) -> str:
-        return f"srdtrans_register_{srdtrans_build.safe_name(model_root.name)}"
+    def _tmux_safe_name(self, value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
 
-    def _matching_register_session(self, model_root: Path) -> Optional[str]:
-        base = self._register_session_base(model_root)
+    def _action_session_base(self, action: str, model_root: Path) -> str:
+        return f"srdtrans_{self._tmux_safe_name(action)}_{self._tmux_safe_name(model_root.name)}"
+
+    def _matching_action_session(self, action: str, model_root: Path) -> Optional[str]:
+        base = self._action_session_base(action, model_root)
         initial_name = base[:80]
         for session_name in self._tmux_session_names():
             if session_name == initial_name or session_name.startswith(f"{base[:70]}_"):
                 return session_name
         return None
 
-    def _latest_register_log(self, model_root: Path) -> Optional[Path]:
-        logs = sorted((model_root / "logs").glob("register_*.log"), key=lambda path: path.stat().st_mtime)
+    def _latest_action_log(self, model_root: Path, action: str) -> Optional[Path]:
+        logs = sorted((model_root / "logs").glob(f"{action}_*.log"), key=lambda path: path.stat().st_mtime)
         return logs[-1] if logs else None
 
     def _tail_existing_log(self, log_path: Path, max_bytes: int = 50000) -> int:
@@ -3573,41 +3609,45 @@ class BuildSRDTransTab(QtWidgets.QWidget):
             self._append_output(text)
         return end_offset
 
-    def _reconnect_register_monitor(self, config_path: Path):
+    def _reconnect_detached_monitor(self, config_path: Path):
         model_root = config_path.parent
-        log_path = self._latest_register_log(model_root)
-        session_name = self._matching_register_session(model_root)
-        if log_path is None:
-            self._append_output("No register log found for this model yet.\n")
-            self._set_action_buttons_enabled(True)
+        latest_logs = []
+        for action in ("register", "extract", "build"):
+            log_path = self._latest_action_log(model_root, action)
+            session_name = self._matching_action_session(action, model_root)
+            if log_path is not None:
+                latest_logs.append((action, log_path))
+            if session_name is None:
+                continue
+            self.detached_session = session_name
+            self.detached_log_path = log_path
+            self.detached_log_offset = self._tail_existing_log(log_path, max_bytes=50000) if log_path else 0
+            self.detached_action = action
+            self._set_action_buttons_enabled(False)
+            self._append_output(
+                f"\n** Reconnected to running {action} tmux session\n"
+                f"tmux session: {session_name}\n"
+                f"log file: {log_path if log_path else 'not found yet'}\n"
+                f"watch command: tmux attach -t {session_name}\n\n"
+            )
+            self.detached_timer.start()
             return
 
-        if session_name is None:
-            self._append_output(f"Latest register log:\n{log_path}\n")
+        if latest_logs:
+            action, log_path = sorted(latest_logs, key=lambda item: item[1].stat().st_mtime)[-1]
+            self._append_output(f"Latest {action} log:\n{log_path}\n")
             self._tail_existing_log(log_path, max_bytes=30000)
-            self._set_action_buttons_enabled(True)
-            return
+        else:
+            self._append_output("No action logs found for this model yet.\n")
+        self._set_action_buttons_enabled(True)
 
-        self.detached_session = session_name
-        self.detached_log_path = log_path
-        self.detached_log_offset = self._tail_existing_log(log_path, max_bytes=50000)
-        self.detached_action = "register"
-        self._set_action_buttons_enabled(False)
-        self._append_output(
-            "\n** Reconnected to running register tmux session\n"
-            f"tmux session: {session_name}\n"
-            f"log file: {log_path}\n"
-            f"watch command: tmux attach -t {session_name}\n\n"
-        )
-        self.detached_timer.start()
-
-    def _run_register_in_tmux(self, command: list[str], config_path: Path):
+    def _run_action_in_tmux(self, action: str, command: list[str], config_path: Path):
         model_root = config_path.parent
         log_root = model_root / "logs"
         log_root.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_root / f"register_{timestamp}.log"
-        session_base = self._register_session_base(model_root)
+        log_path = log_root / f"{action}_{timestamp}.log"
+        session_base = self._action_session_base(action, model_root)
         session_name = session_base[:80]
         suffix = 1
         while self._tmux_session_exists(session_name):
@@ -3616,14 +3656,24 @@ class BuildSRDTransTab(QtWidgets.QWidget):
 
         repo_root = Path(__file__).resolve().parents[3]
         command_text = " ".join(shlex.quote(part) for part in command)
+        timeout_command = (
+            "timeout --foreground "
+            f"{int(SRDTRANS_TMUX_TTL_SECONDS)}s "
+            f"bash -lc {shlex.quote('exec ' + command_text)}"
+        )
         quoted_log = shlex.quote(str(log_path))
         shell_script = (
+            "set -o pipefail; "
             f"cd {shlex.quote(str(repo_root))}; "
-            f"echo '[lab_pipeline] started register at $(date)' >> {quoted_log}; "
+            f"printf '[lab_pipeline] started {action} at %s\\n' \"$(date)\" >> {quoted_log}; "
             f"echo '[lab_pipeline] command: {command_text}' >> {quoted_log}; "
-            f"{command_text} >> {quoted_log} 2>&1; "
-            "status=$?; "
-            f"echo '[lab_pipeline] finished register at $(date) with status '$status >> {quoted_log}; "
+            f"echo '[lab_pipeline] timeout seconds: {int(SRDTRANS_TMUX_TTL_SECONDS)}' >> {quoted_log}; "
+            f"printf '[lab_pipeline] started {action} at %s\\n' \"$(date)\"; "
+            f"echo '[lab_pipeline] command: {command_text}'; "
+            f"echo '[lab_pipeline] timeout seconds: {int(SRDTRANS_TMUX_TTL_SECONDS)}'; "
+            f"PYTHONUNBUFFERED=1 {timeout_command} 2>&1 | tee -a {quoted_log}; "
+            "status=${PIPESTATUS[0]}; "
+            f"printf '[lab_pipeline] finished {action} at %s with status %s\\n' \"$(date)\" \"$status\" | tee -a {quoted_log}; "
             "exit $status"
         )
         try:
@@ -3632,16 +3682,16 @@ class BuildSRDTransTab(QtWidgets.QWidget):
                 check=True,
             )
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "Build SRDTrans", f"Could not launch tmux register job:\n{exc}")
+            QtWidgets.QMessageBox.critical(self, "Build SRDTrans", f"Could not launch tmux {action} job:\n{exc}")
             return
 
         self.detached_session = session_name
         self.detached_log_path = log_path
         self.detached_log_offset = 0
-        self.detached_action = "register"
+        self.detached_action = action
         self._set_action_buttons_enabled(False)
         self._append_output(
-            "\n** Started register in detached tmux\n"
+            f"\n** Started {action} in detached tmux\n"
             f"tmux session: {session_name}\n"
             f"log file: {log_path}\n"
             f"watch command: tmux attach -t {session_name}\n"
@@ -3692,7 +3742,14 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.command_worker = None
 
     def _set_action_buttons_enabled(self, enabled: bool):
-        for button in (self.create_button, self.load_button, self.register_button, self.extract_button, self.build_button):
+        for button in (
+            self.create_button,
+            self.load_button,
+            self.save_config_button,
+            self.register_button,
+            self.extract_button,
+            self.build_button,
+        ):
             button.setEnabled(enabled)
 
 
@@ -3710,6 +3767,17 @@ class QueueManagerWindow(QtWidgets.QMainWindow):
                     self,
                     "Picker Backup",
                     f"Could not back up Picker database:\n{exc}",
+                ),
+            )
+        try:
+            cleanup_expired_srdtrans_tmux_sessions()
+        except Exception as exc:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: QtWidgets.QMessageBox.warning(
+                    self,
+                    "SRDTrans Tmux Cleanup",
+                    f"Could not clean up old SRDTrans tmux sessions:\n{exc}",
                 ),
             )
         tabs = QtWidgets.QTabWidget()
