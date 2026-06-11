@@ -378,6 +378,13 @@ def set_suite2p_io_flag(ops, key, value):
         ops["io"][key] = value
 
 
+def set_suite2p_extraction_flag(ops, key, value):
+    """Set a Suite2p extraction flag in both legacy flat ops and Suite2p 1.x settings."""
+    ops[key] = value
+    if isinstance(ops.get("extraction"), dict):
+        ops["extraction"][key] = value
+
+
 def suite2p_detection_enabled(ops):
     if isinstance(ops.get("run"), dict):
         return bool(ops["run"].get("do_detection", True))
@@ -430,11 +437,27 @@ def strip_chan2_runtime_fields(ops):
         ops.pop(key, None)
 
 
+def strip_chan2_reg_outputs(plane_dir):
+    """Remove cached registration outputs that make Suite2p run chan2 classification."""
+    reg_outputs_path = os.path.join(plane_dir, "reg_outputs.npy")
+    if not os.path.exists(reg_outputs_path):
+        return
+    reg_outputs = np.load(reg_outputs_path, allow_pickle=True).item()
+    changed = False
+    for key in ("meanImg_chan2", "meanImg_chan2_corrected"):
+        if key in reg_outputs:
+            reg_outputs.pop(key, None)
+            changed = True
+    if changed:
+        np.save(reg_outputs_path, reg_outputs)
+
+
 def apply_chan2_detection_mode(ops, mode, plane_save_dir, paired_channel_available):
     """Configure or disable Suite2p chan2/red-cell classification for extraction."""
     mode = normalize_chan2_detection_mode(mode)
     if mode == "off":
         strip_chan2_runtime_fields(ops)
+        strip_chan2_reg_outputs(plane_save_dir)
         ops["nchannels"] = 1
         set_suite2p_detection_flag(ops, "cellpose_chan2", False)
         print(f"Chan2 classification disabled for {plane_save_dir}")
@@ -495,6 +518,14 @@ def clear_detection_outputs(save_root):
             path = os.path.join(plane_dir, filename)
             if os.path.exists(path):
                 os.remove(path)
+
+
+def clear_plane_detection_outputs(plane_dir):
+    """Remove partial detection/extraction outputs from a single plane."""
+    for filename in DETECTION_FILES:
+        path = os.path.join(plane_dir, filename)
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def replace_file(src, dst):
@@ -650,6 +681,27 @@ def is_no_usable_roi_exception(exc):
     if isinstance(exc, np.linalg.LinAlgError) and "Array must not contain infs or NaNs" in message:
         return True
     return "no ROIs were found" in message
+
+
+def is_suite2p_mask_footprint_exception(exc):
+    """Detect Suite2p 1.x zero-radius ROI mask failures."""
+    return "footprint.ndim" in str(exc) and "must match len(axes)" in str(exc)
+
+
+def run_plane_with_mask_retry(plane_ops, plane_save_dir):
+    """Run Suite2p, retrying zero-radius mask failures with lam_percentile disabled."""
+    try:
+        return suite2p_backend.run_plane_compat(plane_ops)
+    except RuntimeError as exc:
+        if not is_suite2p_mask_footprint_exception(exc):
+            raise
+        print(
+            "Suite2p mask creation failed, likely due to zero-radius/single-pixel ROIs; "
+            f"retrying {plane_save_dir} with extraction lam_percentile=0."
+        )
+        clear_plane_detection_outputs(plane_save_dir)
+        set_suite2p_extraction_flag(plane_ops, "lam_percentile", 0.0)
+        return suite2p_backend.run_plane_compat(plane_ops)
 
 
 def run_shared_registration(all_tif_paths, output_path, registration_config_path, registration_ops=None):
@@ -909,7 +961,7 @@ def run_extraction_stage(
         )
 
         try:
-            plane_ops = suite2p_backend.run_plane_compat(plane_ops)
+            plane_ops = run_plane_with_mask_retry(plane_ops, plane_save_dir)
         except (ValueError, np.linalg.LinAlgError) as exc:
             if not is_no_usable_roi_exception(exc):
                 raise
@@ -1185,7 +1237,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
                 del plane_ops[key]
 
         try:
-            plane_ops = suite2p_backend.run_plane_compat(plane_ops)
+            plane_ops = run_plane_with_mask_retry(plane_ops, plane_save_dir)
         except (ValueError, np.linalg.LinAlgError) as exc:
             if not is_no_usable_roi_exception(exc):
                 raise
