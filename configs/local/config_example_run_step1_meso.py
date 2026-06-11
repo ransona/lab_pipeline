@@ -9,12 +9,12 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 step1_config = {}
 
 # Set userID to the local OS username that owns the local repository tree.
-step1_config["userID"] = 'adamranson'
+step1_config["userID"] = getpass.getuser()
 step1_config["expIDs"] = [
     "2026-06-11_02_ESYB190",
 ]
 
-step1_config["local_raw_repository_root"] = r"F:\Local_Repositor"
+step1_config["local_raw_repository_root"] = r"F:\Local_Repository"
 step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
@@ -24,7 +24,7 @@ step1_config["suite2p_env"] = "suite2p_1.1.0"
 
 # Use one Suite2p config for every detected mesoscope P*/R* work unit.
 step1_config["suite2p_config"] = {
-    "default": {"config": "s2p_1_test.npy", "functional_chan": 0, "chan2_detection": "off"},
+    "default": {"config": "s2p_1_test.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True
