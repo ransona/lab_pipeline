@@ -1,5 +1,4 @@
 from pathlib import Path
-import getpass
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
@@ -8,8 +7,8 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 
 step1_config = {}
 
-# Set userID to the local OS username that owns the local repository tree.
-step1_config["userID"] = getpass.getuser()
+# Local examples are pinned to the lab default user.
+step1_config["userID"] = "adamranson"
 step1_config["expIDs"] = [
     "2026-06-11_02_ESYB190",
 ]
