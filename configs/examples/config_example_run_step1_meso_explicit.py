@@ -13,8 +13,8 @@ step1_config["expIDs"] = [
 ]
 
 step1_config["suite2p_config"] = {
-    "P1/R001": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
-    "P1/R002": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    "P1/R001": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
+    "P1/R002": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True

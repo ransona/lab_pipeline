@@ -43,6 +43,15 @@ CH2_EXTRA_FILES = [
     "redcell.npy",
 ]
 
+CHAN2_RUNTIME_KEYS = [
+    "reg_file_chan2",
+    "raw_file_chan2",
+    "meanImg_chan2",
+    "meanImg_chan2_corrected",
+]
+
+VALID_CHAN2_DETECTION_MODES = {"off", "intensity", "cellpose"}
+
 
 def is_meso_tif_path(first_tif_path):
     """Return True when the TIFF lives under a P*/R* mesoscope layout."""
@@ -381,6 +390,71 @@ def suite2p_combined_enabled(ops):
     return bool(ops.get("combined", True))
 
 
+def normalize_chan2_detection_mode(value):
+    """Normalize user-facing channel-2 classification modes."""
+    if value is None:
+        return "off"
+    value = str(value).strip().lower()
+    aliases = {
+        "": "off",
+        "none": "off",
+        "false": "off",
+        "0": "off",
+        "no": "off",
+        "ratio": "intensity",
+        "intensity_ratio": "intensity",
+        "1": "intensity",
+        "true": "intensity",
+        "yes": "intensity",
+        "2": "cellpose",
+    }
+    mode = aliases.get(value, value)
+    if mode not in VALID_CHAN2_DETECTION_MODES:
+        raise ValueError(
+            f"Unknown chan2_detection mode '{value}'. "
+            "Expected off, intensity, or cellpose."
+        )
+    return mode
+
+
+def set_suite2p_detection_flag(ops, key, value):
+    """Set a Suite2p detection flag in both legacy flat ops and Suite2p 1.x settings."""
+    ops[key] = value
+    if isinstance(ops.get("detection"), dict):
+        ops["detection"][key] = value
+
+
+def strip_chan2_runtime_fields(ops):
+    """Remove fields whose presence makes Suite2p run chan2/red-cell classification."""
+    for key in CHAN2_RUNTIME_KEYS:
+        ops.pop(key, None)
+
+
+def apply_chan2_detection_mode(ops, mode, plane_save_dir, paired_channel_available):
+    """Configure or disable Suite2p chan2/red-cell classification for extraction."""
+    mode = normalize_chan2_detection_mode(mode)
+    if mode == "off":
+        strip_chan2_runtime_fields(ops)
+        ops["nchannels"] = 1
+        set_suite2p_detection_flag(ops, "cellpose_chan2", False)
+        print(f"Chan2 classification disabled for {plane_save_dir}")
+        return
+
+    if not paired_channel_available:
+        strip_chan2_runtime_fields(ops)
+        ops["nchannels"] = 1
+        set_suite2p_detection_flag(ops, "cellpose_chan2", False)
+        print(
+            f"Chan2 classification requested as {mode} for {plane_save_dir}, "
+            "but no paired channel binary is available; disabled."
+        )
+        return
+
+    ops["nchannels"] = 2
+    set_suite2p_detection_flag(ops, "cellpose_chan2", mode == "cellpose")
+    print(f"Chan2 classification for {plane_save_dir}: {mode}")
+
+
 def describe_suite2p_stage(stage_name, config_path, functional_chan=None):
     print(f"** Suite2p stage: {stage_name}")
     print(f"Suite2p config: {config_path}")
@@ -442,6 +516,18 @@ def move_red_channel_binary(red_reg_file, plane_save_dir):
     if os.path.lexists(local_reg_file):
         os.remove(local_reg_file)
     shutil.move(red_reg_file, local_reg_file)
+    return local_reg_file
+
+
+def link_or_copy_red_channel_binary(red_reg_file, plane_save_dir):
+    """Expose channel-2 data in ch2 output while preserving the canonical file."""
+    local_reg_file = os.path.join(plane_save_dir, "data.bin")
+    if os.path.lexists(local_reg_file):
+        os.remove(local_reg_file)
+    try:
+        os.link(red_reg_file, local_reg_file)
+    except OSError:
+        shutil.copy2(red_reg_file, local_reg_file)
     return local_reg_file
 
 
@@ -753,7 +839,15 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
     fix_binary_permissions(output_path)
 
 
-def run_extraction_stage(canonical_root, save_root, extraction_config_path, nplanes, functional_chan=None):
+def run_extraction_stage(
+    canonical_root,
+    save_root,
+    extraction_config_path,
+    nplanes,
+    functional_chan=None,
+    chan2_detection="off",
+    preserve_canonical_ch2_binary=False,
+):
     """Reuse canonical binaries and rerun detection/deconvolution with a per-channel config."""
     describe_suite2p_stage(
         "extraction into " + save_root,
@@ -764,6 +858,7 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
 
     canonical_plane_dirs = get_plane_dirs(canonical_root)
     extraction_config = load_suite2p_settings(extraction_config_path, functional_chan=functional_chan)
+    chan2_detection = normalize_chan2_detection_mode(chan2_detection)
 
     for canonical_plane_dir in canonical_plane_dirs:
         plane_name = os.path.basename(canonical_plane_dir)
@@ -778,7 +873,10 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
 
         if save_root != canonical_root:
             if os.path.exists(reg_file_chan2):
-                output_reg_file = move_red_channel_binary(reg_file_chan2, plane_save_dir)
+                if preserve_canonical_ch2_binary:
+                    output_reg_file = link_or_copy_red_channel_binary(reg_file_chan2, plane_save_dir)
+                else:
+                    output_reg_file = move_red_channel_binary(reg_file_chan2, plane_save_dir)
             else:
                 output_reg_file = os.path.join(plane_save_dir, "data.bin")
                 replace_file(reg_file, output_reg_file)
@@ -795,15 +893,20 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
         plane_ops["functional_chan"] = 1
         plane_ops["nplanes"] = int(nplanes)
         plane_ops["reg_file"] = output_reg_file if save_root != canonical_root else reg_file
+        paired_channel_available = save_root == canonical_root and os.path.exists(reg_file_chan2)
         if save_root != canonical_root and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
             plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
-        for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
-            if key in plane_ops:
-                del plane_ops[key]
+        plane_ops.pop("raw_file", None)
+        apply_chan2_detection_mode(
+            plane_ops,
+            chan2_detection,
+            plane_save_dir,
+            paired_channel_available,
+        )
 
         try:
             plane_ops = suite2p_backend.run_plane_compat(plane_ops)
@@ -818,20 +921,26 @@ def run_extraction_stage(canonical_root, save_root, extraction_config_path, npla
         plane_ops["functional_chan"] = 1
         plane_ops["nplanes"] = int(nplanes)
         plane_ops["reg_file"] = output_reg_file if save_root != canonical_root else reg_file
+        paired_channel_available = save_root == canonical_root and os.path.exists(reg_file_chan2)
         if save_root != canonical_root and "meanImg_chan2" in registration_ops:
             plane_ops["meanImg"] = registration_ops["meanImg_chan2"].astype(np.float32)
             image_ops = plane_ops.copy()
             plane_ops["meanImgE"] = suite2p_backend.enhanced_mean_image(
                 plane_ops["meanImg"], image_ops
             ).astype(np.float32)
-        for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "raw_file"]:
-            if key in plane_ops:
-                del plane_ops[key]
+        plane_ops.pop("raw_file", None)
+        apply_chan2_detection_mode(
+            plane_ops,
+            chan2_detection,
+            plane_save_dir,
+            paired_channel_available,
+        )
 
-        for filename in CH2_EXTRA_FILES:
-            extra_path = os.path.join(plane_save_dir, filename)
-            if os.path.exists(extra_path):
-                os.remove(extra_path)
+        if chan2_detection == "off" or save_root != canonical_root:
+            for filename in CH2_EXTRA_FILES:
+                extra_path = os.path.join(plane_save_dir, filename)
+                if os.path.exists(extra_path):
+                    os.remove(extra_path)
         np.save(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(extraction_config) and suite2p_detection_enabled(extraction_config):
@@ -1144,8 +1253,9 @@ def run_single_config_suite2p(all_tif_paths, output_path, config_path, functiona
     fix_binary_permissions(output_path)
 
 
-def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes):
-    """Keep only green binaries in root and only red binaries in the ch2 tree."""
+def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_chan2_detection="off"):
+    """Finalize root/ch2 binary layout after dual-channel extraction."""
+    keep_root_chan2 = normalize_chan2_detection_mode(root_chan2_detection) != "off"
     for canonical_plane_dir in get_plane_dirs(canonical_root):
         plane_name = os.path.basename(canonical_plane_dir)
         ch2_plane_dir = os.path.join(ch2_root, "suite2p", plane_name)
@@ -1158,7 +1268,7 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes):
         if os.path.exists(ch2_red_bin_legacy):
             os.remove(ch2_red_bin_legacy)
 
-        if os.path.exists(root_red_bin):
+        if os.path.exists(root_red_bin) and not keep_root_chan2:
             if not os.path.exists(ch2_red_bin):
                 os.makedirs(ch2_plane_dir, exist_ok=True)
                 shutil.move(root_red_bin, ch2_red_bin)
@@ -1170,9 +1280,14 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes):
             root_ops = np.load(root_ops_path, allow_pickle=True).item()
             root_ops["reg_file"] = root_green_bin
             root_ops["nplanes"] = int(nplanes)
-            for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "meanImg_chan2_corrected"]:
-                if key in root_ops:
-                    del root_ops[key]
+            if keep_root_chan2:
+                root_ops["nchannels"] = 2
+                if os.path.exists(root_red_bin):
+                    root_ops["reg_file_chan2"] = root_red_bin
+                root_ops.pop("raw_file_chan2", None)
+            else:
+                root_ops["nchannels"] = 1
+                strip_chan2_runtime_fields(root_ops)
             np.save(root_ops_path, root_ops)
 
         ch2_ops_path = os.path.join(ch2_plane_dir, "ops.npy")
@@ -1202,6 +1317,7 @@ def run_srdtrans_suite2p(
     output_path,
     config_paths,
     functional_chans,
+    chan2_detection_modes,
     srdtrans_config,
     register_with_summed_channel=False,
 ):
@@ -1219,6 +1335,7 @@ def run_srdtrans_suite2p(
         if len(effective_config_paths) == 1:
             effective_config_paths = [effective_config_paths[0], effective_config_paths[0]]
             functional_chans = [functional_chans[0], 2]
+            chan2_detection_modes = [chan2_detection_modes[0], "off"]
 
     if register_with_summed_channel:
         run_shared_summed_channel_registration(
@@ -1238,15 +1355,32 @@ def run_srdtrans_suite2p(
 
     if "ch2" in available_channels:
         ch2_root = os.path.join(output_path, "ch2")
+        preserve_root_chan2 = normalize_chan2_detection_mode(chan2_detection_modes[0]) != "off"
         if register_with_summed_channel:
             run_final_summed_channel_registration(output_path, effective_config_paths[0], functional_chans[0])
-            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes, functional_chans[1])
-            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0])
+            run_extraction_stage(
+                output_path,
+                ch2_root,
+                effective_config_paths[1],
+                nplanes,
+                functional_chans[1],
+                chan2_detection_modes[1],
+                preserve_canonical_ch2_binary=preserve_root_chan2,
+            )
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
         else:
             run_final_shared_registration(output_path, effective_config_paths[0], nplanes, functional_chans[0])
-            run_extraction_stage(output_path, ch2_root, effective_config_paths[1], nplanes, functional_chans[1])
-            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0])
-        finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
+            run_extraction_stage(
+                output_path,
+                ch2_root,
+                effective_config_paths[1],
+                nplanes,
+                functional_chans[1],
+                chan2_detection_modes[1],
+                preserve_canonical_ch2_binary=preserve_root_chan2,
+            )
+            run_extraction_stage(output_path, output_path, effective_config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
+        finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes, chan2_detection_modes[0])
         return
 
     run_final_suite2p_stage(output_path, output_path, effective_config_paths[0], nplanes, "ch1", functional_chans[0])
@@ -1269,6 +1403,7 @@ def s2p_launcher_run(
     srdtrans_config=None,
     register_with_summed_channel=False,
     functional_chans=None,
+    chan2_detection_modes=None,
 ):
     all_tif_paths = tif_path.split(",")
     print("tif_path = " + tif_path)
@@ -1285,7 +1420,20 @@ def s2p_launcher_run(
         raise ValueError(
             f"Expected {len(config_paths)} functional channel value(s), got {len(functional_chans)}"
         )
+    if chan2_detection_modes is None:
+        chan2_detection_modes = ["off"] * len(config_paths)
+    else:
+        chan2_detection_modes = [
+            normalize_chan2_detection_mode(mode) for mode in chan2_detection_modes
+        ]
+    if len(chan2_detection_modes) == 1 and len(config_paths) == 2:
+        chan2_detection_modes = [chan2_detection_modes[0], "off"]
+    if len(chan2_detection_modes) != len(config_paths):
+        raise ValueError(
+            f"Expected {len(config_paths)} chan2_detection value(s), got {len(chan2_detection_modes)}"
+        )
     print("functional_chans = " + ",".join(str(chan) for chan in functional_chans))
+    print("chan2_detection = " + ",".join(chan2_detection_modes))
 
     if srdtrans_config:
         run_srdtrans_suite2p(
@@ -1293,6 +1441,7 @@ def s2p_launcher_run(
             output_path,
             config_paths,
             functional_chans,
+            chan2_detection_modes,
             srdtrans_config,
             register_with_summed_channel=register_with_summed_channel,
         )
@@ -1320,56 +1469,55 @@ def s2p_launcher_run(
                 registration_ops=primary_ops,
             )
         ch2_root = os.path.join(output_path, "ch2")
-        run_extraction_stage(output_path, ch2_root, config_paths[1], nplanes, functional_chans[1])
-        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0])
-        finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes)
+        preserve_root_chan2 = normalize_chan2_detection_mode(chan2_detection_modes[0]) != "off"
+        run_extraction_stage(
+            output_path,
+            ch2_root,
+            config_paths[1],
+            nplanes,
+            functional_chans[1],
+            chan2_detection_modes[1],
+            preserve_canonical_ch2_binary=preserve_root_chan2,
+        )
+        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
+        finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes, chan2_detection_modes[0])
         return
 
-    if register_with_summed_channel:
-        primary_ops = load_ops_with_inferred_nplanes(
-            config_paths[0],
-            all_tif_paths,
-            functional_chan=functional_chans[0],
-        )
+    primary_ops = load_ops_with_inferred_nplanes(
+        config_paths[0],
+        all_tif_paths,
+        functional_chan=functional_chans[0],
+    )
+    if register_with_summed_channel or int(primary_ops.get("nchannels", 1)) > 1:
         nplanes = int(primary_ops["nplanes"])
-        run_shared_summed_channel_registration(
-            all_tif_paths,
-            output_path,
-            config_paths[0],
-            registration_ops=primary_ops,
-        )
-        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0])
+        if register_with_summed_channel:
+            run_shared_summed_channel_registration(
+                all_tif_paths,
+                output_path,
+                config_paths[0],
+                registration_ops=primary_ops,
+            )
+        else:
+            run_shared_registration(
+                all_tif_paths,
+                output_path,
+                config_paths[0],
+                registration_ops=primary_ops,
+            )
+        run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
         return
 
     run_single_config_suite2p(all_tif_paths, output_path, config_paths[0], functional_chans[0])
 
 
+def parse_csv_arg(value, cast=str):
+    return [cast(item) for item in value.split(",") if item]
+
+
 def main():
     print("** S2P Launcher Universal Run...")
-    try:
-        userID = sys.argv[1]
-        expID = sys.argv[2]
-        tif_path = sys.argv[3]
-        srdtrans_config = None
-        if len(sys.argv) >= 6:
-            output_path = sys.argv[4]
-            config_path = sys.argv[5]
-            register_with_summed_channel = False
-            functional_chans = None
-            for extra_arg in sys.argv[6:]:
-                if extra_arg == "--register-with-summed-channel":
-                    register_with_summed_channel = True
-                elif extra_arg.startswith("--functional-chans="):
-                    value = extra_arg.split("=", 1)[1]
-                    functional_chans = [int(chan) for chan in value.split(",") if chan]
-                else:
-                    srdtrans_config = decode_srdtrans_config_arg(extra_arg)
-        else:
-            output_path = None
-            config_path = sys.argv[4]
-            register_with_summed_channel = False
-            functional_chans = None
-    except Exception:
+    if len(sys.argv) < 5:
+        print("No CLI arguments supplied; running built-in launcher smoke-test defaults.")
         expID = "2026-05-11_03_ESRC033,2026-05-11_99_ESRC033"
         userID = "adamranson"
         tif_path = ",".join([
@@ -1384,6 +1532,34 @@ def main():
         srdtrans_config = None
         register_with_summed_channel = False
         functional_chans = None
+        chan2_detection_modes = None
+    else:
+        userID = sys.argv[1]
+        expID = sys.argv[2]
+        tif_path = sys.argv[3]
+        srdtrans_config = None
+        register_with_summed_channel = False
+        functional_chans = None
+        chan2_detection_modes = None
+        if len(sys.argv) >= 6:
+            output_path = sys.argv[4]
+            config_path = sys.argv[5]
+            extra_args = sys.argv[6:]
+        else:
+            output_path = None
+            config_path = sys.argv[4]
+            extra_args = []
+        for extra_arg in extra_args:
+            if extra_arg == "--register-with-summed-channel":
+                register_with_summed_channel = True
+            elif extra_arg.startswith("--functional-chans="):
+                value = extra_arg.split("=", 1)[1]
+                functional_chans = parse_csv_arg(value, int)
+            elif extra_arg.startswith("--chan2-detection="):
+                value = extra_arg.split("=", 1)[1]
+                chan2_detection_modes = parse_csv_arg(value, str)
+            else:
+                srdtrans_config = decode_srdtrans_config_arg(extra_arg)
 
     output_path = resolve_output_path(userID, expID, output_path)
     s2p_launcher_run(
@@ -1395,6 +1571,7 @@ def main():
         srdtrans_config=srdtrans_config,
         register_with_summed_channel=register_with_summed_channel,
         functional_chans=functional_chans,
+        chan2_detection_modes=chan2_detection_modes,
     )
 
 

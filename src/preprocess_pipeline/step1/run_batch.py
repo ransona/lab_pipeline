@@ -15,6 +15,7 @@ LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
 WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 DEFAULT_QUEUE_PATH = '/data/common/queues/step1'
 DEBUG_QUEUE_PATH = '/data/common/queues/debug'
+VALID_CHAN2_DETECTION_MODES = {'off', 'intensity', 'cellpose'}
 QUEUE_PATHS_BY_HOST = {
     'server': DEFAULT_QUEUE_PATH,
     'ar-lab-si2': '/data/common/local_pipelines/ar-lab-si2/queues/step1',
@@ -27,6 +28,7 @@ def _normalize_config_entry(config_entry, default_functional_chan=None):
         return {
             'config': config_entry,
             'functional_chan': int(default_functional_chan or 1),
+            'chan2_detection': 'off',
         }
     if isinstance(config_entry, dict):
         config_name = (
@@ -37,9 +39,17 @@ def _normalize_config_entry(config_entry, default_functional_chan=None):
         if not isinstance(config_name, str) or not config_name:
             raise ValueError('suite2p config entries must include a config filename')
         functional_chan = config_entry.get('functional_chan', default_functional_chan or 1)
+        chan2_detection = config_entry.get('chan2_detection', 'off')
+        chan2_detection = str(chan2_detection).lower()
+        if chan2_detection not in VALID_CHAN2_DETECTION_MODES:
+            raise ValueError(
+                "chan2_detection must be one of: "
+                + ", ".join(sorted(VALID_CHAN2_DETECTION_MODES))
+            )
         return {
             'config': config_name,
             'functional_chan': int(functional_chan),
+            'chan2_detection': chan2_detection,
         }
     raise TypeError('suite2p config entries must be strings or dicts')
 
@@ -48,7 +58,7 @@ def _normalize_single_config_value(config_value):
     if isinstance(config_value, str):
         return [_normalize_config_entry(config_value, 1)]
     if isinstance(config_value, dict) and any(
-        key in config_value for key in ('config', 'path', 'name', 'functional_chan')
+        key in config_value for key in ('config', 'path', 'name', 'functional_chan', 'chan2_detection')
     ):
         return [_normalize_config_entry(config_value, 1)]
     if isinstance(config_value, (list, tuple)):
@@ -118,7 +128,7 @@ def _validate_combined_work_units(user_id, exp_id_group, expected_topology, expe
 def _normalize_suite2p_plan(suite2p_config, work_unit_ids):
     if isinstance(suite2p_config, (str, list, tuple)) or (
         isinstance(suite2p_config, dict)
-        and any(key in suite2p_config for key in ('config', 'path', 'name', 'functional_chan'))
+        and any(key in suite2p_config for key in ('config', 'path', 'name', 'functional_chan', 'chan2_detection'))
     ):
         default_configs = _normalize_single_config_value(suite2p_config)
         return [

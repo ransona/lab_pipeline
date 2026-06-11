@@ -13,7 +13,7 @@ step1_config["expIDs"] = [
 ]
 
 step1_config["suite2p_config"] = {
-    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True

@@ -1204,6 +1204,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         self.ch2_combo = Suite2pConfigSelector()
         self.ch1_func_combo = QtWidgets.QComboBox()
         self.ch1_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch1_chan2_detection_combo = QtWidgets.QComboBox()
+        self.ch1_chan2_detection_combo.addItems(["off", "intensity", "cellpose"])
         self.ch2_func_combo = QtWidgets.QComboBox()
         self.ch2_func_combo.addItems(["1", "2", "3", "4"])
         self.ch2_func_combo.setCurrentText("2")
@@ -1213,6 +1215,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         ch1_layout.addWidget(self.ch1_combo, 1)
         ch1_layout.addWidget(QtWidgets.QLabel("Functional ch"))
         ch1_layout.addWidget(self.ch1_func_combo)
+        ch1_layout.addWidget(QtWidgets.QLabel("Chan2 detection"))
+        ch1_layout.addWidget(self.ch1_chan2_detection_combo)
         self.ch2_row = QtWidgets.QWidget()
         ch2_layout = QtWidgets.QHBoxLayout(self.ch2_row)
         ch2_layout.setContentsMargins(0, 0, 0, 0)
@@ -1245,22 +1249,32 @@ class StandardConfigWidget(QtWidgets.QWidget):
         if not dual:
             self.same_for_both.setChecked(True)
             self.register_with_summed_channel.setChecked(False)
+            self.ch1_chan2_detection_combo.setCurrentText("off")
         self.ch2_label.setVisible(dual)
         self.ch2_row.setVisible(dual)
+        self.ch1_chan2_detection_combo.setEnabled(dual)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
         use_same = self.same_for_both.isChecked()
         self.ch2_combo.setEnabled(not use_same and self.ch2_combo.isVisible())
 
-    def _config_entry(self, config_name: str, functional_chan: int) -> dict:
-        return {"config": config_name, "functional_chan": int(functional_chan)}
+    def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
+        return {
+            "config": config_name,
+            "functional_chan": int(functional_chan),
+            "chan2_detection": chan2_detection,
+        }
 
     def config_value(self, nchannels: int):
         ch1 = self.ch1_combo.value()
         if not ch1:
             raise ValueError("Channel 1 Suite2p config is required.")
-        ch1_entry = self._config_entry(ch1, int(self.ch1_func_combo.currentText()))
+        ch1_entry = self._config_entry(
+            ch1,
+            int(self.ch1_func_combo.currentText()),
+            self.ch1_chan2_detection_combo.currentText(),
+        )
         if nchannels < 2:
             return ch1_entry
         ch2_functional_chan = int(self.ch2_func_combo.currentText())
@@ -1281,6 +1295,7 @@ class StandardConfigWidget(QtWidgets.QWidget):
         self.ch2_combo.set_value(preset.get("ch2", ""))
         self.ch1_func_combo.setCurrentText(str(preset.get("ch1_functional_chan", 1)))
         self.ch2_func_combo.setCurrentText(str(preset.get("ch2_functional_chan", 2)))
+        self.ch1_chan2_detection_combo.setCurrentText(str(preset.get("ch1_chan2_detection", "off")))
         self.set_channel_count(nchannels)
 
     def preset_state(self) -> dict:
@@ -1291,6 +1306,7 @@ class StandardConfigWidget(QtWidgets.QWidget):
             "ch2": self.ch2_combo.value(),
             "ch1_functional_chan": int(self.ch1_func_combo.currentText()),
             "ch2_functional_chan": int(self.ch2_func_combo.currentText()),
+            "ch1_chan2_detection": self.ch1_chan2_detection_combo.currentText(),
         }
 
     def register_with_summed_channel_enabled(self) -> bool:
@@ -1317,10 +1333,14 @@ class PathConfigRow(QtWidgets.QWidget):
         self.ch1_combo.addItems(config_files)
         self.ch1_func_combo = QtWidgets.QComboBox()
         self.ch1_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch1_chan2_detection_combo = QtWidgets.QComboBox()
+        self.ch1_chan2_detection_combo.addItems(["off", "intensity", "cellpose"])
         layout.addWidget(QtWidgets.QLabel("Ch1"))
         layout.addWidget(self.ch1_combo, 1)
         layout.addWidget(QtWidgets.QLabel("Func"))
         layout.addWidget(self.ch1_func_combo)
+        layout.addWidget(QtWidgets.QLabel("Chan2 det"))
+        layout.addWidget(self.ch1_chan2_detection_combo)
         self.same_for_both = QtWidgets.QCheckBox("Same for ch2")
         self.same_for_both.setChecked(True)
         layout.addWidget(self.same_for_both)
@@ -1343,14 +1363,22 @@ class PathConfigRow(QtWidgets.QWidget):
     def _sync_channel_mode(self):
         self.ch2_combo.setEnabled(not self.same_for_both.isChecked() and self.ch2_combo.isVisible())
 
-    def _config_entry(self, config_name: str, functional_chan: int) -> dict:
-        return {"config": config_name, "functional_chan": int(functional_chan)}
+    def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
+        return {
+            "config": config_name,
+            "functional_chan": int(functional_chan),
+            "chan2_detection": chan2_detection,
+        }
 
     def config_value(self):
         ch1 = self.ch1_combo.value()
         if not ch1:
             raise ValueError(f"{self.path_name}: channel 1 config is required.")
-        ch1_entry = self._config_entry(ch1, int(self.ch1_func_combo.currentText()))
+        ch1_entry = self._config_entry(
+            ch1,
+            int(self.ch1_func_combo.currentText()),
+            self.ch1_chan2_detection_combo.currentText(),
+        )
         if self.nchannels < 2:
             return ch1_entry
         ch2_functional_chan = int(self.ch2_func_combo.currentText())
@@ -1369,16 +1397,19 @@ class PathConfigRow(QtWidgets.QWidget):
                 ch2 = ch1
                 ch1_functional_chan = value.get("functional_chan", 1)
                 ch2_functional_chan = 2
+                ch1_chan2_detection = value.get("chan2_detection", "off")
             else:
                 ch1 = value.get("ch1", "") or ""
                 ch2 = value.get("ch2", ch1) or ch1
                 ch1_functional_chan = value.get("ch1_functional_chan", 1)
                 ch2_functional_chan = value.get("ch2_functional_chan", 2)
+                ch1_chan2_detection = value.get("ch1_chan2_detection", "off")
             self.same_for_both.setChecked(bool(same_for_both))
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
             self.ch1_func_combo.setCurrentText(str(ch1_functional_chan))
             self.ch2_func_combo.setCurrentText(str(ch2_functional_chan))
+            self.ch1_chan2_detection_combo.setCurrentText(str(ch1_chan2_detection))
             self._sync_channel_mode()
             return
         if isinstance(value, (list, tuple)):
@@ -1388,11 +1419,13 @@ class PathConfigRow(QtWidgets.QWidget):
             ch2 = second.get("config", second.get("path", ch1)) if isinstance(second, dict) else second
             ch1_functional_chan = first.get("functional_chan", 1) if isinstance(first, dict) else 1
             ch2_functional_chan = second.get("functional_chan", 2) if isinstance(second, dict) else 2
+            ch1_chan2_detection = first.get("chan2_detection", "off") if isinstance(first, dict) else "off"
             self.same_for_both.setChecked(ch1 == ch2)
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
             self.ch1_func_combo.setCurrentText(str(ch1_functional_chan))
             self.ch2_func_combo.setCurrentText(str(ch2_functional_chan))
+            self.ch1_chan2_detection_combo.setCurrentText(str(ch1_chan2_detection))
             self._sync_channel_mode()
         else:
             self.same_for_both.setChecked(True)
@@ -1400,6 +1433,7 @@ class PathConfigRow(QtWidgets.QWidget):
             self.ch2_combo.set_value(value or "")
             self.ch1_func_combo.setCurrentText("1")
             self.ch2_func_combo.setCurrentText("2")
+            self.ch1_chan2_detection_combo.setCurrentText("off")
             self._sync_channel_mode()
 
     def preset_state(self):
@@ -1409,6 +1443,7 @@ class PathConfigRow(QtWidgets.QWidget):
             "ch2": self.ch2_combo.value(),
             "ch1_functional_chan": int(self.ch1_func_combo.currentText()),
             "ch2_functional_chan": int(self.ch2_func_combo.currentText()),
+            "ch1_chan2_detection": self.ch1_chan2_detection_combo.currentText(),
         }
 
 

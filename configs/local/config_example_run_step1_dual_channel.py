@@ -21,8 +21,8 @@ step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 step1_config["suite2p_env"] = "suite2p_1.1.0"
 
 step1_config["suite2p_config"] = [
-    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
-    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2, "chan2_detection": "off"},
 ]
 
 step1_config["runs2p"] = True

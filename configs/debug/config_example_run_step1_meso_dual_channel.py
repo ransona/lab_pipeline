@@ -15,8 +15,8 @@ step1_config["expIDs"] = [
 # Each mesoscope ROI work unit uses the same shared-registration dual-channel pair here.
 step1_config["suite2p_config"] = {
     "default": [
-        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
-        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2, "chan2_detection": "off"},
     ],
 }
 

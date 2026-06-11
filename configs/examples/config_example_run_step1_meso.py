@@ -14,7 +14,7 @@ step1_config["expIDs"] = [
 
 # For mesoscope data you can provide one default config for every P*/R* work unit.
 step1_config["suite2p_config"] = {
-    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True

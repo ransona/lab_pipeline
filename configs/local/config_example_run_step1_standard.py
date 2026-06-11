@@ -23,6 +23,7 @@ step1_config["suite2p_env"] = "suite2p_1.1.0"
 step1_config["suite2p_config"] = {
     "config": "test1.npy",
     "functional_chan": 1,
+    "chan2_detection": "off",
 }
 
 step1_config["runs2p"] = True

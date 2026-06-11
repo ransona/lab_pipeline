@@ -24,7 +24,7 @@ step1_config["suite2p_env"] = "suite2p_1.1.0"
 
 # Use one Suite2p config for every detected mesoscope P*/R* work unit.
 step1_config["suite2p_config"] = {
-    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True
