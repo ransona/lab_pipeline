@@ -253,7 +253,8 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
                 spks = np.load(os.path.join(plane_dir, "spks.npy"))
                 s2p_stat = np.load(os.path.join(plane_dir, "stat.npy"), allow_pickle=True)
                 s2p_ops = np.load(os.path.join(plane_dir, "ops.npy"), allow_pickle=True).item()
-
+                print("Frames = " + str(Fall.shape[1]))
+                print("Time pulses = " + str(frame_pulses_per_depth))
                 if abs(frame_pulses_per_depth - Fall.shape[1]) / max([frame_pulses_per_depth, Fall.shape[1]]) > 0.01:
                     pc_diff = round(
                         abs(frame_pulses_per_depth - Fall.shape[1]) / max([frame_pulses_per_depth, Fall.shape[1]]) * 100

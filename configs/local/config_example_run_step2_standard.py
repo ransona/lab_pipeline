@@ -9,8 +9,8 @@ step2_config = {}
 
 # Set userID to the local OS username that owns the local repository tree.
 step2_config["userID"] = "adamranson"
-step2_config["expIDs"] = ["2026-05-17_02_ESYB040"]
-step2_config["local_raw_repository_root"] = r"D:\data\Repository"
+step2_config["expIDs"] = ["2026-06-11_02_ESYB190"]
+step2_config["local_raw_repository_root"] = r"F:\Local_Repository"
 step2_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step2_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step2_config["pre_secs"] = 5
