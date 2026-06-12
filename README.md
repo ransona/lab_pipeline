@@ -11,7 +11,7 @@ GUI apps:
 | App | Purpose | Linux command | Windows launcher |
 | --- | --- | --- | --- |
 | `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
-| `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` |
+| `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
 | `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
 | `eye_check.py` | Eye tracking QC GUI adapter | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
 | `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
@@ -41,7 +41,7 @@ Pipeline and subsystem apps:
 
 Windows launchers are in `windows_launchers/`. Most `.bat` launchers assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If inference fails, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME`.
 
-`windows_launchers/run_local_gui.vbs` is different: it runs the local processing GUI on the Windows machine without opening a black command prompt window. It looks for `pythonw.exe` in the local `sci` conda env under `%USERPROFILE%\miniconda3\envs\sci`, `%USERPROFILE%\anaconda3\envs\sci`, `%USERPROFILE%\mambaforge\envs\sci`, or `%USERPROFILE%\miniforge3\envs\sci`. If conda is installed elsewhere, edit the `pythonw` path in that `.vbs` file.
+The local processing launchers are different because they run on the Windows machine itself. `windows_launchers/run_local_gui.vbs` starts the GUI without opening a black command prompt window. `windows_launchers/run_local_gui.bat` starts the same GUI with a visible command prompt, which is useful for debugging startup errors. Both look for the local `sci` conda env under `%USERPROFILE%\miniconda3\envs\sci`, `%USERPROFILE%\anaconda3\envs\sci`, `%USERPROFILE%\mambaforge\envs\sci`, or `%USERPROFILE%\miniforge3\envs\sci`. If conda is installed elsewhere, edit the Python path in the launcher file.
 
 `apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
 
