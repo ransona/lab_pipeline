@@ -419,7 +419,7 @@ step2_config = {{
     "local_nas_repository_root": {self.nas_root_edit.text().strip()!r},
     "pre_secs": {float(self.pre_secs_spin.value())},
     "post_secs": {float(self.post_secs_spin.value())},
-    "run_bonvision": True,
+    "run_bonvision": False,
     "run_s2p_timestamp": True,
     "run_ephys": False,
     "run_dlc_timestamp": False,

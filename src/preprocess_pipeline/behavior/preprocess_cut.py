@@ -39,8 +39,14 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
     exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
     exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')
     os.makedirs(exp_dir_processed_cut, exist_ok = True)
-    # load trial data
-    all_trials = pd.read_csv(os.path.join(exp_dir_processed, expID + '_all_trials.csv'))
+    # load trial data. Local runs may use pre-exported trial CSVs from the raw/NAS folder.
+    all_trials_processed_path = os.path.join(exp_dir_processed, expID + '_all_trials.csv')
+    if os.path.exists(all_trials_processed_path):
+        all_trials_path = all_trials_processed_path
+    else:
+        all_trials_path = paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw)
+    print(f"Loading all_trials from {all_trials_path}")
+    all_trials = pd.read_csv(all_trials_path)
 
     ### Cut Ca imaging data ###
     # load ca imaging traces
@@ -237,5 +243,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
