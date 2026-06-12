@@ -447,6 +447,85 @@ def delete_combined_bins_after_success(bin_paths):
         print(f"Deleted {deleted} combined binary file(s), freeing {bytes_deleted} bytes.")
 
 
+def audit_completed_split_with_combined_bins(userID, expID):
+    _, _, _, exp_dir_processed, _ = paths.find_paths(userID, expID)
+    missing = []
+    combined_bins = []
+
+    split_roots = discover_split_roots(exp_dir_processed)
+    if not split_roots:
+        missing.append(f"No Suite2p split roots found under {exp_dir_processed}")
+        return {
+            "can_cleanup": False,
+            "combined_bins": [],
+            "missing": missing,
+        }
+
+    for split_root in split_roots:
+        for channel_root in discover_channel_roots(split_root):
+            suite2p_combined_path = os.path.join(channel_root, "suite2p_combined")
+            if not os.path.isdir(suite2p_combined_path):
+                continue
+
+            plane_dirs = sorted(glob.glob(os.path.join(suite2p_combined_path, "plane*")))
+            if not plane_dirs:
+                missing.append(f"No plane folders found in {suite2p_combined_path}")
+                continue
+
+            layout_mode = infer_layout_mode_from_split_root(split_root)
+            plane0_ops = load_plane_metadata(plane_dirs[0])
+            source_data_paths = get_source_data_paths(plane0_ops, plane_dirs[0])
+            exp_ids = [extract_exp_id_from_data_path(path, layout_mode) for path in source_data_paths]
+            is_ch2 = os.path.basename(channel_root) == "ch2"
+            split_suffix = split_root[len(base_processed_root(split_root)) :].lstrip(os.sep)
+
+            for plane_dir in plane_dirs:
+                plane_name = os.path.basename(plane_dir)
+                plane_ops = load_plane_metadata(plane_dir)
+                try:
+                    frames_per_folder = get_frames_per_folder(plane_ops, plane_dir, len(exp_ids))
+                except Exception as exc:
+                    missing.append(f"{plane_dir}: {exc}")
+                    continue
+
+                source_bin = os.path.join(plane_dir, "data.bin")
+                if os.path.isfile(source_bin):
+                    combined_bins.append(source_bin)
+
+                for iExp, source_exp_id in enumerate(exp_ids):
+                    frames_in_exp = int(frames_per_folder[iExp])
+                    _, _, _, exp_dir_processed2, _ = paths.find_paths(userID, source_exp_id)
+                    dest_split_root = map_destination_root(
+                        exp_dir_processed2=exp_dir_processed2,
+                        split_suffix=split_suffix,
+                    )
+                    dest_channel_root = get_dest_channel_root(dest_split_root, is_ch2)
+                    dest_plane_dir = os.path.join(dest_channel_root, "suite2p", plane_name)
+                    required_files = ["F.npy", "Fneu.npy", "spks.npy", "iscell.npy", "stat.npy", "ops.npy", "data.bin"]
+                    for filename in required_files:
+                        required_path = os.path.join(dest_plane_dir, filename)
+                        if not os.path.isfile(required_path):
+                            missing.append(f"Missing split file: {required_path}")
+                    dest_bin = os.path.join(dest_plane_dir, "data.bin")
+                    if os.path.isfile(dest_bin):
+                        try:
+                            validate_split_bin_size(
+                                path_to_dest_bin=dest_bin,
+                                Ly=int(plane_ops["Ly"]),
+                                Lx=int(plane_ops["Lx"]),
+                                frames_to_copy=frames_in_exp,
+                            )
+                        except Exception as exc:
+                            missing.append(str(exc))
+
+    combined_bins = sorted(set(combined_bins))
+    return {
+        "can_cleanup": bool(combined_bins) and not missing,
+        "combined_bins": combined_bins,
+        "missing": missing,
+    }
+
+
 def split_status_log_path(exp_dir_processed):
     return os.path.join(exp_dir_processed, "log", SPLIT_STATUS_LOG_NAME)
 
@@ -467,6 +546,16 @@ def write_split_status_log(exp_dir_processed, user_id, exp_id, status, message, 
             if not details.endswith("\n"):
                 handle.write("\n")
     print(f"Wrote split status log: {log_path}")
+
+
+def append_split_status_log(exp_dir_processed, message):
+    log_dir = os.path.join(exp_dir_processed, "log")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = split_status_log_path(exp_dir_processed)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(f"\ncleanup_timestamp: {datetime.now().isoformat(timespec='seconds')}\n")
+        handle.write(f"cleanup_message: {message}\n")
+    print(f"Updated split status log: {log_path}")
 
 
 def read_split_status_log(exp_dir_processed):

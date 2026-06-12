@@ -2368,6 +2368,7 @@ class SplitTab(QtWidgets.QWidget):
         self.username = getpass.getuser()
         self.split_thread = None
         self.split_worker = None
+        self._cleanup_prompted_exp_ids = set()
         self._build_ui()
 
     def _build_ui(self):
@@ -2485,6 +2486,69 @@ class SplitTab(QtWidgets.QWidget):
         if status_info.get("raw"):
             self._append_split_output(status_info["raw"] + "\n")
 
+    def maybe_prompt_delete_legacy_combined_bins(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+        except Exception:
+            return
+        prompt_key = (user_id, exp_id)
+        if prompt_key in self._cleanup_prompted_exp_ids:
+            return
+        self._cleanup_prompted_exp_ids.add(prompt_key)
+
+        try:
+            audit = split_combined_s2p.audit_completed_split_with_combined_bins(user_id, exp_id)
+        except Exception as exc:
+            self._append_split_output(f"Combined-bin cleanup audit failed: {exc}\n")
+            return
+
+        if audit.get("missing"):
+            self._append_split_output(
+                "Combined-bin cleanup not offered because split outputs are incomplete or inconsistent:\n"
+            )
+            for message in audit["missing"][:20]:
+                self._append_split_output(f"  - {message}\n")
+            if len(audit["missing"]) > 20:
+                self._append_split_output(f"  ...and {len(audit['missing']) - 20} more issue(s)\n")
+            return
+
+        combined_bins = audit.get("combined_bins", [])
+        if not audit.get("can_cleanup") or not combined_bins:
+            return
+
+        total_bytes = sum(os.path.getsize(path) for path in combined_bins if os.path.isfile(path))
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Delete combined binaries?",
+            (
+                "This split appears to have all split output files, but the original combined "
+                f"binary file(s) are still present.\n\nDelete {len(combined_bins)} combined "
+                f"data.bin file(s), freeing {total_bytes} bytes?"
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            self._append_split_output("User chose not to delete combined binary files.\n")
+            return
+
+        try:
+            split_combined_s2p.delete_combined_bins_after_success(combined_bins)
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            split_combined_s2p.append_split_status_log(
+                exp_dir_processed,
+                f"Deleted {len(combined_bins)} legacy combined binary file(s), freeing {total_bytes} bytes.",
+            )
+        except Exception as exc:
+            self._append_split_output(f"Failed to delete legacy combined binary files: {exc}\n")
+            QtWidgets.QMessageBox.critical(self, "Delete combined binaries", str(exc))
+            return
+        self._append_split_output(
+            f"Deleted {len(combined_bins)} legacy combined binary file(s), freeing {total_bytes} bytes.\n"
+        )
+        self.refresh_split_status()
+        self.append_split_status_log()
+
     def expand_combined_experiment(self):
         try:
             user_id, exp_id = self._split_inputs()
@@ -2516,6 +2580,7 @@ class SplitTab(QtWidgets.QWidget):
                 self._append_split_output(f"WARNING: {warning}\n")
         self.refresh_split_status()
         self.append_split_status_log()
+        self.maybe_prompt_delete_legacy_combined_bins()
 
     def run_split(self):
         try:
