@@ -7,7 +7,7 @@ from preprocess_pipeline.step2.run_batch import run_step2_batch
 
 step2_config = {}
 
-# Set userID to the local OS username that owns the local repository tree.
+# userID selects user-specific Suite2p ops/configs; processed output stays under animalID/expID.
 step2_config["userID"] = "adamranson"
 step2_config["expIDs"] = ["2026-06-11_02_ESYB190"]
 step2_config["local_raw_repository_root"] = r"F:\Local_Repository"
