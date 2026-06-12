@@ -146,7 +146,7 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
         exp_dir_processed,
         exp_dir_raw,
     ) = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID, "recordings")
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed, "recordings")
 
     try:
         with open(os.path.join(exp_dir_processed, "step2_config.pickle"), "rb") as file:

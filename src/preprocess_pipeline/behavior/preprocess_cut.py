@@ -36,7 +36,7 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
     
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')
     os.makedirs(exp_dir_processed_cut, exist_ok = True)
     # load trial data. Local runs may use pre-exported trial CSVs from the raw/NAS folder.
@@ -110,28 +110,27 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
 
     ### Cut ephys data ###
     ephys_path = os.path.join(exp_dir_processed_recordings,'ephys.npy')
-    if os.path.exists(ephys_path):
-        ephys_combined = np.load(ephys_path)
-        # loop through all trials collecting the ephys traces
-        ephys_cut = {}
-        for iTrial in range(all_trials.shape[0]):
-            trial_onset_time = all_trials.loc[iTrial,'time']
-            trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
-            # collect samples from ephys
-            first_sample = np.argmax(ephys_combined[0,:] >= (trial_onset_time-pre_time))
-            last_sample = np.argmax(ephys_combined[0,:] >= (trial_end_time+pre_time))
-            if iTrial == 0:
-                ephys_cut['0'] = ephys_combined[np.newaxis,1,first_sample:last_sample]
-                ephys_cut['1'] = ephys_combined[np.newaxis,2,first_sample:last_sample]
-            else:
-                ephys_cut['0'] = sparse_cat_np(ephys_cut['0'],ephys_combined[1,first_sample:last_sample])
-                ephys_cut['1'] = sparse_cat_np(ephys_cut['1'],ephys_combined[2,first_sample:last_sample])
-        
-        ephys_cut['t'] = np.linspace(0,ephys_cut['0'].shape[1]/1000,ephys_cut['0'].shape[1])-pre_time
-        # save in pickle
-        with open(os.path.join(exp_dir_processed_cut,'ephys_cut.pickle'), 'wb') as f: pickle.dump(ephys_cut, f)
-    else:
-        print(f'Ephys data not found, skipping ephys cut: {ephys_path}')
+    if not os.path.exists(ephys_path):
+        raise FileNotFoundError(f'Ephys data not found: {ephys_path}. Run ephys preprocessing before cutting traces.')
+    ephys_combined = np.load(ephys_path)
+    # loop through all trials collecting the ephys traces
+    ephys_cut = {}
+    for iTrial in range(all_trials.shape[0]):
+        trial_onset_time = all_trials.loc[iTrial,'time']
+        trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
+        # collect samples from ephys
+        first_sample = np.argmax(ephys_combined[0,:] >= (trial_onset_time-pre_time))
+        last_sample = np.argmax(ephys_combined[0,:] >= (trial_end_time+pre_time))
+        if iTrial == 0:
+            ephys_cut['0'] = ephys_combined[np.newaxis,1,first_sample:last_sample]
+            ephys_cut['1'] = ephys_combined[np.newaxis,2,first_sample:last_sample]
+        else:
+            ephys_cut['0'] = sparse_cat_np(ephys_cut['0'],ephys_combined[1,first_sample:last_sample])
+            ephys_cut['1'] = sparse_cat_np(ephys_cut['1'],ephys_combined[2,first_sample:last_sample])
+    
+    ephys_cut['t'] = np.linspace(0,ephys_cut['0'].shape[1]/1000,ephys_cut['0'].shape[1])-pre_time
+    # save in pickle
+    with open(os.path.join(exp_dir_processed_cut,'ephys_cut.pickle'), 'wb') as f: pickle.dump(ephys_cut, f)
 
     ### Cut eye data ###
     # check DLC data exists

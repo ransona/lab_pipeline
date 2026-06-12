@@ -14,7 +14,7 @@ def run_preprocess_bv(userID, expID):
     animalID, remote_repository_root, \
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     # load the stimulus parameter file produced by matlab by the bGUI
     # this includes stim parameters and stimulus order
     try:

@@ -11,7 +11,7 @@ def preprocess_pupil_timestamp_run(userID, expID):
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
         exp_dir_raw = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     print('** Starting ' + expID)
     dlc_filenames = [expID + '_eye1_leftDLC_resnet50_Trial_newMay19shuffle1_1030000.csv',
                 expID + '_eye1_rightDLC_resnet50_Trial_newMay19shuffle1_1030000.csv']
@@ -47,7 +47,8 @@ def preprocess_pupil_timestamp_run(userID, expID):
         
     # check if there is a pix->degrees calibration file for the animal and if there is use it to convert
     # pupil xy position etc to degrees
-    if os.path.exists(os.path.join(processed_root,animalID,'meta','eye_pix_angle_map.pickle')):
+    animal_processed_root = os.path.dirname(exp_dir_processed)
+    if os.path.exists(os.path.join(animal_processed_root,'meta','eye_pix_angle_map.pickle')):
         # calibration exists so apply it
         print('Eye position calibration file found... applying calibration')
         calibration.apply_pupil_calib(userID,[expID]) 

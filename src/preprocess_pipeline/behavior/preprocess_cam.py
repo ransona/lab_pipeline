@@ -12,7 +12,7 @@ def preprocess_cam_run(userID, expID):
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
         exp_dir_raw = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
 
     # load timeline
     Timeline = loadmat(paths.raw_file_path(userID, expID, expID + '_Timeline.mat', exp_dir_raw=exp_dir_raw))

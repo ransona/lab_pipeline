@@ -421,7 +421,7 @@ step2_config = {{
     "post_secs": {float(self.post_secs_spin.value())},
     "run_bonvision": True,
     "run_s2p_timestamp": True,
-    "run_ephys": False,
+    "run_ephys": True,
     "run_dlc_timestamp": False,
     "run_cuttraces": True,
     "settings": {{

@@ -116,7 +116,7 @@ def find_paths(
     if raw_root or local_processed_root:
         remote_repository_root = nas_root or raw_root or local_processed_root
         processed_root = local_processed_root or raw_root
-        exp_dir_processed = os.path.join(processed_root, userID, animalID, expID)
+        exp_dir_processed = os.path.join(processed_root, animalID, expID)
         raw_candidate = os.path.join(raw_root, animalID, expID) if raw_root else None
         nas_candidate = os.path.join(nas_root, animalID, expID) if nas_root else None
         if raw_candidate and os.path.exists(raw_candidate):

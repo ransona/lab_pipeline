@@ -25,7 +25,7 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
             exp_dir_raw = paths.find_paths(userID, expID)
 
     # make folder to store recordings after processing if needed
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     if not os.path.exists(exp_dir_processed_recordings):
         os.makedirs(exp_dir_processed_recordings, exist_ok = True)
 

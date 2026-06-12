@@ -503,7 +503,7 @@ Local mode:
 
 - bypasses the queue
 - reads imaging data from `<local_raw_repository_root>/<animalID>/<expID>`
-- writes outputs under `<local_processed_repository_root>/<userID>/<animalID>/<expID>`
+- writes outputs under `<local_processed_repository_root>/<animalID>/<expID>`
 - falls back to `<local_nas_repository_root>/<animalID>/<expID>` for missing named metadata files
 - is intended for direct Step 1 and Step 2 execution
 - still uses the normal Suite2p config files and local envs
@@ -542,7 +542,7 @@ D:\data\Repository\
 For mesoscope experiments, the pipeline detects the `P*/R*` folders automatically. Each ROI folder becomes a Suite2p work unit, for example `P1/R001` and `P1/R002`. Outputs are written under `local_processed_repository_root`:
 
 ```text
-F:\Local_Repository_Processed\<userID>\ESYB025\2025-10-30_10_ESYB025\
+F:\Local_Repository_Processed\ESYB025\2025-10-30_10_ESYB025\
   P1\R001\suite2p\
   P1\R002\suite2p\
 ```
