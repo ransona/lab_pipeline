@@ -2,6 +2,8 @@ import glob
 import os
 import shutil
 import sys
+import traceback
+from datetime import datetime
 
 import numpy as np
 
@@ -13,6 +15,7 @@ SPINES_GUI_ARTIFACT_PATTERNS = [
     "extraction_*.txt",
     "*mode*.npy",
 ]
+SPLIT_STATUS_LOG_NAME = "split_status.log"
 
 
 def ensure_numpy_core_pickle_compat():
@@ -56,12 +59,30 @@ def split_combined_suite2p_for_experiment(userID, expID):
     if not os.path.exists(exp_dir_processed):
         raise FileNotFoundError(f"Processed folder does not exist: {exp_dir_processed}")
 
-    split_roots = discover_split_roots(exp_dir_processed)
-    if len(split_roots) == 0:
-        raise FileNotFoundError(f"No Suite2p roots found under {exp_dir_processed}")
-
-    for split_root in split_roots:
-        split_combined_root(userID, split_root)
+    try:
+        write_split_status_log(
+            exp_dir_processed,
+            userID,
+            expID,
+            "running",
+            "Split started.",
+        )
+        split_roots = discover_split_roots(exp_dir_processed)
+        if len(split_roots) == 0:
+            raise FileNotFoundError(f"No Suite2p roots found under {exp_dir_processed}")
+        for split_root in split_roots:
+            split_combined_root(userID, split_root)
+    except Exception as exc:
+        write_split_status_log(exp_dir_processed, userID, expID, "error", str(exc), traceback.format_exc())
+        raise
+    else:
+        write_split_status_log(
+            exp_dir_processed,
+            userID,
+            expID,
+            "completed",
+            "Split completed without errors.",
+        )
 
 
 def discover_split_roots(exp_dir_processed):
@@ -424,6 +445,55 @@ def delete_combined_bins_after_success(bin_paths):
         print(f"Deleted original combined binary: {bin_path}")
     if deleted:
         print(f"Deleted {deleted} combined binary file(s), freeing {bytes_deleted} bytes.")
+
+
+def split_status_log_path(exp_dir_processed):
+    return os.path.join(exp_dir_processed, "log", SPLIT_STATUS_LOG_NAME)
+
+
+def write_split_status_log(exp_dir_processed, user_id, exp_id, status, message, details=""):
+    log_dir = os.path.join(exp_dir_processed, "log")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = split_status_log_path(exp_dir_processed)
+    with open(log_path, "w", encoding="utf-8") as handle:
+        handle.write(f"status: {status}\n")
+        handle.write(f"timestamp: {datetime.now().isoformat(timespec='seconds')}\n")
+        handle.write(f"userID: {user_id}\n")
+        handle.write(f"expID: {exp_id}\n")
+        handle.write(f"message: {message}\n")
+        if details:
+            handle.write("\n")
+            handle.write(details)
+            if not details.endswith("\n"):
+                handle.write("\n")
+    print(f"Wrote split status log: {log_path}")
+
+
+def read_split_status_log(exp_dir_processed):
+    log_path = split_status_log_path(exp_dir_processed)
+    if not os.path.isfile(log_path):
+        return {
+            "status": "missing",
+            "message": "No split status log has been written yet.",
+            "path": log_path,
+            "raw": "",
+        }
+
+    with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+        raw = handle.read()
+    fields = {}
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip().lower()] = value.strip()
+    return {
+        "status": fields.get("status", "unknown"),
+        "timestamp": fields.get("timestamp", ""),
+        "message": fields.get("message", ""),
+        "path": log_path,
+        "raw": raw,
+    }
 
 
 def main():

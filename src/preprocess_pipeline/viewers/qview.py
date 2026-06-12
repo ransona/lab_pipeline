@@ -2392,6 +2392,10 @@ class SplitTab(QtWidgets.QWidget):
         form.addRow("combined expID", self.exp_edit)
         left_layout.addLayout(form)
 
+        self.status_label = QtWidgets.QLabel("Split status: enter an expID and click Expand.")
+        self.status_label.setWordWrap(True)
+        left_layout.addWidget(self.status_label)
+
         self.source_table = QtWidgets.QTableWidget(0, 3)
         self.source_table.setHorizontalHeaderLabels(
             ["Source expID", "Frames", "Timeline seconds"]
@@ -2411,6 +2415,8 @@ class SplitTab(QtWidgets.QWidget):
 
         self.expand_button.clicked.connect(self.expand_combined_experiment)
         self.split_button.clicked.connect(self.run_split)
+        self.user_edit.editingFinished.connect(self.refresh_split_status)
+        self.exp_edit.editingFinished.connect(self.refresh_split_status)
 
     def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox(title)
@@ -2425,11 +2431,67 @@ class SplitTab(QtWidgets.QWidget):
             raise ValueError("userID and combined expID are required.")
         return user_id, exp_id
 
+    def refresh_split_status(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            status_info = split_combined_s2p.read_split_status_log(exp_dir_processed)
+        except Exception as exc:
+            self.status_label.setText(f"Split status: could not read status ({exc})")
+            self.status_label.setStyleSheet("color: #9a3412; font-weight: bold;")
+            return
+
+        status = status_info["status"].lower()
+        timestamp = status_info.get("timestamp", "")
+        suffix = f" at {timestamp}" if timestamp else ""
+        if status == "completed":
+            self.status_label.setText(
+                f"Split status: completed without errors{suffix}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #166534; font-weight: bold;")
+        elif status == "error":
+            self.status_label.setText(
+                f"Split status: ERROR{suffix} - {status_info.get('message', '')}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #b91c1c; font-weight: bold;")
+        elif status == "missing":
+            self.status_label.setText(
+                f"Split status: no split log yet\nExpected: {status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #a16207; font-weight: bold;")
+        elif status == "running":
+            self.status_label.setText(
+                f"Split status: running{suffix}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #1d4ed8; font-weight: bold;")
+        else:
+            self.status_label.setText(
+                f"Split status: unknown status '{status}'\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #9a3412; font-weight: bold;")
+
+    def append_split_status_log(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            status_info = split_combined_s2p.read_split_status_log(exp_dir_processed)
+        except Exception as exc:
+            self._append_split_output(f"Split status: could not read status ({exc})\n")
+            return
+        self._append_split_output(
+            f"Split status log: {status_info['path']}\n"
+            f"status: {status_info['status']}\n"
+        )
+        if status_info.get("raw"):
+            self._append_split_output(status_info["raw"] + "\n")
+
     def expand_combined_experiment(self):
         try:
             user_id, exp_id = self._split_inputs()
             rows = inspect_combined_split_sources(user_id, exp_id)
         except Exception as exc:
+            self.refresh_split_status()
+            self.append_split_status_log()
             QtWidgets.QMessageBox.critical(self, "Split Expand", str(exc))
             return
 
@@ -2452,12 +2514,16 @@ class SplitTab(QtWidgets.QWidget):
             warnings = [warning for row in rows for warning in row.get("warnings", [])]
             for warning in warnings:
                 self._append_split_output(f"WARNING: {warning}\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
 
     def run_split(self):
         try:
             user_id, exp_id = self._split_inputs()
             rows = inspect_combined_split_sources(user_id, exp_id)
         except Exception as exc:
+            self.refresh_split_status()
+            self.append_split_status_log()
             QtWidgets.QMessageBox.critical(self, "Split", str(exc))
             return
 
@@ -2476,6 +2542,7 @@ class SplitTab(QtWidgets.QWidget):
 
         self.split_output.clear()
         self._append_split_output(f"** Starting split for {exp_id}\n")
+        self.refresh_split_status()
         self.expand_button.setEnabled(False)
         self.split_button.setEnabled(False)
 
@@ -2507,11 +2574,15 @@ class SplitTab(QtWidgets.QWidget):
 
     def _split_finished(self):
         self._append_split_output("\n** Split finished without errors\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
         self.expand_button.setEnabled(True)
         self.split_button.setEnabled(True)
 
     def _split_failed(self, message: str):
         self._append_split_output(f"\n** Split failed: {message}\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
         self.expand_button.setEnabled(True)
         self.split_button.setEnabled(True)
 
