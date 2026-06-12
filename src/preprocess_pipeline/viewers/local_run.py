@@ -293,7 +293,18 @@ class LocalRunWindow(QtWidgets.QMainWindow):
     def run_split(self):
         if not self._guard_not_running():
             return
-        args = ["-u", "-m", "preprocess_pipeline.local.meso_split", self.raw_root_edit.text().strip()]
+        exp_id = self.exp_id_edit.text().strip()
+        if not exp_id:
+            QtWidgets.QMessageBox.warning(self, "Missing expID", "Select or enter the expID to split first.")
+            return
+        args = [
+            "-u",
+            "-m",
+            "preprocess_pipeline.local.meso_split",
+            self.raw_root_edit.text().strip(),
+            "--target-exp-id",
+            exp_id,
+        ]
         if self.keep_raw_tifs_check.isChecked():
             args.append("--keep-raw-tifs")
         self._start_python(args)

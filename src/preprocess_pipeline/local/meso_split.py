@@ -200,13 +200,24 @@ def split_meso_rois(exp_dir_raw, delete_raw_tifs=True):
         print(f"Wrote {scanpath / 'SI_meta.pickle'}")
 
 
-def check_and_process_experiments(base_dir, delete_raw_tifs=True):
+def check_and_process_experiments(base_dir, target_exp_id=None, delete_raw_tifs=True):
     base_dir = Path(base_dir)
     if not base_dir.is_dir():
         raise FileNotFoundError(f"Local repository root does not exist: {base_dir}")
 
+    if isinstance(target_exp_id, str):
+        target_exp_ids = {target_exp_id}
+    elif target_exp_id:
+        target_exp_ids = set(target_exp_id)
+    else:
+        target_exp_ids = None
+
+    found_targets = set()
     for animal_path in sorted(path for path in base_dir.iterdir() if path.is_dir()):
         for exp_path in sorted(path for path in animal_path.iterdir() if path.is_dir()):
+            if target_exp_ids is not None and exp_path.name not in target_exp_ids:
+                continue
+            found_targets.add(exp_path.name)
             scanpaths = [exp_path / "P1", exp_path / "P2"]
             needs_processing = any(path.is_dir() and not (path / "SI_meta.pickle").is_file() for path in scanpaths)
             if not needs_processing:
@@ -214,13 +225,26 @@ def check_and_process_experiments(base_dir, delete_raw_tifs=True):
                 continue
             split_meso_rois(exp_path, delete_raw_tifs=delete_raw_tifs)
 
+    if target_exp_ids is not None:
+        missing_targets = sorted(target_exp_ids - found_targets)
+        if missing_targets:
+            raise FileNotFoundError(
+                "Target experiment ID(s) not found under "
+                f"{base_dir}: {', '.join(missing_targets)}"
+            )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Split local mesoscope TIFFs into P*/R* layout.")
     parser.add_argument("local_repository_root", nargs="?", default=r"F:\Local_Repository")
+    parser.add_argument("--target-exp-id", action="append", help="Only process this expID. Can be supplied more than once.")
     parser.add_argument("--keep-raw-tifs", action="store_true", help="Do not delete original path-level TIFFs after splitting.")
     args = parser.parse_args()
-    check_and_process_experiments(args.local_repository_root, delete_raw_tifs=not args.keep_raw_tifs)
+    check_and_process_experiments(
+        args.local_repository_root,
+        target_exp_id=args.target_exp_id,
+        delete_raw_tifs=not args.keep_raw_tifs,
+    )
 
 
 if __name__ == "__main__":
