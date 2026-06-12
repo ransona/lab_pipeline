@@ -1,4 +1,5 @@
 import os
+import ntpath
 from contextlib import contextmanager
 
 
@@ -53,6 +54,27 @@ def get_local_path_roots(
         processed_root = legacy_root
 
     return raw_root, processed_root, nas_root
+
+
+def normalize_local_processed_root_for_user(processed_root, userID):
+    """Strip legacy local processed roots of the form <root>/<userID>."""
+    if not processed_root or not userID:
+        return processed_root
+
+    normalized = os.path.normpath(str(processed_root))
+    for path_module in (os.path, ntpath):
+        tail = path_module.basename(normalized)
+        if tail.lower() != str(userID).lower():
+            continue
+
+        parent = path_module.dirname(normalized)
+        if parent:
+            print(
+                "Local processed repository root includes the username; "
+                f"using standard root instead: {parent}"
+            )
+            return parent
+    return processed_root
 
 
 @contextmanager
@@ -113,6 +135,7 @@ def find_paths(
         local_processed_repository_root=local_processed_repository_root,
         local_nas_repository_root=local_nas_repository_root,
     )
+    local_processed_root = normalize_local_processed_root_for_user(local_processed_root, userID)
     if raw_root or local_processed_root:
         remote_repository_root = nas_root or raw_root or local_processed_root
         processed_root = local_processed_root or raw_root
