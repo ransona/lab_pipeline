@@ -47,6 +47,12 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         all_trials_path = paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw)
     print(f"Loading all_trials from {all_trials_path}")
     all_trials = pd.read_csv(all_trials_path)
+    missing_columns = [column for column in ("time", "duration") if column not in all_trials.columns]
+    if missing_columns:
+        raise KeyError(
+            f"{all_trials_path} is missing required column(s) {missing_columns}. "
+            "Run Bonvision preprocessing first to create the timeline-aligned processed all_trials CSV."
+        )
 
     ### Cut Ca imaging data ###
     # load ca imaging traces
@@ -243,4 +249,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
