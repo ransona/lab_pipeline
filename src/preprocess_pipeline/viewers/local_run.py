@@ -18,6 +18,15 @@ DEFAULT_S2P_CONFIG_ROOT = r"F:\s2p_ops"
 DEFAULT_SUITE2P_ENV = "suite2p_1.1.0"
 
 
+def _console_python_executable() -> str:
+    executable = Path(sys.executable)
+    if executable.name.lower() == "pythonw.exe":
+        python_exe = executable.with_name("python.exe")
+        if python_exe.exists():
+            return str(python_exe)
+    return sys.executable
+
+
 def _is_exp_id(name: str) -> bool:
     return re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d+_[A-Za-z0-9]+", name) is not None
 
@@ -261,7 +270,7 @@ class LocalRunWindow(QtWidgets.QMainWindow):
 
     def _start_python(self, args: list[str]):
         env = {"PYTHONPATH": str(SRC_ROOT)}
-        self.runner.start(sys.executable, args, cwd=APP_ROOT.parent, env=env)
+        self.runner.start(_console_python_executable(), args, cwd=APP_ROOT.parent, env=env)
 
     def _require_common_fields(self) -> tuple[str, str, str]:
         user_id = self.user_combo.currentText().strip()
