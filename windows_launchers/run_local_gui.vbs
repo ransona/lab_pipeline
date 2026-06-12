@@ -4,7 +4,7 @@
 Option Explicit
 
 Dim fso, shell, launcherDir, repoRoot, appPath, userProfile
-Dim pythonw, candidates, candidate, command
+Dim pythonw, candidates, candidate, command, pythonDir, oldPath, activateBat, pythonExe
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
@@ -42,5 +42,19 @@ If Not fso.FileExists(appPath) Then
     WScript.Quit 1
 End If
 
-command = """" & pythonw & """ """ & appPath & """"
+pythonDir = fso.GetParentFolderName(pythonw)
+oldPath = shell.ExpandEnvironmentStrings("%PATH%")
+shell.Environment("PROCESS")("PATH") = pythonDir & ";" & pythonDir & "\Library\bin;" & pythonDir & "\Scripts;" & oldPath
+shell.Environment("PROCESS")("QT_PLUGIN_PATH") = pythonDir & "\Library\lib\qt6\plugins"
+shell.Environment("PROCESS")("QT_QPA_PLATFORM_PLUGIN_PATH") = pythonDir & "\Library\lib\qt6\plugins\platforms"
+
+activateBat = fso.BuildPath(fso.GetParentFolderName(fso.GetParentFolderName(pythonDir)), "Scripts\activate.bat")
+pythonExe = fso.BuildPath(pythonDir, "python.exe")
+
+If fso.FileExists(activateBat) And fso.FileExists(pythonExe) Then
+    command = "cmd.exe /c call """ & activateBat & """ sci && """ & pythonw & """ """ & appPath & """"
+Else
+    command = """" & pythonw & """ """ & appPath & """"
+End If
+
 shell.Run command, 0, False

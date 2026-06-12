@@ -8,6 +8,7 @@ set "LAUNCHER_DIR=%~dp0"
 for %%I in ("%LAUNCHER_DIR%..") do set "REPO_ROOT=%%~fI"
 set "APP_PATH=%REPO_ROOT%\apps\local_run.py"
 set "PYTHON_EXE="
+set "ACTIVATE_BAT="
 
 rem Edit this path if your conda installation is elsewhere.
 if exist "%USERPROFILE%\miniconda3\envs\sci\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniconda3\envs\sci\python.exe"
@@ -22,6 +23,12 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
+for %%I in ("%PYTHON_EXE%") do set "PYTHON_DIR=%%~dpI"
+set "PATH=%PYTHON_DIR%;%PYTHON_DIR%Library\bin;%PYTHON_DIR%Scripts;%PATH%"
+set "QT_PLUGIN_PATH=%PYTHON_DIR%Library\lib\qt6\plugins"
+set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYTHON_DIR%Library\lib\qt6\plugins\platforms"
+if exist "%PYTHON_DIR%..\..\Scripts\activate.bat" set "ACTIVATE_BAT=%PYTHON_DIR%..\..\Scripts\activate.bat"
+
 if not exist "%APP_PATH%" (
     echo Could not find local_run.py at:
     echo %APP_PATH%
@@ -30,9 +37,18 @@ if not exist "%APP_PATH%" (
 )
 
 echo Running local pipeline GUI:
-echo "%PYTHON_EXE%" "%APP_PATH%"
+if defined ACTIVATE_BAT (
+    echo call "%ACTIVATE_BAT%" sci ^&^& python "%APP_PATH%"
+) else (
+    echo "%PYTHON_EXE%" "%APP_PATH%"
+)
 echo.
-"%PYTHON_EXE%" "%APP_PATH%"
+if defined ACTIVATE_BAT (
+    call "%ACTIVATE_BAT%" sci
+    python "%APP_PATH%"
+) else (
+    "%PYTHON_EXE%" "%APP_PATH%"
+)
 
 if errorlevel 1 (
     echo.
