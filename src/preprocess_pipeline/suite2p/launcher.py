@@ -645,6 +645,22 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
 def write_empty_detection_outputs(plane_save_dir, plane_ops):
     """Write GUI-loadable placeholder Suite2p outputs for planes where no ROIs were detected."""
     nframes = int(plane_ops.get("nframes", 0))
+    ops_path = plane_ops.get("ops_path") or os.path.join(plane_save_dir, "ops.npy")
+    if os.path.exists(ops_path):
+        saved_ops = np.load(ops_path, allow_pickle=True).item()
+        saved_ops.update({key: value for key, value in plane_ops.items() if key not in saved_ops})
+        plane_ops = saved_ops
+
+    mean_img = plane_ops.get("meanImg")
+    if mean_img is not None:
+        mean_img = np.asarray(mean_img, dtype=np.float32)
+        plane_ops.setdefault("meanImg", mean_img)
+        plane_ops.setdefault("meanImgE", suite2p_backend.enhanced_mean_image(mean_img, plane_ops.copy()).astype(np.float32))
+        # Suite2p 1.x raises before returning these maps when zero ROIs are detected.
+        # Keep GUI diagnostics non-blank by falling back to available image summaries.
+        plane_ops.setdefault("max_proj", mean_img.astype(np.float32))
+        plane_ops.setdefault("Vcorr", np.asarray(plane_ops["meanImgE"], dtype=np.float32))
+
     ypix = np.array([0], dtype=np.int32)
     xpix = np.array([0], dtype=np.int32)
     med = np.array([0.0, 0.0], dtype=np.float32)
@@ -672,7 +688,8 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
     np.save(os.path.join(plane_save_dir, "Fneu.npy"), np.zeros((1, nframes), dtype=np.float32))
     np.save(os.path.join(plane_save_dir, "iscell.npy"), np.array([[0.0, 0.0]], dtype=np.float32))
     np.save(os.path.join(plane_save_dir, "spks.npy"), np.zeros((1, nframes), dtype=np.float32))
-    np.save(plane_ops["ops_path"], plane_ops)
+    plane_ops["ops_path"] = ops_path
+    np.save(ops_path, plane_ops)
 
 
 def is_no_usable_roi_exception(exc):
@@ -962,8 +979,8 @@ def run_extraction_stage(
 
         try:
             plane_ops = run_plane_with_mask_retry(plane_ops, plane_save_dir)
-        except (ValueError, np.linalg.LinAlgError) as exc:
-            if not is_no_usable_roi_exception(exc):
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+            if not (is_no_usable_roi_exception(exc) or is_suite2p_mask_footprint_exception(exc)):
                 raise
             print(f"No usable ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
             write_empty_detection_outputs(plane_save_dir, plane_ops)
@@ -1238,8 +1255,8 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
 
         try:
             plane_ops = run_plane_with_mask_retry(plane_ops, plane_save_dir)
-        except (ValueError, np.linalg.LinAlgError) as exc:
-            if not is_no_usable_roi_exception(exc):
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+            if not (is_no_usable_roi_exception(exc) or is_suite2p_mask_footprint_exception(exc)):
                 raise
             print(f"No usable ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
             write_empty_detection_outputs(plane_save_dir, plane_ops)
