@@ -18,6 +18,20 @@ DEFAULT_S2P_CONFIG_ROOT = r"F:\s2p_ops"
 DEFAULT_SUITE2P_ENV = "suite2p_1.1.0"
 
 
+def _conda_executable() -> str:
+    executable = Path(sys.executable)
+    candidates = [
+        executable.parents[1] / "Scripts" / "conda.exe",
+        executable.parents[1] / "bin" / "conda",
+        executable.parents[2] / "Scripts" / "conda.exe" if len(executable.parents) > 2 else None,
+        executable.parents[2] / "bin" / "conda" if len(executable.parents) > 2 else None,
+    ]
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            return str(candidate)
+    return "conda"
+
+
 def _console_python_executable() -> str:
     executable = Path(sys.executable)
     if executable.name.lower() == "pythonw.exe":
@@ -25,6 +39,20 @@ def _console_python_executable() -> str:
         if python_exe.exists():
             return str(python_exe)
     return sys.executable
+
+
+def _python_for_conda_env(env_name: str, prefer_pythonw: bool = False) -> Optional[Path]:
+    executable = Path(sys.executable)
+    if executable.parent.name.lower() != "scripts":
+        envs_root = executable.parent.parent
+        if envs_root.name.lower() == "envs":
+            env_dir = envs_root / env_name
+            names = ("pythonw.exe", "python.exe") if prefer_pythonw else ("python.exe", "pythonw.exe")
+            for name in names:
+                candidate = env_dir / name
+                if candidate.exists():
+                    return candidate
+    return None
 
 
 def _is_exp_id(name: str) -> bool:
@@ -177,6 +205,8 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         self.chan2_detection_combo.addItems(["off", "cellpose"])
         self.refresh_button = QtWidgets.QPushButton("Refresh users/configs/expID")
         self.refresh_button.clicked.connect(self._refresh_all)
+        self.launch_suite2p_button = QtWidgets.QPushButton("Launch Suite2p")
+        self.launch_suite2p_button.clicked.connect(self.launch_suite2p)
         self.step1_button = QtWidgets.QPushButton("Run Step 1")
         self.step1_button.clicked.connect(self.run_step1)
         step1_form.addRow("Username", self.user_combo)
@@ -187,6 +217,7 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.refresh_button)
         buttons.addStretch(1)
+        buttons.addWidget(self.launch_suite2p_button)
         buttons.addWidget(self.step1_button)
         step1_form.addRow(buttons)
         layout.addWidget(step1_box)
@@ -308,6 +339,25 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         if self.keep_raw_tifs_check.isChecked():
             args.append("--keep-raw-tifs")
         self._start_python(args)
+
+    def launch_suite2p(self):
+        env_name = self.suite2p_env_edit.text().strip() or DEFAULT_SUITE2P_ENV
+        env_python = _python_for_conda_env(env_name, prefer_pythonw=True)
+        if env_python is not None:
+            program = str(env_python)
+            args = ["-m", "suite2p"]
+        else:
+            program = _conda_executable()
+            args = ["run", "--no-capture-output", "--name", env_name, "python", "-m", "suite2p"]
+
+        self._append_output("[launch detached] " + " ".join([program, *args]) + "\n")
+        started = QtCore.QProcess.startDetached(program, args, str(APP_ROOT.parent))
+        if not started:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Launch Suite2p",
+                "Failed to launch Suite2p. Check the Suite2p conda env name and installation.",
+            )
 
     def run_step1(self):
         if not self._guard_not_running():
