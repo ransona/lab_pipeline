@@ -10,22 +10,6 @@ import pickle
 from preprocess_pipeline.shared import paths
 
 
-def _local_legacy_exp_dir(processed_root, userID, animalID, expID):
-    raw_root, local_processed_root, _ = paths.get_local_path_roots()
-    if not (raw_root or local_processed_root):
-        return None
-    return os.path.join(processed_root, userID, animalID, expID)
-
-
-def _first_existing_path(label, candidates):
-    for description, candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            if description != "standard":
-                print(f"Using {description} {label}: {candidate}")
-            return candidate
-    expected = candidates[0][1] if candidates else label
-    raise FileNotFoundError(f"{label} not found. Expected: {expected}")
-
 def sparse_cat_np(original_np,new_np):
     new_shape = new_np.shape
     if len(new_shape) == 1:
@@ -53,32 +37,15 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
     
-    legacy_exp_dir_processed = _local_legacy_exp_dir(processed_root, userID, animalID, expID)
-    exp_dir_processed_recordings = _first_existing_path(
-        "processed recordings directory",
-        [
-            ("standard", os.path.join(exp_dir_processed, "recordings")),
-            ("legacy local username-root", os.path.join(legacy_exp_dir_processed, "recordings") if legacy_exp_dir_processed else None),
-        ],
-    )
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')
     os.makedirs(exp_dir_processed_cut, exist_ok = True)
     # load trial data. Local runs may use pre-exported trial CSVs from the raw/NAS folder.
     all_trials_processed_path = os.path.join(exp_dir_processed, expID + '_all_trials.csv')
-    all_trials_legacy_path = (
-        os.path.join(legacy_exp_dir_processed, expID + '_all_trials.csv')
-        if legacy_exp_dir_processed
-        else None
-    )
-    all_trials_raw_path = paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw)
-    all_trials_path = _first_existing_path(
-        "all_trials CSV",
-        [
-            ("standard", all_trials_processed_path),
-            ("legacy local username-root", all_trials_legacy_path),
-            ("raw/NAS", all_trials_raw_path),
-        ],
-    )
+    if os.path.exists(all_trials_processed_path):
+        all_trials_path = all_trials_processed_path
+    else:
+        all_trials_path = paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw)
     print(f"Loading all_trials from {all_trials_path}")
     all_trials = pd.read_csv(all_trials_path)
     missing_columns = [column for column in ("time", "duration") if column not in all_trials.columns]
@@ -143,13 +110,9 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         with open(os.path.join(exp_dir_processed_cut,iS2P_file[0:7]+'_Spikes_cut.pickle'), 'wb') as f: pickle.dump(s2p_Spikes_cut, f)
 
     ### Cut ephys data ###
-    ephys_path = _first_existing_path(
-        "ephys data",
-        [
-            ("standard", os.path.join(exp_dir_processed, "recordings", "ephys.npy")),
-            ("legacy local username-root", os.path.join(legacy_exp_dir_processed, "recordings", "ephys.npy") if legacy_exp_dir_processed else None),
-        ],
-    )
+    ephys_path = os.path.join(exp_dir_processed_recordings,'ephys.npy')
+    if not os.path.exists(ephys_path):
+        raise FileNotFoundError(f'Ephys data not found: {ephys_path}. Run ephys preprocessing before cutting traces.')
     ephys_combined = np.load(ephys_path)
     # loop through all trials collecting the ephys traces
     ephys_cut = {}
