@@ -89,8 +89,10 @@ def discover_split_roots(exp_dir_processed):
 
 
 def split_combined_root(userID, split_root):
+    combined_bins_to_delete = []
     for channel_root in discover_channel_roots(split_root):
-        split_combined_channel(userID, split_root, channel_root)
+        combined_bins_to_delete.extend(split_combined_channel(userID, split_root, channel_root))
+    delete_combined_bins_after_success(combined_bins_to_delete)
 
 
 def discover_channel_roots(split_root):
@@ -124,6 +126,7 @@ def split_combined_channel(userID, split_root, channel_root):
 
     is_ch2 = os.path.basename(channel_root) == "ch2"
     split_suffix = split_root[len(base_processed_root(split_root)) :].lstrip(os.sep)
+    combined_bins_to_delete = []
 
     for plane_dir in plane_dirs:
         plane_name = os.path.basename(plane_dir)
@@ -171,12 +174,20 @@ def split_combined_channel(userID, split_root, channel_root):
             np.save(os.path.join(dest_plane_dir, "stat.npy"), stat)
 
             print("Cropping and saving binary file (registered frames)...")
+            source_bin = os.path.join(plane_dir, "data.bin")
+            dest_bin = os.path.join(dest_plane_dir, "data.bin")
             split_s2p_vid(
-                path_to_source_bin=os.path.join(plane_dir, "data.bin"),
-                path_to_dest_bin=os.path.join(dest_plane_dir, "data.bin"),
+                path_to_source_bin=source_bin,
+                path_to_dest_bin=dest_bin,
                 Ly=int(plane_ops["Ly"]),
                 Lx=int(plane_ops["Lx"]),
                 start_frame=exp_start_frame,
+                frames_to_copy=frames_in_exp,
+            )
+            validate_split_bin_size(
+                path_to_dest_bin=dest_bin,
+                Ly=int(plane_ops["Ly"]),
+                Lx=int(plane_ops["Lx"]),
                 frames_to_copy=frames_in_exp,
             )
 
@@ -202,6 +213,8 @@ def split_combined_channel(userID, split_root, channel_root):
             if plane_settings:
                 np.save(os.path.join(dest_plane_dir, "settings.npy"), plane_settings)
 
+        combined_bins_to_delete.append(os.path.join(plane_dir, "data.bin"))
+
     for exp_id in exp_ids:
         (
             animalID2,
@@ -217,6 +230,8 @@ def split_combined_channel(userID, split_root, channel_root):
         dest_channel_root = get_dest_channel_root(dest_split_root, is_ch2)
         copy_spines_gui_artifacts(suite2p_combined_path, dest_channel_root)
         set_permissions(os.path.join(dest_channel_root, "suite2p"))
+
+    return combined_bins_to_delete
 
 
 def infer_layout_mode_from_split_root(split_root):
@@ -384,6 +399,31 @@ def split_s2p_vid(path_to_source_bin, path_to_dest_bin, Ly, Lx, start_frame, fra
                 )
             read_data.tofile(fid2)
             frames_written += frames_to_read
+
+
+def validate_split_bin_size(path_to_dest_bin, Ly, Lx, frames_to_copy):
+    expected_bytes = int(Ly) * int(Lx) * int(frames_to_copy) * np.dtype(np.int16).itemsize
+    actual_bytes = os.path.getsize(path_to_dest_bin)
+    if actual_bytes != expected_bytes:
+        raise IOError(
+            f"Split binary size mismatch for {path_to_dest_bin}: "
+            f"expected {expected_bytes} bytes, got {actual_bytes}"
+        )
+
+
+def delete_combined_bins_after_success(bin_paths):
+    deleted = 0
+    bytes_deleted = 0
+    for bin_path in bin_paths:
+        if not os.path.isfile(bin_path):
+            continue
+        file_size = os.path.getsize(bin_path)
+        os.remove(bin_path)
+        deleted += 1
+        bytes_deleted += file_size
+        print(f"Deleted original combined binary: {bin_path}")
+    if deleted:
+        print(f"Deleted {deleted} combined binary file(s), freeing {bytes_deleted} bytes.")
 
 
 def main():
