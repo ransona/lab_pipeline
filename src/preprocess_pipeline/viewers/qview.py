@@ -26,6 +26,7 @@ from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths
 from preprocess_pipeline.srdtrans import build_model as srdtrans_build
+from preprocess_pipeline.suite2p.config_validation import is_native_suite2p_1x_config
 from preprocess_pipeline.step1 import split_combined_s2p
 from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 from preprocess_pipeline.step2.run_batch import run_step2_batch
@@ -674,6 +675,8 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
 
 
 class Suite2pConfigSelector(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_dir: Optional[Path] = None
@@ -684,6 +687,7 @@ class Suite2pConfigSelector(QtWidgets.QWidget):
         layout.addWidget(self.combo, 1)
         layout.addWidget(self.edit_button)
         self.edit_button.clicked.connect(self.edit_current_config)
+        self.combo.currentTextChanged.connect(self.configChanged.emit)
 
     def set_config_dir(self, config_dir: Optional[Path]):
         self.config_dir = Path(config_dir) if config_dir else None
@@ -1230,6 +1234,8 @@ class ExperimentListEditor(QtWidgets.QWidget):
 
 
 class StandardConfigWidget(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._config_files: list[str] = []
@@ -1276,6 +1282,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         layout.addRow(ch1_row)
         layout.addRow(self.ch2_row)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.ch1_combo.configChanged.connect(self.configChanged.emit)
+        self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
 
     def set_config_files(self, config_files: list[str], config_dir: Optional[Path] = None):
@@ -1360,6 +1368,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
 
 
 class PathConfigRow(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(
         self,
         path_name: str,
@@ -1418,6 +1428,8 @@ class PathConfigRow(QtWidgets.QWidget):
         self.ch2_func_combo.setVisible(nchannels >= 2)
         self.same_for_both.setVisible(nchannels >= 2)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.ch1_combo.configChanged.connect(self.configChanged.emit)
+        self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
@@ -1508,6 +1520,8 @@ class PathConfigRow(QtWidgets.QWidget):
 
 
 class MesoConfigWidget(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_files: list[str] = []
@@ -1529,6 +1543,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
         layout.addWidget(self.stack)
 
         self.global_widget = StandardConfigWidget()
+        self.global_widget.configChanged.connect(self.configChanged.emit)
         self.global_container = QtWidgets.QWidget()
         global_layout = QtWidgets.QVBoxLayout(self.global_container)
         global_layout.addWidget(self.global_widget)
@@ -1574,6 +1589,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
             container_layout.addWidget(roi_label)
             self.path_layout.addWidget(container)
             self.path_rows[path_name] = row
+            row.configChanged.connect(self.configChanged.emit)
         self.path_layout.addStretch(1)
 
     def config_value(self):
@@ -1749,6 +1765,8 @@ class Step1Tab(QtWidgets.QWidget):
         self.clear_button.clicked.connect(self.clear_to_defaults)
         self.submit_button.clicked.connect(self.submit_job)
         self.picker_button.clicked.connect(self.open_picker)
+        self.standard_widget.configChanged.connect(self.update_suite2p_env_from_config)
+        self.meso_widget.configChanged.connect(self.update_suite2p_env_from_config)
         self.refresh_preset_list()
         self.update_config_preview()
 
@@ -1778,6 +1796,30 @@ class Step1Tab(QtWidgets.QWidget):
         self.refresh_config_choices()
         self.refresh_preset_list()
         self.update_config_preview()
+
+    def _resolve_s2p_config_path(self, config_name: str) -> Optional[Path]:
+        config_name = (config_name or "").strip()
+        if not config_name:
+            return None
+        path = Path(config_name)
+        if path.is_absolute():
+            return path
+        user_id = self.user_edit.text().strip() or self.username
+        return S2P_CONFIG_ROOT / user_id / config_name
+
+    def update_suite2p_env_from_config(self, config_name: str):
+        config_path = self._resolve_s2p_config_path(config_name)
+        if config_path is None or not config_path.exists():
+            return
+        try:
+            env_name = "suite2p_1.1.0" if is_native_suite2p_1x_config(config_path) else "suite2p"
+        except Exception as exc:
+            self.summary_box.setPlainText(
+                f"Could not inspect Suite2p config version:\n{config_path}\n\n{exc}"
+            )
+            return
+        if self.suite2p_env.currentText() != env_name:
+            self.suite2p_env.setCurrentText(env_name)
 
     def on_user_edit_finished(self):
         self.active_preset_path = None
