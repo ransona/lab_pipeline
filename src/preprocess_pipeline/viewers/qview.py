@@ -42,6 +42,15 @@ INITIAL_LOG_LINES = 10000
 S2P_CONFIG_ROOT = Path("/data/common/configs/s2p_configs")
 CONFIG_ROOT = S2P_CONFIG_ROOT.parent
 SRDTRANS_TMUX_TTL_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_STEP2_SETTINGS = {
+    "neuropil_coeff": [0.7, 0.7],
+    "subtract_overall_frame": False,
+}
+DEFAULT_SRDTRANS_STEP1_JSON = (
+    '{"model_root": "/home/adamranson/data/srt_models", "model": "", '
+    '"patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", '
+    '"channels": ["ch1"]}'
+)
 
 
 def _step1_preset_root(username: str) -> Path:
@@ -1614,8 +1623,10 @@ class Step1Tab(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
 
         toolbar = QtWidgets.QHBoxLayout()
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.submit_button = QtWidgets.QPushButton("Submit Step 1 Job")
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.submit_button)
         outer.addLayout(toolbar)
 
@@ -1709,9 +1720,7 @@ class Step1Tab(QtWidgets.QWidget):
         self.settings_json.setMaximumHeight(90)
         config_layout.addWidget(QtWidgets.QLabel('Optional settings override JSON'))
         config_layout.addWidget(self.settings_json)
-        self.srdtrans_json = QtWidgets.QPlainTextEdit(
-            '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}'
-        )
+        self.srdtrans_json = QtWidgets.QPlainTextEdit(DEFAULT_SRDTRANS_STEP1_JSON)
         self.srdtrans_json.setPlaceholderText('JSON dict for step1_config["srdtrans"]')
         self.srdtrans_json.setMaximumHeight(90)
         config_layout.addWidget(QtWidgets.QLabel('SRDTrans JSON'))
@@ -1737,8 +1746,36 @@ class Step1Tab(QtWidgets.QWidget):
         self.preset_list.itemDoubleClicked.connect(lambda _item: self.load_preset())
         self.save_preset_button.clicked.connect(self.save_preset)
         self.save_preset_as_button.clicked.connect(self.save_preset_as)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.submit_button.clicked.connect(self.submit_job)
         self.picker_button.clicked.connect(self.open_picker)
+        self.refresh_preset_list()
+        self.update_config_preview()
+
+    def clear_to_defaults(self):
+        self.pending_preset = None
+        self.detected_descriptor = None
+        self.active_preset_path = None
+        self.save_preset_button.setEnabled(False)
+        self.user_edit.setText(self.username)
+        self.mode_combo.setCurrentIndex(0)
+        self.queue_combo.setCurrentIndex(0)
+        self.exp_editor.clear_all()
+        self.runs2p.setChecked(True)
+        self.rundlc.setChecked(True)
+        self.runfitpupil.setChecked(True)
+        self.runsrdtrans.setChecked(False)
+        self.runhabituate.setChecked(False)
+        self.jump_queue.setChecked(False)
+        self.suite2p_env.setCurrentText("suite2p_1.1.0")
+        self.summary_box.clear()
+        self.settings_json.setPlainText("{}")
+        self.srdtrans_json.setPlainText(DEFAULT_SRDTRANS_STEP1_JSON)
+        self.standard_widget.apply_preset({}, 2)
+        self.meso_widget.mode_combo.setCurrentIndex(0)
+        self.meso_widget.apply_preset({})
+        self.config_stack.setCurrentWidget(self.standard_widget)
+        self.refresh_config_choices()
         self.refresh_preset_list()
         self.update_config_preview()
 
@@ -2200,10 +2237,12 @@ class Step2Tab(QtWidgets.QWidget):
         toolbar = QtWidgets.QHBoxLayout()
         self.load_preset_button = QtWidgets.QPushButton("Load Preset")
         self.save_preset_button = QtWidgets.QPushButton("Save Preset")
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.run_button = QtWidgets.QPushButton("Run Step 2")
         toolbar.addWidget(self.load_preset_button)
         toolbar.addWidget(self.save_preset_button)
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.run_button)
         outer.addLayout(toolbar)
 
@@ -2243,15 +2282,7 @@ class Step2Tab(QtWidgets.QWidget):
         self.run_cuttraces.setChecked(True)
         form.addRow("run_cuttraces", self.run_cuttraces)
 
-        self.settings_json = QtWidgets.QPlainTextEdit(
-            json.dumps(
-                {
-                    "neuropil_coeff": [0.7, 0.7],
-                    "subtract_overall_frame": False,
-                },
-                indent=2,
-            )
-        )
+        self.settings_json = QtWidgets.QPlainTextEdit(json.dumps(DEFAULT_STEP2_SETTINGS, indent=2))
         form.addRow("settings JSON", self.settings_json)
         controls_layout.addLayout(form)
         controls_layout.addStretch(1)
@@ -2266,6 +2297,7 @@ class Step2Tab(QtWidgets.QWidget):
 
         self.load_preset_button.clicked.connect(self.load_preset)
         self.save_preset_button.clicked.connect(self.save_preset)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.run_button.clicked.connect(self.run_step2)
         self.picker_button.clicked.connect(self.open_picker)
 
@@ -2395,6 +2427,22 @@ class Step2Tab(QtWidgets.QWidget):
         self.step2_thread.finished.connect(self._clear_step2_worker)
         self.step2_thread.start()
 
+    def clear_to_defaults(self):
+        if self.step2_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Step 2", "Step 2 is currently running.")
+            return
+        self.user_edit.setText(self.username)
+        self.exp_editor.clear_all()
+        self.pre_secs.setValue(5)
+        self.post_secs.setValue(5)
+        self.run_bonvision.setChecked(True)
+        self.run_s2p_timestamp.setChecked(True)
+        self.run_ephys.setChecked(True)
+        self.run_dlc_timestamp.setChecked(True)
+        self.run_cuttraces.setChecked(True)
+        self.settings_json.setPlainText(json.dumps(DEFAULT_STEP2_SETTINGS, indent=2))
+        self.step2_output.clear()
+
     def _append_step2_output(self, text: str):
         at_bottom = (
             self.step2_output.verticalScrollBar().value()
@@ -2432,9 +2480,11 @@ class SplitTab(QtWidgets.QWidget):
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
         toolbar = QtWidgets.QHBoxLayout()
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.expand_button = QtWidgets.QPushButton("Expand")
         self.split_button = QtWidgets.QPushButton("Split")
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.expand_button)
         toolbar.addWidget(self.split_button)
         outer.addLayout(toolbar)
@@ -2472,6 +2522,7 @@ class SplitTab(QtWidgets.QWidget):
         main_splitter.setSizes([620, 620])
         outer.addWidget(main_splitter)
 
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.expand_button.clicked.connect(self.expand_combined_experiment)
         self.split_button.clicked.connect(self.run_split)
         self.user_edit.editingFinished.connect(self.refresh_split_status)
@@ -2489,6 +2540,18 @@ class SplitTab(QtWidgets.QWidget):
         if not user_id or not exp_id:
             raise ValueError("userID and combined expID are required.")
         return user_id, exp_id
+
+    def clear_to_defaults(self):
+        if self.split_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Split", "Split is currently running.")
+            return
+        self.user_edit.setText(self.username)
+        self.exp_edit.clear()
+        self.source_table.setRowCount(0)
+        self.split_output.clear()
+        self.status_label.setText("Split status: enter an expID and click Expand.")
+        self.status_label.setStyleSheet("")
+        self._cleanup_prompted_exp_ids.clear()
 
     def refresh_split_status(self):
         try:
@@ -3463,12 +3526,14 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.create_button = QtWidgets.QPushButton("Create")
         self.load_button = QtWidgets.QPushButton("Load existing")
         self.save_config_button = QtWidgets.QPushButton("Save config")
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.register_button = QtWidgets.QPushButton("1) Register data")
         self.extract_button = QtWidgets.QPushButton("2) Extract frames")
         self.build_button = QtWidgets.QPushButton("3) Build model")
         action_row.addWidget(self.create_button)
         action_row.addWidget(self.load_button)
         action_row.addWidget(self.save_config_button)
+        action_row.addWidget(self.clear_button)
         action_row.addWidget(self.register_button)
         action_row.addWidget(self.extract_button)
         action_row.addWidget(self.build_button)
@@ -3490,9 +3555,42 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.create_button.clicked.connect(self.create_model)
         self.load_button.clicked.connect(self.load_existing_model)
         self.save_config_button.clicked.connect(self.save_current_config)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.register_button.clicked.connect(lambda: self.run_action("register"))
         self.extract_button.clicked.connect(lambda: self.run_action("extract"))
         self.build_button.clicked.connect(lambda: self.run_action("build"))
+
+    def clear_to_defaults(self):
+        if self.command_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "A command is currently running.")
+            return
+        if self.detached_timer.isActive():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Build SRDTrans",
+                "A detached command is currently being monitored. Wait for it to finish or load another model later.",
+            )
+            return
+        self.config_path = None
+        self.detached_session = None
+        self.detached_log_path = None
+        self.detached_log_offset = 0
+        self.detached_action = None
+        self.experiments = []
+        self.user_edit.setText(self.username)
+        self.indicators_edit.clear()
+        self.frame_rate_edit.clear()
+        self.label_edit.clear()
+        self.model_name_edit.clear()
+        self.model_root_edit.clear()
+        self.exp_edit.clear()
+        self.s2p_combo.set_value("")
+        self.experiment_table.setRowCount(0)
+        self.selection_table.setRowCount(0)
+        self.train_params_json.setPlainText(json.dumps(srdtrans_build.default_train_params(), indent=2))
+        self.output.clear()
+        self.refresh_s2p_configs()
+        self.update_model_preview()
 
     def refresh_s2p_configs(self):
         current = self.s2p_combo.value()
@@ -4056,6 +4154,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
             self.create_button,
             self.load_button,
             self.save_config_button,
+            self.clear_button,
             self.register_button,
             self.extract_button,
             self.build_button,
