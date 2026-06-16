@@ -16,6 +16,12 @@ SUITE2P_1X_SETTINGS_SECTIONS = {
 }
 
 
+def _raise_suite2p_config_error(message):
+    print("** Suite2p configuration error")
+    print(message)
+    raise ValueError(message)
+
+
 def install_numpy_core_pickle_aliases():
     """Allow NumPy 1.x envs to inspect NumPy 2.x-authored .npy configs."""
     for module_name in (
@@ -55,13 +61,14 @@ def is_native_suite2p_1x_config(config_path):
 
 def validate_suite2p_env(suite2p_env, *, context="step1_config"):
     if not isinstance(suite2p_env, str) or not suite2p_env.strip():
-        raise ValueError(
+        _raise_suite2p_config_error(
             f'{context}["suite2p_env"] is required. '
-            'Use "suite2p" for the legacy Suite2p env or "suite2p_1.1.0" for native Suite2p 1.x configs.'
+            'No Suite2p conda environment was specified. '
+            'Use "suite2p" for legacy Suite2p configs or "suite2p_1.1.0" for native Suite2p 1.x configs.'
         )
     if suite2p_env not in KNOWN_SUITE2P_ENVS:
-        raise ValueError(
-            f'Unknown suite2p_env "{suite2p_env}". Known values: '
+        _raise_suite2p_config_error(
+            f'{context}["suite2p_env"] is "{suite2p_env}", which is not recognised. Known values: '
             + ", ".join(sorted(KNOWN_SUITE2P_ENVS))
         )
 
@@ -78,7 +85,8 @@ def validate_suite2p_env_config_compatibility(suite2p_env, config_paths, *, cont
 
     for path in paths:
         if is_native_suite2p_1x_config(path):
-            raise ValueError(
-                f"Cannot run native Suite2p 1.x config with legacy suite2p env: {path}. "
-                'Set suite2p_env to "suite2p_1.1.0".'
+            _raise_suite2p_config_error(
+                f'Suite2p env/config mismatch. {context}["suite2p_env"] is "suite2p" '
+                f"(legacy Suite2p), but the selected config is a native Suite2p 1.x config: {path}. "
+                'Set suite2p_env to "suite2p_1.1.0" or choose a legacy Suite2p ops file.'
             )
