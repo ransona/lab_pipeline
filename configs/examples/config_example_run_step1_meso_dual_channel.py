@@ -8,6 +8,7 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 step1_config = {}
 
 step1_config["userID"] = "adamranson"
+step1_config["suite2p_env"] = "suite2p_1.1.0"
 step1_config["expIDs"] = [
     "2026-04-10_09_TEST",
 ]

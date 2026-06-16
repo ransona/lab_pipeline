@@ -7,6 +7,10 @@ import runpy
 import sys
 
 from preprocess_pipeline.shared import matrix_notify, paths
+from preprocess_pipeline.suite2p.config_validation import (
+    validate_suite2p_env,
+    validate_suite2p_env_config_compatibility,
+)
 from preprocess_pipeline.step1 import runtime
 
 
@@ -272,6 +276,8 @@ def run_step1_batch_universal(step1_config):
     jump_queue = step1_config.get('jump_queue', False)
     run_on = step1_config.get('run_on', 'server')
     queue_name = step1_config.get('queue', 'step1')
+    suite2p_env = step1_config.get('suite2p_env')
+    validate_suite2p_env(suite2p_env)
     local_repository_root = step1_config.get('local_repository_root')
     local_raw_repository_root = step1_config.get('local_raw_repository_root')
     local_processed_repository_root = step1_config.get('local_processed_repository_root')
@@ -308,6 +314,20 @@ def run_step1_batch_universal(step1_config):
         topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
         suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
         _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=suite2p_config_root)
+        if runs2p:
+            config_paths = [
+                os.path.join(
+                    suite2p_config_root,
+                    user_id,
+                    config_entry['config'] if isinstance(config_entry, dict) else config_entry,
+                )
+                for plan_item in suite2p_plan
+                for config_entry in plan_item['suite2p_configs']
+            ]
+            validate_suite2p_env_config_compatibility(
+                suite2p_env,
+                config_paths,
+            )
 
         common_config = {
             'runhabituate': runhabituate,
@@ -320,11 +340,7 @@ def run_step1_batch_universal(step1_config):
             'suite2p_config_root': suite2p_config_root,
             'runsrdtrans': runsrdtrans,
             **({'srdtrans': json.loads(json.dumps(srdtrans_config))} if runsrdtrans else {}),
-            **(
-                {'suite2p_env': step1_config['suite2p_env']}
-                if 'suite2p_env' in step1_config
-                else {}
-            ),
+            'suite2p_env': suite2p_env,
             **(
                 {'register_with_summed_channel': True}
                 if step1_config.get('register_with_summed_channel', False)

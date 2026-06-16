@@ -1659,8 +1659,9 @@ class Step1Tab(QtWidgets.QWidget):
         self.jump_queue.setChecked(False)
         if self.username == "adamranson":
             left_form.addRow("jump_queue", self.jump_queue)
-        self.suite2p_env = QtWidgets.QLineEdit()
-        self.suite2p_env.setPlaceholderText("Optional")
+        self.suite2p_env = QtWidgets.QComboBox()
+        self.suite2p_env.addItems(["suite2p", "suite2p_1.1.0"])
+        self.suite2p_env.setCurrentText("suite2p_1.1.0")
         left_form.addRow("suite2p_env", self.suite2p_env)
 
         self.summary_box = QtWidgets.QPlainTextEdit()
@@ -1866,9 +1867,10 @@ class Step1Tab(QtWidgets.QWidget):
             config["register_with_summed_channel"] = True
         if self.queue_combo.currentIndex() == 1:
             config["queue"] = "debug"
-        suite2p_env = self.suite2p_env.text().strip()
-        if suite2p_env:
-            config["suite2p_env"] = suite2p_env
+        suite2p_env = self.suite2p_env.currentText().strip()
+        if not suite2p_env:
+            raise ValueError("suite2p_env is required.")
+        config["suite2p_env"] = suite2p_env
         settings_text = self.settings_json.toPlainText().strip()
         if settings_text and settings_text != "{}":
             config["settings"] = json.loads(settings_text)
@@ -1908,7 +1910,7 @@ class Step1Tab(QtWidgets.QWidget):
             "runsrdtrans": self.runsrdtrans.isChecked(),
             "runhabituate": self.runhabituate.isChecked(),
             "jump_queue": self.jump_queue.isChecked(),
-            "suite2p_env": self.suite2p_env.text().strip(),
+            "suite2p_env": self.suite2p_env.currentText().strip(),
             "settings_json": self.settings_json.toPlainText(),
             "srdtrans_json": self.srdtrans_json.toPlainText(),
             "topology": self.detected_descriptor.topology if self.detected_descriptor else None,
@@ -1930,7 +1932,12 @@ class Step1Tab(QtWidgets.QWidget):
         self.runsrdtrans.setChecked(payload.get("runsrdtrans", False))
         self.runhabituate.setChecked(payload.get("runhabituate", False))
         self.jump_queue.setChecked(payload.get("jump_queue", False))
-        self.suite2p_env.setText(payload.get("suite2p_env", ""))
+        suite2p_env = payload.get("suite2p_env", "suite2p_1.1.0") or "suite2p_1.1.0"
+        index = self.suite2p_env.findText(suite2p_env)
+        if index < 0:
+            self.suite2p_env.addItem(suite2p_env)
+            index = self.suite2p_env.findText(suite2p_env)
+        self.suite2p_env.setCurrentIndex(index)
         self.settings_json.setPlainText(payload.get("settings_json", "{}"))
         self.srdtrans_json.setPlainText(
             payload.get(

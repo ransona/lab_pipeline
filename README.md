@@ -260,10 +260,10 @@ Step 1 config files define:
 - optional `srdtrans`
 - optional `queue`
 - optional `jump_queue`
-- optional `suite2p_env`
+- `suite2p_env`
 - optional `settings`
 
-The universal Step 1 submitter supports these `suite2p_config` shapes. `nplanes` and `nchannels` are always inferred from the raw ScanImage metadata. `functional_chan` is an analysis choice and should be supplied here, not saved inside the reusable Suite2p settings file.
+The universal Step 1 submitter supports these `suite2p_config` shapes. `suite2p_env` is required and is currently one of `suite2p` or `suite2p_1.1.0`. Native Suite2p 1.x settings files must be run with `suite2p_1.1.0`; the submitter and runtime reject them if `suite2p_env` is `suite2p`. `nplanes` and `nchannels` are always inferred from the raw ScanImage metadata. `functional_chan` is an analysis choice and should be supplied here, not saved inside the reusable Suite2p settings file.
 
 ### 1. One reusable Suite2p settings file
 
@@ -623,7 +623,7 @@ conda activate sci
 python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
 ```
 
-The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. In the Suite2p 1.1 compatibility branch, set `step1_config["suite2p_env"] = "suite2p_1.1.0"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
+The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. `step1_config["suite2p_env"]` is required; in the Suite2p 1.1 compatibility branch, set it to `"suite2p_1.1.0"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
 
 After Step 1 finishes, create a local Step 2 config:
 
