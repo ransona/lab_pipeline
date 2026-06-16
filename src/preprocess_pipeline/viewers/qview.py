@@ -131,6 +131,7 @@ class StandardMetadata:
     nplanes: Optional[int]
     nchannels: int
     scan_frame_rate: Optional[float]
+    scan_zoom_factor: Optional[float]
     fs: Optional[float]
     tif_path: str
 
@@ -142,6 +143,7 @@ class MesoPathMetadata:
     nrois: int
     nchannels: int
     scan_frame_rate: Optional[float]
+    scan_zoom_factor: Optional[float]
     fs_per_roi: Optional[float]
     roi_names: list[str]
 
@@ -183,6 +185,13 @@ def _infer_nplanes_from_frame_data(frame_data: dict) -> Optional[int]:
     return None
 
 
+def _optional_float(value) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
 def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
     tif_candidates = sorted(Path(exp_dir_raw).glob("*.tif"))
     if not tif_candidates:
@@ -191,11 +200,8 @@ def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
     frame_data = _read_scanimage_frame_data_from_tiff(tif_path)
     nplanes = _infer_nplanes_from_frame_data(frame_data)
     nchannels = _parse_channel_count(frame_data.get("SI.hChannels.channelSave"))
-    scan_frame_rate = frame_data.get("SI.hRoiManager.scanFrameRate")
-    try:
-        scan_frame_rate = float(scan_frame_rate) if scan_frame_rate is not None else None
-    except Exception:
-        scan_frame_rate = None
+    scan_frame_rate = _optional_float(frame_data.get("SI.hRoiManager.scanFrameRate"))
+    scan_zoom_factor = _optional_float(frame_data.get("SI.hRoiManager.scanZoomFactor"))
     fs = None
     if scan_frame_rate is not None and nplanes and nplanes > 0:
         fs = scan_frame_rate / float(nplanes)
@@ -203,6 +209,7 @@ def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
         nplanes=nplanes,
         nchannels=nchannels,
         scan_frame_rate=scan_frame_rate,
+        scan_zoom_factor=scan_zoom_factor,
         fs=fs,
         tif_path=tif_path,
     )
@@ -247,11 +254,8 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
         nplanes = _infer_nplanes_from_frame_data(header)
         nchannels = _parse_channel_count(header.get("SI.hChannels.channelSave"))
         global_nchannels = max(global_nchannels, nchannels)
-        scan_frame_rate = header.get("SI.hRoiManager.scanFrameRate")
-        try:
-            scan_frame_rate = float(scan_frame_rate) if scan_frame_rate is not None else None
-        except Exception:
-            scan_frame_rate = None
+        scan_frame_rate = _optional_float(header.get("SI.hRoiManager.scanFrameRate"))
+        scan_zoom_factor = _optional_float(header.get("SI.hRoiManager.scanZoomFactor"))
         fs_per_roi = None
         if scan_frame_rate is not None and nplanes and nplanes > 0:
             fs_per_roi = scan_frame_rate / float(nplanes) / float(len(roi_names))
@@ -262,6 +266,7 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
             nrois=len(roi_names),
             nchannels=nchannels,
             scan_frame_rate=scan_frame_rate,
+            scan_zoom_factor=scan_zoom_factor,
             fs_per_roi=fs_per_roi,
             roi_names=roi_names,
         )
@@ -269,7 +274,8 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
     path_summaries = []
     for path_name, meta in per_path.items():
         path_summaries.append(
-            f"{path_name}: {meta.nrois} ROI(s), {meta.nplanes or '?'} plane(s), {meta.nchannels} channel(s)"
+            f"{path_name}: {meta.nrois} ROI(s), {meta.nplanes or '?'} plane(s), "
+            f"{meta.nchannels} channel(s), zoom={meta.scan_zoom_factor or '?'}"
         )
     summary = "Meso | " + "; ".join(path_summaries)
     return ExperimentDescriptor(
@@ -299,6 +305,7 @@ def describe_experiment(user_id: str, exp_id: str) -> ExperimentDescriptor:
     summary = (
         f"Standard | {standard.nplanes or '?'} plane(s), "
         f"{standard.nchannels} channel(s), "
+        f"zoom={standard.scan_zoom_factor or '?'}, "
         f"scanFrameRate={standard.scan_frame_rate or '?'} Hz, "
         f"fs={standard.fs or '?'} Hz"
     )
@@ -2741,6 +2748,7 @@ def _format_descriptor_payload(payload: dict) -> str:
                 "",
                 "Standard imaging:",
                 f"  nplanes: {standard.get('nplanes')}",
+                f"  zoom: {standard.get('scan_zoom_factor')}",
                 f"  scan_frame_rate: {standard.get('scan_frame_rate')}",
                 f"  fs per plane: {standard.get('fs')}",
                 f"  tif: {standard.get('tif_path')}",
@@ -2756,6 +2764,7 @@ def _format_descriptor_payload(payload: dict) -> str:
                     f"    nplanes: {meta.get('nplanes')}",
                     f"    nrois: {meta.get('nrois')}",
                     f"    nchannels: {meta.get('nchannels')}",
+                    f"    zoom: {meta.get('scan_zoom_factor')}",
                     f"    scan_frame_rate: {meta.get('scan_frame_rate')}",
                     f"    fs per ROI/plane: {meta.get('fs_per_roi')}",
                     f"    rois: {', '.join(meta.get('roi_names', []))}",
@@ -2784,6 +2793,7 @@ def _descriptor_to_payload(descriptor: ExperimentDescriptor, user_id: str) -> di
             "nplanes": descriptor.standard.nplanes,
             "nchannels": descriptor.standard.nchannels,
             "scan_frame_rate": descriptor.standard.scan_frame_rate,
+            "scan_zoom_factor": descriptor.standard.scan_zoom_factor,
             "fs": descriptor.standard.fs,
             "tif_path": descriptor.standard.tif_path,
         }
@@ -2793,6 +2803,7 @@ def _descriptor_to_payload(descriptor: ExperimentDescriptor, user_id: str) -> di
             "nrois": meta.nrois,
             "nchannels": meta.nchannels,
             "scan_frame_rate": meta.scan_frame_rate,
+            "scan_zoom_factor": meta.scan_zoom_factor,
             "fs_per_roi": meta.fs_per_roi,
             "roi_names": meta.roi_names,
         }
