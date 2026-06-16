@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import traceback
+import importlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -485,15 +486,38 @@ def _parse_ops_value(text: str, old_value):
     return stripped
 
 
+def _install_numpy_core_pickle_aliases():
+    """Allow NumPy 1.x GUI envs to read NumPy 2.x-authored pickled .npy files."""
+    for module_name in (
+        "numpy.core",
+        "numpy.core.multiarray",
+        "numpy.core.numeric",
+        "numpy.core.umath",
+        "numpy.core._multiarray_umath",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        alias = module_name.replace("numpy.core", "numpy._core", 1)
+        sys.modules.setdefault(alias, module)
+
+
+def load_suite2p_ops(config_path: Path) -> dict:
+    _install_numpy_core_pickle_aliases()
+    ops = np.load(config_path, allow_pickle=True).item()
+    if not isinstance(ops, dict):
+        raise ValueError(f"Suite2p config is not a dict: {config_path}")
+    return ops
+
+
 class Suite2pOpsEditorDialog(QtWidgets.QDialog):
     def __init__(self, config_path: Path, parent=None, default_save_dir: Optional[Path] = None):
         super().__init__(parent)
         self.config_path = Path(config_path)
         self.default_save_dir = Path(default_save_dir) if default_save_dir else self.config_path.parent
         self.saved_as_path: Optional[Path] = None
-        self.ops = np.load(self.config_path, allow_pickle=True).item()
-        if not isinstance(self.ops, dict):
-            raise ValueError(f"Suite2p config is not a dict: {self.config_path}")
+        self.ops = load_suite2p_ops(self.config_path)
         self.dirty = False
         self.setWindowTitle(f"Edit Suite2p config: {self.config_path.name}")
         self.resize(900, 700)
