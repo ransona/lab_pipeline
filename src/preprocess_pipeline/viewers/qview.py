@@ -833,6 +833,12 @@ class QueueTab(QtWidgets.QWidget):
         self.queue_selector = QtWidgets.QComboBox()
         self.queue_selector.addItems(["Normal queue", "Debug queue"])
         controls.addWidget(self.queue_selector)
+        self.start_queue_button = QtWidgets.QPushButton("Start")
+        self.stop_queue_button = QtWidgets.QPushButton("Stop")
+        self.restart_queue_button = QtWidgets.QPushButton("Restart")
+        for button in (self.start_queue_button, self.stop_queue_button, self.restart_queue_button):
+            button.setVisible(self.username == "adamranson")
+            controls.addWidget(button)
         controls.addStretch(1)
         self.remove_button = QtWidgets.QPushButton("Remove Selected Job")
         controls.addWidget(self.remove_button)
@@ -866,6 +872,9 @@ class QueueTab(QtWidgets.QWidget):
         layout.addWidget(main_splitter)
 
         self.queue_selector.currentIndexChanged.connect(self.on_queue_source_changed)
+        self.start_queue_button.clicked.connect(self.start_current_queue)
+        self.stop_queue_button.clicked.connect(self.stop_current_queue)
+        self.restart_queue_button.clicked.connect(self.restart_current_queue)
         self.remove_button.clicked.connect(self.remove_selected_job)
         self.queue_list.itemSelectionChanged.connect(self._remember_selection)
         self.queue_list.itemDoubleClicked.connect(self.show_selected_job_config)
@@ -877,6 +886,117 @@ class QueueTab(QtWidgets.QWidget):
         box_layout = QtWidgets.QVBoxLayout(box)
         box_layout.addWidget(widget)
         return box
+
+    def _current_queue_session_name(self) -> str:
+        return "lab_pipeline_queue" if self.queue_selector.currentIndex() == 0 else "lab_pipeline_debug_queue"
+
+    def _current_queue_label(self) -> str:
+        return "normal queue" if self.queue_selector.currentIndex() == 0 else "debug queue"
+
+    def _current_queue_listener_command(self) -> str:
+        repo_root = Path(__file__).resolve().parents[3]
+        listener = repo_root / "apps" / "queue_listener.py"
+        command = f"cd {shlex.quote(str(repo_root))} && /opt/scripts/conda-run.sh base python {shlex.quote(str(listener))}"
+        if self.queue_selector.currentIndex() == 1:
+            command += " --debug"
+        return command
+
+    def _tmux_session_exists(self, session_name: str) -> bool:
+        return subprocess.run(
+            ["tmux", "has-session", "-t", f"={session_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 0
+
+    def _append_queue_control_message(self, message: str):
+        self._add_log_line(f"** {message}")
+        self.log_list.scrollToBottom()
+
+    def start_current_queue(self):
+        session_name = self._current_queue_session_name()
+        if self._tmux_session_exists(session_name):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Queue Control",
+                f"{self._current_queue_label().title()} is already running in tmux session:\n{session_name}",
+            )
+            return
+        command = self._current_queue_listener_command()
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, command],
+                check=True,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not start {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Started {self._current_queue_label()} in tmux session {session_name}")
+
+    def stop_current_queue(self):
+        session_name = self._current_queue_session_name()
+        if not self._tmux_session_exists(session_name):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Queue Control",
+                f"{self._current_queue_label().title()} is not running in tmux session:\n{session_name}",
+            )
+            return
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Stop Queue",
+            (
+                f"Stop the {self._current_queue_label()} tmux session?\n\n"
+                f"Session: {session_name}\n"
+                "This will also stop any currently running job launched by that listener."
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            subprocess.run(["tmux", "kill-session", "-t", f"={session_name}"], check=True)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not stop {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Stopped {self._current_queue_label()} tmux session {session_name}")
+
+    def restart_current_queue(self):
+        session_name = self._current_queue_session_name()
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Restart Queue",
+            (
+                f"Restart the {self._current_queue_label()}?\n\n"
+                f"Session: {session_name}\n"
+                "If a job is currently running, it will be stopped."
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if self._tmux_session_exists(session_name):
+            try:
+                subprocess.run(["tmux", "kill-session", "-t", f"={session_name}"], check=True)
+            except Exception as exc:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Queue Control",
+                    f"Could not stop {self._current_queue_label()} before restart:\n{exc}",
+                )
+                return
+        command = self._current_queue_listener_command()
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, command],
+                check=True,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not restart {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Restarted {self._current_queue_label()} in tmux session {session_name}")
 
     def _connect_timers(self):
         self.queue_timer = QtCore.QTimer(self)
