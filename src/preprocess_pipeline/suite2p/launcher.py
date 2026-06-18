@@ -538,7 +538,14 @@ def replace_file(src, dst):
 def remove_tree_if_exists(path):
     """Remove a directory tree when present."""
     if os.path.isdir(path):
+        print(f"Removing previous Suite2p output: {path}")
         shutil.rmtree(path)
+
+
+def cleanup_previous_suite2p_outputs(output_path):
+    """Remove stale Suite2p outputs for this work unit before launching Suite2p."""
+    for relative_path in ("suite2p", "suite2p_combined", "ch2"):
+        remove_tree_if_exists(os.path.join(output_path, relative_path))
 
 
 def move_red_channel_binary(red_reg_file, plane_save_dir):
@@ -1503,6 +1510,7 @@ def s2p_launcher_run(
         )
     print("functional_chans = " + ",".join(str(chan) for chan in functional_chans))
     print("chan2_detection = " + ",".join(chan2_detection_modes))
+    cleanup_previous_suite2p_outputs(output_path)
 
     if srdtrans_config:
         run_srdtrans_suite2p(
