@@ -9,5 +9,5 @@ Launch it through:
 /opt/scripts/conda-run.sh sci python ~/code/lab_pipeline/apps/eye_check.py
 ```
 
-The adapter in `preprocess_pipeline.viewers.eye_check` supplies the current
-pipeline path resolver in place of the legacy `organise_paths` module.
+The GUI imports the canonical resolver from `preprocess_pipeline.shared.paths`
+and does not depend on the retired standalone pipeline repositories.

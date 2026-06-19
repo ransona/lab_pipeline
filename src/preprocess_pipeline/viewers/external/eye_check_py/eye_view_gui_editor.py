@@ -26,7 +26,7 @@ from matplotlib.backends.backend_qt5 import NavigationToolbar2QT as NavigationTo
 from matplotlib.widgets import SpanSelector
 
 # Import your custom module that provides file paths.
-import organise_paths
+from preprocess_pipeline.shared import paths
 
 
 class VideoDisplayLabel(QLabel):
@@ -991,7 +991,7 @@ class VideoAnalysisApp(QMainWindow):
 
         # Get paths using the shared path resolver.
         self.animalID, self.remote_repository_root, self.processed_root, \
-            self.exp_dir_processed, self.exp_dir_raw = organise_paths.find_paths(self.userID, self.expID)
+            self.exp_dir_processed, self.exp_dir_raw = paths.find_paths(self.userID, self.expID)
         self.exp_dir_processed_recordings = os.path.join(self.exp_dir_processed, 'recordings')
         self.exp_dir_processed_cut = os.path.join(self.exp_dir_processed, 'cut')        
         # Video file paths.
