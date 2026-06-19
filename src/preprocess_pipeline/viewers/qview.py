@@ -53,6 +53,46 @@ DEFAULT_SRDTRANS_STEP1_JSON = (
     '"channels": ["ch1"]}'
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+APPS_ROOT = REPO_ROOT / "apps"
+GUI_TOOLS = (
+    (
+        "Imaging Viewer",
+        "imaging_view.py",
+        "Inspect raw TIFF movies and Suite2p binary outputs in one viewer.",
+    ),
+    (
+        "Eye Check",
+        "eye_check.py",
+        "Review eye videos and manually inspect or correct pupil tracking results.",
+    ),
+    (
+        "Data Manager",
+        "data_manager.py",
+        "Browse repository data, inspect storage usage, and manage deletion workflows.",
+    ),
+    (
+        "Experiment Composer",
+        "experiment_composer.py",
+        "Build synchronized experiment videos from imaging, behaviour, and stimulus data.",
+    ),
+    (
+        "Sleep State",
+        "sleep_state_gui.py",
+        "Inspect recordings and create or edit sleep-state annotations.",
+    ),
+    (
+        "Local Processing",
+        "local_run.py",
+        "Run mesoscope splitting and local Step 1 or Step 2 processing workflows.",
+    ),
+    (
+        "Suite2p Binary Viewer",
+        "s2p_bin_view.py",
+        "Inspect and play a Suite2p binary movie directly from its output folder.",
+    ),
+)
+
 
 def _step1_preset_root(username: str) -> Path:
     return CONFIG_ROOT / "step1_configs" / username
@@ -4324,6 +4364,74 @@ class BuildSRDTransTab(QtWidgets.QWidget):
             button.setEnabled(enabled)
 
 
+class ToolsTab(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QtWidgets.QVBoxLayout(self)
+
+        heading = QtWidgets.QLabel("Pipeline tools")
+        heading_font = heading.font()
+        heading_font.setPointSize(heading_font.pointSize() + 4)
+        heading_font.setBold(True)
+        heading.setFont(heading_font)
+        layout.addWidget(heading)
+
+        intro = QtWidgets.QLabel(
+            "Launch standalone data inspection, annotation, and processing applications."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        tool_grid = QtWidgets.QGridLayout()
+        tool_grid.setColumnStretch(1, 1)
+        tool_grid.setHorizontalSpacing(20)
+        tool_grid.setVerticalSpacing(12)
+        for row, (label, app_name, description) in enumerate(GUI_TOOLS):
+            button = QtWidgets.QPushButton(label)
+            button.setMinimumWidth(220)
+            button.setToolTip(str(APPS_ROOT / app_name))
+            button.clicked.connect(
+                lambda _checked=False, name=app_name, title=label: self._launch_tool(
+                    name, title
+                )
+            )
+            description_label = QtWidgets.QLabel(description)
+            description_label.setWordWrap(True)
+            tool_grid.addWidget(button, row, 0)
+            tool_grid.addWidget(description_label, row, 1)
+        layout.addLayout(tool_grid)
+
+        self.status_label = QtWidgets.QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        layout.addStretch(1)
+
+    def _launch_tool(self, app_name: str, title: str):
+        app_path = APPS_ROOT / app_name
+        if not app_path.is_file():
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Tool Not Found",
+                f"Could not find {title}:\n{app_path}",
+            )
+            return
+
+        started, process_id = QtCore.QProcess.startDetached(
+            sys.executable,
+            [str(app_path)],
+            str(REPO_ROOT),
+        )
+        if not started:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Launch Failed",
+                f"Could not launch {title} with:\n{sys.executable}",
+            )
+            return
+
+        self.status_label.setText(f"Launched {title} (process {process_id}).")
+
+
 class QueueManagerWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -4357,6 +4465,7 @@ class QueueManagerWindow(QtWidgets.QMainWindow):
         tabs.addTab(Step1Tab(), "Step 1")
         tabs.addTab(Step2Tab(), "Step 2")
         tabs.addTab(SplitTab(), "Split")
+        tabs.addTab(ToolsTab(), "Tools")
         if getpass.getuser() == "adamranson":
             tabs.addTab(BuildSRDTransTab(), "Build SRDTrans")
         self.setCentralWidget(tabs)
