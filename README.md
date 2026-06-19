@@ -2,6 +2,41 @@
 
 Canonical preprocessing repository for the lab pipeline.
 
+## Installation
+
+On `dream`, clone the repository into the standard location:
+
+```bash
+mkdir -p ~/code
+git clone git@github.com:ransona/lab_pipeline.git ~/code/lab_pipeline
+cd ~/code/lab_pipeline
+```
+
+The server pipeline uses the existing shared conda environments, including
+`sci`, `suite2p`, `suite2p_1.1.0`, and `DLC_05_02_2026`. The runnable files in
+`apps/` add this repository's `src/` directory to Python automatically, so
+`conda develop` is not required.
+
+Launch the main queue GUI to check the installation:
+
+```bash
+/opt/scripts/conda-run.sh sci python ~/code/lab_pipeline/apps/qview.py
+```
+
+If your own scripts need to import `preprocess_pipeline` directly, install the
+repository into the relevant conda environment in editable mode:
+
+```bash
+conda activate sci
+python -m pip install -e ~/code/lab_pipeline
+```
+
+For an existing checkout, update it with:
+
+```bash
+git -C ~/code/lab_pipeline pull --ff-only
+```
+
 ## Apps And Launchers
 
 Use `[username]` as your Linux username on `dream`.

@@ -1,35 +1,25 @@
-# Suite2p 1.1 Compatibility Branch
+# Suite2p 1.1 Compatibility
 
-This experimental working copy lives at:
-
-```text
-/home/adamranson/code/lab_pipeline_s2p110
-```
-
-It is intentionally separate from the stable pipeline at:
+Suite2p 1.1 compatibility is integrated into the main pipeline at:
 
 ```text
-/home/adamranson/code/lab_pipeline
+~/code/lab_pipeline
 ```
-
-Keep the normal listener pointed at the stable repo. Use this clone only for explicit tests, preferably on the debug queue.
 
 ## Running A Test Job
 
-Use the experimental apps path and set the Suite2p environment explicitly:
+Set the Suite2p environment explicitly:
 
 ```python
 step1_config["queue"] = "debug"
 step1_config["suite2p_env"] = "suite2p_1.1.0"
 ```
 
-Launch the experimental debug listener only when testing:
+Launch the debug listener when testing:
 
 ```bash
-/opt/scripts/conda-run.sh base python /home/adamranson/code/lab_pipeline_s2p110/apps/queue_listener.py --debug
+/opt/scripts/conda-run.sh base python ~/code/lab_pipeline/apps/queue_listener.py --debug
 ```
-
-Do not launch the experimental normal listener unless you intend to route normal jobs through this clone.
 
 ## Compatibility Layer
 
