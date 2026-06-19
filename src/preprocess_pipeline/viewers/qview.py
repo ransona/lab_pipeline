@@ -81,16 +81,6 @@ GUI_TOOLS = (
         "sleep_state_gui.py",
         "Inspect recordings and create or edit sleep-state annotations.",
     ),
-    (
-        "Local Processing",
-        "local_run.py",
-        "Run mesoscope splitting and local Step 1 or Step 2 processing workflows.",
-    ),
-    (
-        "Suite2p Binary Viewer",
-        "s2p_bin_view.py",
-        "Inspect and play a Suite2p binary movie directly from its output folder.",
-    ),
 )
 
 

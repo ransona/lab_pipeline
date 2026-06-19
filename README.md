@@ -280,8 +280,8 @@ The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/
 The main GUI entry points are `qview.py`, `imaging_view.py`, and `eye_check.py`. See `Apps And Launchers` at the top of this README for Linux commands and Windows `.bat` launchers.
 
 The qView `Tools` tab launches the canonical Imaging Viewer, Eye Check, Data
-Manager, Experiment Composer, Sleep State, Local Processing, and Suite2p Binary
-Viewer applications as independent processes.
+Manager, Experiment Composer, and Sleep State applications as independent
+processes.
 
 In the qView `Build SRDTrans` tab, `1) Register data`, `2) Extract frames`, and `3) Build model` launch in detached `tmux` sessions and write logs under the model folder, for example:
 
