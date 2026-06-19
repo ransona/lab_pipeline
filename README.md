@@ -49,7 +49,7 @@ GUI apps:
 | `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
 | `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
 | `data_manager.py` | Data Manager GUI for browsing/scanning repository data and deletion workflow support | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/data_manager.py` | `windows_launchers/run_data_manager.bat` |
-| `eye_check.py` | Eye tracking QC GUI adapter | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
+| `eye_check.py` | Integrated eye tracking QC GUI | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
 | `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
 
 Pipeline and subsystem apps:

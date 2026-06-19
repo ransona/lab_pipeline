@@ -2,13 +2,14 @@
 
 ## Goal
 
-Create a clean canonical repo for the lab pipeline without modifying the historical source repos.
+Maintain one canonical repository for the lab pipeline while retaining historical
+snapshots for reference.
 
 ## Principles
 
-- keep `/home/adamranson/code/preprocess_py` unchanged
-- keep `/home/adamranson/code/preprocess_scripts` unchanged
-- preserve both histories inside `legacy/`
+- use `lab_pipeline` as the only active pipeline checkout
+- preserve historical preprocessing snapshots inside `legacy/`
+- archive retired standalone repositories outside the active code path before deletion
 - promote only the universal path into the canonical package
 - keep direct runnable entrypoints for subsystem-level testing
 

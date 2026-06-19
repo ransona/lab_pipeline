@@ -6,8 +6,8 @@ from pathlib import Path
 from preprocess_pipeline.shared import paths
 
 
-EYE_CHECK_REPO = Path("/home/adamranson/code/eye_check_py")
-EYE_CHECK_ENTRYPOINT = EYE_CHECK_REPO / "eye_view_gui_editor.py"
+EYE_CHECK_ROOT = Path(__file__).resolve().parent / "external" / "eye_check_py"
+EYE_CHECK_ENTRYPOINT = EYE_CHECK_ROOT / "eye_view_gui_editor.py"
 
 
 def _compat_organise_paths_module():
@@ -19,7 +19,7 @@ def _compat_organise_paths_module():
 def _load_eye_check_module():
     if not EYE_CHECK_ENTRYPOINT.exists():
         raise FileNotFoundError(
-            f"Could not find eye_check_py entrypoint: {EYE_CHECK_ENTRYPOINT}"
+            f"Could not find vendored eye-check entrypoint: {EYE_CHECK_ENTRYPOINT}"
         )
 
     sys.modules["organise_paths"] = _compat_organise_paths_module()
@@ -68,4 +68,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
