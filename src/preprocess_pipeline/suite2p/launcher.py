@@ -538,14 +538,21 @@ def replace_file(src, dst):
 def remove_tree_if_exists(path):
     """Remove a directory tree when present."""
     if os.path.isdir(path):
-        print(f"Removing previous Suite2p output: {path}")
+        print(f"Deleting existing Suite2p output: {path}", flush=True)
         shutil.rmtree(path)
 
 
 def cleanup_previous_suite2p_outputs(output_path):
     """Remove stale Suite2p outputs for this work unit before launching Suite2p."""
-    for relative_path in ("suite2p", "suite2p_combined", "ch2"):
-        remove_tree_if_exists(os.path.join(output_path, relative_path))
+    existing_paths = [
+        os.path.join(output_path, relative_path)
+        for relative_path in ("suite2p", "suite2p_combined", "ch2")
+        if os.path.isdir(os.path.join(output_path, relative_path))
+    ]
+    if existing_paths:
+        print("** Existing Suite2p outputs found; deleting them before this run", flush=True)
+    for path in existing_paths:
+        remove_tree_if_exists(path)
 
 
 def move_red_channel_binary(red_reg_file, plane_save_dir):
