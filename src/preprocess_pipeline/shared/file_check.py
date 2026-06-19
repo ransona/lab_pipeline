@@ -17,7 +17,7 @@ def hash_file(filepath):
             sha256.update(data)
     return sha256.hexdigest()
 
-def verify_file_data(file_data_stem, new_root_path, output_root_path):
+def verify_file_data(file_data_stem, new_root_path, output_root_path, check_hashes=True):
     new_root_path = Path(new_root_path)
     total_size = 0
     stored_total_size = 0
@@ -32,7 +32,8 @@ def verify_file_data(file_data_stem, new_root_path, output_root_path):
     output_file_path_ok = 'file_check_' + file_data_stem + '.txt'
     output_file_path_ok = os.path.join(output_root_path,output_file_path_ok)    
     output_file_path_ok = Path(output_file_path_ok)
-    output_file_path_ok = output_file_path_ok.with_stem(f"{output_file_path_ok.stem}_ok")
+    ok_suffix = "ok" if check_hashes else "ok_size_only"
+    output_file_path_ok = output_file_path_ok.with_stem(f"{output_file_path_ok.stem}_{ok_suffix}")
     # check if the files have already been verified 
     if not output_file_path_ok.exists():
         print('Checking ' + file_data_stem + ' file integrity for path ' + str(new_root_path))
@@ -57,29 +58,45 @@ def verify_file_data(file_data_stem, new_root_path, output_root_path):
 
         
         if all_files_ok and total_size == stored_total_size:
-            print(
-                f"All file sizes correct for {len(file_info_list)} files "
-                f"({total_size} bytes) - checking hashes"
-            )
-            for new_path, stored_hash in file_info_list:
-                # could be improved to not hash files which have already passed the hash test
-                # although if the size is correct most likely the hash is too
-                actual_hash = hash_file(new_path)
-                if actual_hash != stored_hash:
-                    print(f"Hash mismatch for {new_path}: expected {stored_hash}, got {actual_hash}")
-                    all_files_ok = False
-                    break
+            if check_hashes:
+                print(
+                    f"All file sizes correct for {len(file_info_list)} files "
+                    f"({total_size} bytes) - checking hashes"
+                )
+                for new_path, stored_hash in file_info_list:
+                    # could be improved to not hash files which have already passed the hash test
+                    # although if the size is correct most likely the hash is too
+                    actual_hash = hash_file(new_path)
+                    if actual_hash != stored_hash:
+                        print(f"Hash mismatch for {new_path}: expected {stored_hash}, got {actual_hash}")
+                        all_files_ok = False
+                        break
+            else:
+                print(
+                    f"All file sizes correct for {len(file_info_list)} files "
+                    f"({total_size} bytes) - skipping hashes"
+                )
 
             if all_files_ok:
-                print(
-                    f"All files verified successfully: {len(file_info_list)} files, "
-                    f"{total_size} bytes"
-                )
+                if check_hashes:
+                    print(
+                        f"All files verified successfully: {len(file_info_list)} files, "
+                        f"{total_size} bytes"
+                    )
+                    comment = 'Hash correct'
+                    ok_message = "All files verified successfully"
+                else:
+                    print(
+                        f"All file sizes verified successfully: {len(file_info_list)} files, "
+                        f"{total_size} bytes"
+                    )
+                    comment = 'Size correct'
+                    ok_message = "All file sizes verified successfully; hashes skipped"
                 # make exp folder if it doesn't already exist to output this ok file
                 os.makedirs(Path(output_file_path_ok).parent, exist_ok=True)
                 with open(output_file_path_ok, "w") as ok_file:
-                    ok_file.write("All files verified successfully")
-                return(True,'Hash correct')
+                    ok_file.write(ok_message)
+                return(True, comment)
             else:
                 print(f"Verification failed: hash mismatch")
                 # this indicates files are not verified
@@ -90,7 +107,7 @@ def verify_file_data(file_data_stem, new_root_path, output_root_path):
     else:
         # files have already been verified
         # this indicates files are verifed but that this isn't new
-        return(True,'Hash correct')
+        return(True, 'Hash correct' if check_hashes else 'Size correct')
 
 
 # for debugging:

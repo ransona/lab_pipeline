@@ -8,12 +8,13 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 step1_config = {}
 
 step1_config["userID"] = "adamranson"
+step1_config["suite2p_env"] = "suite2p_1.1.0"
 step1_config["expIDs"] = [
     ["2026-04-10_09_TEST", "2026-04-10_10_TEST"],
 ]
 
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1, "chan2_detection": "off"},
 }
 
 step1_config["runs2p"] = True

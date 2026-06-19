@@ -9,6 +9,7 @@ from .config import ensure_parent
 
 
 ScopeKey = Tuple[str, str, Optional[str]]
+MetricsKey = Tuple[str, str, str, Optional[str]]
 
 
 class DataStore:
@@ -69,19 +70,7 @@ class DataStore:
                 );
                 """
             )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS metrics (
-                    scope TEXT NOT NULL,
-                    animal_id TEXT NOT NULL,
-                    exp_id TEXT,
-                    size_bytes INTEGER,
-                    last_access_ts INTEGER,
-                    scanned_at INTEGER NOT NULL,
-                    PRIMARY KEY (scope, animal_id, exp_id)
-                );
-                """
-            )
+            self._ensure_metrics_schema(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS file_deletions (
@@ -96,6 +85,104 @@ class DataStore:
                 """
             )
             conn.commit()
+
+    def _ensure_metrics_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS metrics (
+                scope TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                animal_id TEXT NOT NULL,
+                exp_id TEXT NOT NULL DEFAULT '',
+                size_bytes INTEGER,
+                last_access_ts INTEGER,
+                scanned_at INTEGER NOT NULL,
+                PRIMARY KEY (scope, user_id, animal_id, exp_id)
+            );
+            """
+        )
+        columns = {
+            row["name"]: row
+            for row in conn.execute("PRAGMA table_info(metrics)").fetchall()
+        }
+        needs_rebuild = (
+            "user_id" not in columns
+            or not columns["exp_id"]["notnull"]
+            or [
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(metrics)").fetchall()
+                if row["pk"]
+            ]
+            != ["scope", "user_id", "animal_id", "exp_id"]
+        )
+        if not needs_rebuild:
+            return
+
+        has_user_id = "user_id" in columns
+        conn.execute("ALTER TABLE metrics RENAME TO metrics_old")
+        conn.execute(
+            """
+            CREATE TABLE metrics (
+                scope TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                animal_id TEXT NOT NULL,
+                exp_id TEXT NOT NULL DEFAULT '',
+                size_bytes INTEGER,
+                last_access_ts INTEGER,
+                scanned_at INTEGER NOT NULL,
+                PRIMARY KEY (scope, user_id, animal_id, exp_id)
+            );
+            """
+        )
+        if has_user_id:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO metrics(
+                    scope, user_id, animal_id, exp_id, size_bytes, last_access_ts, scanned_at
+                )
+                SELECT
+                    scope,
+                    COALESCE(user_id, ''),
+                    animal_id,
+                    COALESCE(exp_id, ''),
+                    size_bytes,
+                    last_access_ts,
+                    scanned_at
+                FROM metrics_old
+                """
+            )
+        else:
+            # Old processed metrics were keyed only by animal/expID, so they
+            # cannot be safely assigned to a home-directory user. Preserve raw
+            # metrics and let processed metrics repopulate on the next scan.
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO metrics(
+                    scope, user_id, animal_id, exp_id, size_bytes, last_access_ts, scanned_at
+                )
+                SELECT
+                    scope,
+                    '',
+                    animal_id,
+                    COALESCE(exp_id, ''),
+                    size_bytes,
+                    last_access_ts,
+                    scanned_at
+                FROM metrics_old
+                WHERE scope='raw'
+                """
+            )
+        conn.execute("DROP TABLE metrics_old")
+
+    @staticmethod
+    def _metric_exp_id(exp_id: Optional[str]) -> str:
+        return exp_id or ""
+
+    @staticmethod
+    def _metric_user_id(scope: str, user_id: Optional[str]) -> str:
+        if scope == "processed":
+            return user_id or ""
+        return ""
 
     # Ownership overrides
     def load_overrides(self) -> Dict[ScopeKey, str]:
@@ -176,18 +263,28 @@ class DataStore:
             conn.commit()
 
     # Metrics
-    def load_metrics(self) -> Dict[ScopeKey, sqlite3.Row]:
+    def load_metrics(self) -> Dict[MetricsKey, sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT scope, animal_id, exp_id, size_bytes, last_access_ts, scanned_at FROM metrics"
+                """
+                SELECT scope, user_id, animal_id, exp_id, size_bytes, last_access_ts, scanned_at
+                FROM metrics
+                """
             ).fetchall()
             return {
-                (row["scope"], row["animal_id"], row["exp_id"]): row for row in rows
+                (
+                    row["scope"],
+                    row["user_id"] or "",
+                    row["animal_id"],
+                    row["exp_id"] or None,
+                ): row
+                for row in rows
             }
 
     def upsert_metrics(
         self,
         scope: str,
+        user_id: Optional[str],
         animal_id: str,
         exp_id: Optional[str],
         size_bytes: Optional[int],
@@ -196,14 +293,22 @@ class DataStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO metrics(scope, animal_id, exp_id, size_bytes, last_access_ts, scanned_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(scope, animal_id, exp_id)
+                INSERT INTO metrics(scope, user_id, animal_id, exp_id, size_bytes, last_access_ts, scanned_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, user_id, animal_id, exp_id)
                 DO UPDATE SET size_bytes=excluded.size_bytes,
                               last_access_ts=excluded.last_access_ts,
                               scanned_at=excluded.scanned_at
                 """,
-                (scope, animal_id, exp_id, size_bytes, last_access_ts, int(time.time())),
+                (
+                    scope,
+                    self._metric_user_id(scope, user_id),
+                    animal_id,
+                    self._metric_exp_id(exp_id),
+                    size_bytes,
+                    last_access_ts,
+                    int(time.time()),
+                ),
             )
             conn.commit()
 

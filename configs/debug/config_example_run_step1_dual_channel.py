@@ -8,6 +8,7 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 step1_config = {}
 
 step1_config["userID"] = "adamranson"
+step1_config["suite2p_env"] = "suite2p_1.1.0"
 step1_config["expIDs"] = [
     "2026-05-11_01_ESRC033",
 ]
@@ -16,8 +17,8 @@ step1_config["expIDs"] = [
 # - config 1 drives registration and green extraction
 # - config 2 drives red extraction into ch2/
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2, "chan2_detection": "off"},
 ]
 
 step1_config["runs2p"] = True

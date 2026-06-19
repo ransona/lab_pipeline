@@ -7,6 +7,10 @@ import runpy
 import sys
 
 from preprocess_pipeline.shared import matrix_notify, paths
+from preprocess_pipeline.suite2p.config_validation import (
+    validate_suite2p_env,
+    validate_suite2p_env_config_compatibility,
+)
 from preprocess_pipeline.step1 import runtime
 
 
@@ -15,6 +19,7 @@ LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
 WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 DEFAULT_QUEUE_PATH = '/data/common/queues/step1'
 DEBUG_QUEUE_PATH = '/data/common/queues/debug'
+VALID_CHAN2_DETECTION_MODES = {'off', 'intensity', 'cellpose'}
 QUEUE_PATHS_BY_HOST = {
     'server': DEFAULT_QUEUE_PATH,
     'ar-lab-si2': '/data/common/local_pipelines/ar-lab-si2/queues/step1',
@@ -22,18 +27,54 @@ QUEUE_PATHS_BY_HOST = {
 }
 
 
+def _normalize_config_entry(config_entry, default_functional_chan=None):
+    if isinstance(config_entry, str):
+        return {
+            'config': config_entry,
+            'functional_chan': int(default_functional_chan or 1),
+            'chan2_detection': 'off',
+        }
+    if isinstance(config_entry, dict):
+        config_name = (
+            config_entry.get('config')
+            or config_entry.get('path')
+            or config_entry.get('name')
+        )
+        if not isinstance(config_name, str) or not config_name:
+            raise ValueError('suite2p config entries must include a config filename')
+        functional_chan = config_entry.get('functional_chan', default_functional_chan or 1)
+        chan2_detection = config_entry.get('chan2_detection', 'off')
+        chan2_detection = str(chan2_detection).lower()
+        if chan2_detection not in VALID_CHAN2_DETECTION_MODES:
+            raise ValueError(
+                "chan2_detection must be one of: "
+                + ", ".join(sorted(VALID_CHAN2_DETECTION_MODES))
+            )
+        return {
+            'config': config_name,
+            'functional_chan': int(functional_chan),
+            'chan2_detection': chan2_detection,
+        }
+    raise TypeError('suite2p config entries must be strings or dicts')
+
+
 def _normalize_single_config_value(config_value):
     if isinstance(config_value, str):
-        return [config_value]
+        return [_normalize_config_entry(config_value, 1)]
+    if isinstance(config_value, dict) and any(
+        key in config_value for key in ('config', 'path', 'name', 'functional_chan', 'chan2_detection')
+    ):
+        return [_normalize_config_entry(config_value, 1)]
     if isinstance(config_value, (list, tuple)):
         config_list = list(config_value)
         if len(config_list) not in (1, 2):
             raise ValueError(
                 'suite2p config values must be a string or contain 1 or 2 config filenames'
             )
-        if not all(isinstance(item, str) for item in config_list):
-            raise TypeError('suite2p config filenames must all be strings')
-        return config_list
+        return [
+            _normalize_config_entry(item, index + 1)
+            for index, item in enumerate(config_list)
+        ]
     raise TypeError(
         'suite2p_config must be a string, a 1/2-item list, or a mapping of work units'
     )
@@ -89,10 +130,13 @@ def _validate_combined_work_units(user_id, exp_id_group, expected_topology, expe
 
 
 def _normalize_suite2p_plan(suite2p_config, work_unit_ids):
-    if isinstance(suite2p_config, (str, list, tuple)):
+    if isinstance(suite2p_config, (str, list, tuple)) or (
+        isinstance(suite2p_config, dict)
+        and any(key in suite2p_config for key in ('config', 'path', 'name', 'functional_chan', 'chan2_detection'))
+    ):
         default_configs = _normalize_single_config_value(suite2p_config)
         return [
-            {'work_unit': work_unit_id, 'suite2p_configs': list(default_configs)}
+            {'work_unit': work_unit_id, 'suite2p_configs': [dict(item) for item in default_configs]}
             for work_unit_id in work_unit_ids
         ]
 
@@ -128,7 +172,7 @@ def _normalize_suite2p_plan(suite2p_config, work_unit_ids):
         if work_unit_id in overrides:
             configs = _normalize_single_config_value(overrides[work_unit_id])
         elif default_configs is not None:
-            configs = list(default_configs)
+            configs = [dict(item) for item in default_configs]
         else:
             raise ValueError(f'No suite2p config provided for work unit {work_unit_id}')
         plan.append({'work_unit': work_unit_id, 'suite2p_configs': configs})
@@ -150,7 +194,8 @@ def _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=CONFIG_ROO
     if not runs2p:
         return
     for plan_item in suite2p_plan:
-        for config_name in plan_item['suite2p_configs']:
+        for config_entry in plan_item['suite2p_configs']:
+            config_name = config_entry['config'] if isinstance(config_entry, dict) else config_entry
             config_path = os.path.join(config_root, user_id, config_name)
             if not os.path.exists(config_path):
                 raise FileNotFoundError(
@@ -231,6 +276,8 @@ def run_step1_batch_universal(step1_config):
     jump_queue = step1_config.get('jump_queue', False)
     run_on = step1_config.get('run_on', 'server')
     queue_name = step1_config.get('queue', 'step1')
+    suite2p_env = step1_config.get('suite2p_env')
+    validate_suite2p_env(suite2p_env)
     local_repository_root = step1_config.get('local_repository_root')
     local_raw_repository_root = step1_config.get('local_raw_repository_root')
     local_processed_repository_root = step1_config.get('local_processed_repository_root')
@@ -267,6 +314,20 @@ def run_step1_batch_universal(step1_config):
         topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
         suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
         _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=suite2p_config_root)
+        if runs2p:
+            config_paths = [
+                os.path.join(
+                    suite2p_config_root,
+                    user_id,
+                    config_entry['config'] if isinstance(config_entry, dict) else config_entry,
+                )
+                for plan_item in suite2p_plan
+                for config_entry in plan_item['suite2p_configs']
+            ]
+            validate_suite2p_env_config_compatibility(
+                suite2p_env,
+                config_paths,
+            )
 
         common_config = {
             'runhabituate': runhabituate,
@@ -279,11 +340,7 @@ def run_step1_batch_universal(step1_config):
             'suite2p_config_root': suite2p_config_root,
             'runsrdtrans': runsrdtrans,
             **({'srdtrans': json.loads(json.dumps(srdtrans_config))} if runsrdtrans else {}),
-            **(
-                {'suite2p_env': step1_config['suite2p_env']}
-                if 'suite2p_env' in step1_config
-                else {}
-            ),
+            'suite2p_env': suite2p_env,
             **(
                 {'register_with_summed_channel': True}
                 if step1_config.get('register_with_summed_channel', False)

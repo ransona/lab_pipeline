@@ -7,7 +7,7 @@ from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 
 step1_config = {}
 
-# Set userID to the local OS username that owns the local repository tree.
+# userID selects user-specific Suite2p ops/configs; processed output stays under animalID/expID.
 step1_config["userID"] = "adamranson"
 step1_config["expIDs"] = [
     "2026-05-11_01_ESRC033",
@@ -17,9 +17,12 @@ step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processe
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
+# Use the Suite2p 1.1 environment for this compatibility branch.
+step1_config["suite2p_env"] = "suite2p_1.1.0"
+
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1, "chan2_detection": "off"},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2, "chan2_detection": "off"},
 ]
 
 step1_config["runs2p"] = True

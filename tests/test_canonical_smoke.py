@@ -44,7 +44,7 @@ class CanonicalSmokeTests(unittest.TestCase):
         for module_name in module_names:
             importlib.import_module(module_name)
 
-    def test_local_processed_path_includes_user(self):
+    def test_local_processed_path_excludes_user(self):
         _, _, _, exp_dir_processed, _ = paths.find_paths(
             "adamranson",
             "2025-10-30_10_ESYB025",
@@ -53,9 +53,10 @@ class CanonicalSmokeTests(unittest.TestCase):
         )
         self.assertTrue(
             exp_dir_processed.endswith(
-                "processed_root/adamranson/ESYB025/2025-10-30_10_ESYB025"
+                "processed_root/ESYB025/2025-10-30_10_ESYB025"
             )
         )
+        self.assertNotIn("processed_root/adamranson/", exp_dir_processed)
 
 
 if __name__ == "__main__":

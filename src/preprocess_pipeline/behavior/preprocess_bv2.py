@@ -12,6 +12,16 @@ import harp
 from preprocess_pipeline.shared import paths
 
 
+def _is_local_run():
+    local_env_names = (
+        paths.LOCAL_REPOSITORY_ROOT_ENV,
+        paths.LOCAL_RAW_REPOSITORY_ROOT_ENV,
+        paths.LOCAL_PROCESSED_REPOSITORY_ROOT_ENV,
+        paths.LOCAL_NAS_REPOSITORY_ROOT_ENV,
+    )
+    return os.name == "nt" or any(os.environ.get(env_name) for env_name in local_env_names)
+
+
 def _as_1d_float(array):
     return np.atleast_1d(np.squeeze(np.asarray(array, dtype=float)))
 
@@ -615,7 +625,7 @@ def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
     animalID, remote_repository_root, \
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     # load the stimulus parameter file produced by matlab by the bGUI
     # this includes stim parameters and stimulus order
     try:
@@ -748,6 +758,8 @@ def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
         print('*** Warning: One or both of the PD signals are invalid. If this is an experiment with screens off this is expected. If not, there is a problem. ***')
         if debug:
             print('Debug mode enabled: continuing without prompting despite invalid PD signal.')
+        elif _is_local_run():
+            print('Local run detected: continuing without prompting despite invalid PD signal.')
         else:
             choice = input("Do you want to continue? (y/n): ").strip().lower()
             if choice != 'y':
@@ -816,6 +828,8 @@ def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
                 print('This issue should not occur on data acquired after 25/03/2025 - please contact AR if you see this issue on data after this date.')
                 if debug:
                     print('Debug mode enabled: continuing without prompting and switching to BV encoder data.')
+                elif _is_local_run():
+                    print('Local run detected: continuing without prompting and switching to BV encoder data.')
                 else:
                     choice = input("Do you want to continue? (y/n): ").strip().lower()
                     if choice != 'y':

@@ -11,7 +11,9 @@ GUI apps:
 | App | Purpose | Linux command | Windows launcher |
 | --- | --- | --- | --- |
 | `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
+| `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
 | `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
+| `data_manager.py` | Data Manager GUI for browsing/scanning repository data and deletion workflow support | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/data_manager.py` | `windows_launchers/run_data_manager.bat` |
 | `eye_check.py` | Eye tracking QC GUI adapter | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
 | `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
 
@@ -38,9 +40,20 @@ Pipeline and subsystem apps:
 | `preprocess_pupil_timestamp.py` | Pupil timestamp alignment | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_pupil_timestamp.py` |
 | `preprocess_s2p.py` | Suite2p postprocessing/timestamp extraction | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_s2p.py` |
 
-Windows launchers are in `windows_launchers/`. They assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If inference fails, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME`.
+Windows launchers are in `windows_launchers/`. Most `.bat` launchers assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If inference fails, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME`.
+
+The local processing launchers are different because they run on the Windows machine itself. `windows_launchers/run_local_gui.vbs` starts the GUI without opening a black command prompt window. `windows_launchers/run_local_gui.bat` starts the same GUI with a visible command prompt, which is useful for debugging startup errors. Both look for the local `sci` conda env under `%USERPROFILE%\miniconda3\envs\sci`, `%USERPROFILE%\anaconda3\envs\sci`, `%USERPROFILE%\mambaforge\envs\sci`, or `%USERPROFILE%\miniforge3\envs\sci`. If conda is installed elsewhere, edit the Python path in the launcher file.
 
 `apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
+
+Data Manager is an exception in one detail: `apps/data_manager.py` launches the
+external Tk app in
+`src/preprocess_pipeline/viewers/external/data_manager/` by changing into that
+directory and executing its `main.py`. The GUI only writes shared SQLite state;
+destructive deletion is performed separately by the admin runner
+`src/preprocess_pipeline/viewers/external/data_manager/delete_runner.py`. See
+`src/preprocess_pipeline/viewers/external/data_manager/README.md` for the full
+GUI, conflict, TIFF cleanup, metrics, and deletion-runner workflow.
 
 ## Repository Layout
 
@@ -257,17 +270,20 @@ Step 1 config files define:
 - optional `srdtrans`
 - optional `queue`
 - optional `jump_queue`
-- optional `suite2p_env`
+- `suite2p_env`
 - optional `settings`
 
-The universal Step 1 submitter supports these `suite2p_config` shapes:
+The universal Step 1 submitter supports these `suite2p_config` shapes. `suite2p_env` is required and is currently one of `suite2p` or `suite2p_1.1.0`. Native Suite2p 1.x settings files must be run with `suite2p_1.1.0`; the submitter and runtime reject them if `suite2p_env` is `suite2p`. `nplanes` and `nchannels` are always inferred from the raw ScanImage metadata. `functional_chan` is an analysis choice and should be supplied here, not saved inside the reusable Suite2p settings file.
 
-### 1. One config string
+### 1. One reusable Suite2p settings file
 
 Use the same Suite2p config for every work unit.
 
 ```python
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {
+    "config": "ch_1_depth_1.npy",
+    "functional_chan": 1,
+}
 ```
 
 ### 2. One or two configs in a list
@@ -276,8 +292,8 @@ For standard dual-channel data, pass one config per channel.
 
 ```python
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 ```
 
@@ -287,9 +303,9 @@ Use this when most work units share a config, but a few need special handling.
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R002": "ch_1_depth_1_special.npy",
+        "P1/R002": {"config": "ch_1_depth_1_special.npy", "functional_chan": 1},
     },
 }
 ```
@@ -299,8 +315,8 @@ You can also use a default dual-channel pair:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -311,9 +327,9 @@ This is the most explicit form. Use work-unit IDs such as `root` for standard da
 
 ```python
 step1_config["suite2p_config"] = {
-    "root": "ch_1_depth_1.npy",
-    "P1/R001": "ch_1_depth_1.npy",
-    "P1/R002": "ch_1_depth_1.npy",
+    "root": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "P1/R001": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+    "P1/R002": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
 }
 ```
 
@@ -322,13 +338,13 @@ For explicit dual-channel overrides:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
     "overrides": {
         "P1/R002": [
-            "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-            "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+            {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+            {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
         ],
     },
 }
@@ -340,22 +356,22 @@ Single experiment:
 
 ```python
 step1_config["expIDs"] = ["2026-05-11_03_ESRC033"]
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {"config": "ch_1_depth_1.npy", "functional_chan": 1}
 ```
 
 Combined experiment:
 
 ```python
 step1_config["expIDs"] = [["2026-05-11_03_ESRC033", "2026-05-11_99_ESRC033"]]
-step1_config["suite2p_config"] = "ch_1_depth_1.npy"
+step1_config["suite2p_config"] = {"config": "ch_1_depth_1.npy", "functional_chan": 1}
 ```
 
 Dual-channel standard experiment:
 
 ```python
 step1_config["suite2p_config"] = [
-    "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-    "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+    {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+    {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
 ]
 ```
 
@@ -365,7 +381,7 @@ Same config for all paths and ROIs:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
 }
 ```
 
@@ -374,8 +390,8 @@ Same dual-channel pair for all paths and ROIs:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -384,10 +400,10 @@ Explicit per-path or per-ROI overrides:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_1_depth_1.npy",
+    "default": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R001": "ch_1_depth_1.npy",
-        "P1/R002": "ch_1_depth_1_special.npy",
+        "P1/R001": {"config": "ch_1_depth_1.npy", "functional_chan": 1},
+        "P1/R002": {"config": "ch_1_depth_1_special.npy", "functional_chan": 1},
     },
 }
 ```
@@ -497,7 +513,7 @@ Local mode:
 
 - bypasses the queue
 - reads imaging data from `<local_raw_repository_root>/<animalID>/<expID>`
-- writes outputs under `<local_processed_repository_root>/<userID>/<animalID>/<expID>`
+- writes outputs under `<local_processed_repository_root>/<animalID>/<expID>`
 - falls back to `<local_nas_repository_root>/<animalID>/<expID>` for missing named metadata files
 - is intended for direct Step 1 and Step 2 execution
 - still uses the normal Suite2p config files and local envs
@@ -536,7 +552,7 @@ D:\data\Repository\
 For mesoscope experiments, the pipeline detects the `P*/R*` folders automatically. Each ROI folder becomes a Suite2p work unit, for example `P1/R001` and `P1/R002`. Outputs are written under `local_processed_repository_root`:
 
 ```text
-F:\Local_Repository_Processed\<userID>\ESYB025\2025-10-30_10_ESYB025\
+F:\Local_Repository_Processed\ESYB025\2025-10-30_10_ESYB025\
   P1\R001\suite2p\
   P1\R002\suite2p\
 ```
@@ -559,10 +575,11 @@ step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
+step1_config["suite2p_env"] = "suite2p_1.1.0"
 
 # Use one Suite2p config for every mesoscope path/ROI work unit.
 step1_config["suite2p_config"] = {
-    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
 }
 
 step1_config["runs2p"] = True
@@ -591,8 +608,8 @@ For dual-channel mesoscope data, use a default pair:
 ```python
 step1_config["suite2p_config"] = {
     "default": [
-        "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy",
+        {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        {"config": "ch_2_depth_x_zoom_8_soma_jRGECO1a.npy", "functional_chan": 2},
     ],
 }
 ```
@@ -601,10 +618,10 @@ For explicit per-ROI control:
 
 ```python
 step1_config["suite2p_config"] = {
-    "default": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+    "default": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
     "overrides": {
-        "P1/R001": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
-        "P1/R002": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy",
+        "P1/R001": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
+        "P1/R002": {"config": "ch_2_depth_x_zoom_8_axon_jGCaMP8m.npy", "functional_chan": 1},
     },
 }
 ```
@@ -616,7 +633,7 @@ conda activate sci
 python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
 ```
 
-The Step 1 runner will call the local `suite2p` conda environment for Suite2p work. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
+The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. `step1_config["suite2p_env"]` is required; in the Suite2p 1.1 compatibility branch, set it to `"suite2p_1.1.0"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
 
 After Step 1 finishes, create a local Step 2 config:
 

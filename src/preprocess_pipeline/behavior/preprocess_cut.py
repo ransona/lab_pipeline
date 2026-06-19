@@ -9,6 +9,19 @@ from scipy import signal
 import pickle
 from preprocess_pipeline.shared import paths
 
+
+def _is_local_run():
+    return any(
+        os.environ.get(env_name)
+        for env_name in (
+            paths.LOCAL_REPOSITORY_ROOT_ENV,
+            paths.LOCAL_RAW_REPOSITORY_ROOT_ENV,
+            paths.LOCAL_PROCESSED_REPOSITORY_ROOT_ENV,
+            paths.LOCAL_NAS_REPOSITORY_ROOT_ENV,
+        )
+    )
+
+
 def sparse_cat_np(original_np,new_np):
     new_shape = new_np.shape
     if len(new_shape) == 1:
@@ -36,11 +49,23 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
     
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     exp_dir_processed_cut = os.path.join(exp_dir_processed,'cut')
     os.makedirs(exp_dir_processed_cut, exist_ok = True)
-    # load trial data
-    all_trials = pd.read_csv(os.path.join(exp_dir_processed, expID + '_all_trials.csv'))
+    # load trial data. Local runs may use pre-exported trial CSVs from the raw/NAS folder.
+    all_trials_processed_path = os.path.join(exp_dir_processed, expID + '_all_trials.csv')
+    if os.path.exists(all_trials_processed_path):
+        all_trials_path = all_trials_processed_path
+    else:
+        all_trials_path = paths.raw_file_path(userID, expID, expID + '_all_trials.csv', exp_dir_raw=exp_dir_raw)
+    print(f"Loading all_trials from {all_trials_path}")
+    all_trials = pd.read_csv(all_trials_path)
+    missing_columns = [column for column in ("time", "duration") if column not in all_trials.columns]
+    if missing_columns:
+        raise KeyError(
+            f"{all_trials_path} is missing required column(s) {missing_columns}. "
+            "Run Bonvision preprocessing first to create the timeline-aligned processed all_trials CSV."
+        )
 
     ### Cut Ca imaging data ###
     # load ca imaging traces
@@ -97,25 +122,32 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         with open(os.path.join(exp_dir_processed_cut,iS2P_file[0:7]+'_Spikes_cut.pickle'), 'wb') as f: pickle.dump(s2p_Spikes_cut, f)
 
     ### Cut ephys data ###
-    ephys_combined = np.load(os.path.join(exp_dir_processed_recordings,'ephys.npy'))
-    # loop through all trials collecting the ephys traces
-    ephys_cut = {}
-    for iTrial in range(all_trials.shape[0]):
-        trial_onset_time = all_trials.loc[iTrial,'time']
-        trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
-        # collect samples from ephys
-        first_sample = np.argmax(ephys_combined[0,:] >= (trial_onset_time-pre_time))
-        last_sample = np.argmax(ephys_combined[0,:] >= (trial_end_time+pre_time))
-        if iTrial == 0:
-            ephys_cut['0'] = ephys_combined[np.newaxis,1,first_sample:last_sample]
-            ephys_cut['1'] = ephys_combined[np.newaxis,2,first_sample:last_sample]
+    ephys_path = os.path.join(exp_dir_processed_recordings,'ephys.npy')
+    if not os.path.exists(ephys_path):
+        if _is_local_run():
+            print(f"WARNING: Ephys data not found, skipping ephys cutting: {ephys_path}")
         else:
-            ephys_cut['0'] = sparse_cat_np(ephys_cut['0'],ephys_combined[1,first_sample:last_sample])
-            ephys_cut['1'] = sparse_cat_np(ephys_cut['1'],ephys_combined[2,first_sample:last_sample])
-    
-    ephys_cut['t'] = np.linspace(0,ephys_cut['0'].shape[1]/1000,ephys_cut['0'].shape[1])-pre_time
-    # save in pickle
-    with open(os.path.join(exp_dir_processed_cut,'ephys_cut.pickle'), 'wb') as f: pickle.dump(ephys_cut, f)
+            raise FileNotFoundError(f'Ephys data not found: {ephys_path}. Run ephys preprocessing before cutting traces.')
+    else:
+        ephys_combined = np.load(ephys_path)
+        # loop through all trials collecting the ephys traces
+        ephys_cut = {}
+        for iTrial in range(all_trials.shape[0]):
+            trial_onset_time = all_trials.loc[iTrial,'time']
+            trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
+            # collect samples from ephys
+            first_sample = np.argmax(ephys_combined[0,:] >= (trial_onset_time-pre_time))
+            last_sample = np.argmax(ephys_combined[0,:] >= (trial_end_time+pre_time))
+            if iTrial == 0:
+                ephys_cut['0'] = ephys_combined[np.newaxis,1,first_sample:last_sample]
+                ephys_cut['1'] = ephys_combined[np.newaxis,2,first_sample:last_sample]
+            else:
+                ephys_cut['0'] = sparse_cat_np(ephys_cut['0'],ephys_combined[1,first_sample:last_sample])
+                ephys_cut['1'] = sparse_cat_np(ephys_cut['1'],ephys_combined[2,first_sample:last_sample])
+
+        ephys_cut['t'] = np.linspace(0,ephys_cut['0'].shape[1]/1000,ephys_cut['0'].shape[1])-pre_time
+        # save in pickle
+        with open(os.path.join(exp_dir_processed_cut,'ephys_cut.pickle'), 'wb') as f: pickle.dump(ephys_cut, f)
 
     ### Cut eye data ###
     # check DLC data exists
@@ -194,27 +226,31 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
     # wheel['position']
     # wheel['speed']
     # wheel['t']
-    wheel = pickle.load(open(os.path.join(exp_dir_processed_recordings,'wheel.pickle'), "rb"))
-    # loop through all trials collecting the wheel traces
-    wheel_cut = {}
-    for iTrial in range(all_trials.shape[0]):
-        trial_onset_time = all_trials.loc[iTrial,'time']
-        trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
-        # collect samples from wheel
-        first_sample = np.argmax(wheel['t'] >= trial_onset_time - pre_time)
-        last_sample = np.argmax(wheel['t'] >= trial_end_time + post_time)
-        if iTrial == 0:
-            wheel_cut['position'] = wheel['position'][np.newaxis,first_sample:last_sample]
-            wheel_cut['speed'] = wheel['speed'][np.newaxis,first_sample:last_sample]
-        else:
-            wheel_cut['position'] = sparse_cat_np(wheel_cut['position'],wheel['position'][np.newaxis,first_sample:last_sample])
-            wheel_cut['speed'] = sparse_cat_np(wheel_cut['speed'],wheel['speed'][np.newaxis,first_sample:last_sample])
-    
-    # make time vector
-    wheel_sample_rate = 1/np.round(wheel['t'][1]-wheel['t'][0],4)
-    wheel_cut['t'] = np.linspace(0,wheel_cut['position'].shape[1]/wheel_sample_rate,wheel_cut['position'].shape[1]) - pre_time
-    # save in pickle
-    with open(os.path.join(exp_dir_processed_cut,'wheel.pickle'), 'wb') as f: pickle.dump(wheel_cut, f)   
+    wheel_path = os.path.join(exp_dir_processed_recordings,'wheel.pickle')
+    if os.path.exists(wheel_path):
+        wheel = pickle.load(open(wheel_path, "rb"))
+        # loop through all trials collecting the wheel traces
+        wheel_cut = {}
+        for iTrial in range(all_trials.shape[0]):
+            trial_onset_time = all_trials.loc[iTrial,'time']
+            trial_end_time = trial_onset_time + all_trials.loc[iTrial,'duration']
+            # collect samples from wheel
+            first_sample = np.argmax(wheel['t'] >= trial_onset_time - pre_time)
+            last_sample = np.argmax(wheel['t'] >= trial_end_time + post_time)
+            if iTrial == 0:
+                wheel_cut['position'] = wheel['position'][np.newaxis,first_sample:last_sample]
+                wheel_cut['speed'] = wheel['speed'][np.newaxis,first_sample:last_sample]
+            else:
+                wheel_cut['position'] = sparse_cat_np(wheel_cut['position'],wheel['position'][np.newaxis,first_sample:last_sample])
+                wheel_cut['speed'] = sparse_cat_np(wheel_cut['speed'],wheel['speed'][np.newaxis,first_sample:last_sample])
+        
+        # make time vector
+        wheel_sample_rate = 1/np.round(wheel['t'][1]-wheel['t'][0],4)
+        wheel_cut['t'] = np.linspace(0,wheel_cut['position'].shape[1]/wheel_sample_rate,wheel_cut['position'].shape[1]) - pre_time
+        # save in pickle
+        with open(os.path.join(exp_dir_processed_cut,'wheel.pickle'), 'wb') as f: pickle.dump(wheel_cut, f)
+    else:
+        print(f'Wheel data not found, skipping wheel cut: {wheel_path}')
 
     print('done')
 
@@ -237,5 +273,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

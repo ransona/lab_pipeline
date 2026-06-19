@@ -9,6 +9,10 @@ from pathlib import Path
 
 from preprocess_pipeline.shared import paths
 from preprocess_pipeline.srdtrans.launcher import encode_config_arg as encode_srdtrans_config_arg
+from preprocess_pipeline.suite2p.config_validation import (
+    validate_suite2p_env,
+    validate_suite2p_env_config_compatibility,
+)
 from preprocess_pipeline.step1 import habituate
 
 
@@ -161,17 +165,48 @@ def _suite2p_config_root(queued_command=None):
     return CONFIG_ROOT
 
 
+def _suite2p_config_name(config_entry):
+    if isinstance(config_entry, dict):
+        return config_entry['config']
+    return config_entry
+
+
+def _suite2p_functional_chan(config_entry, default_value=1):
+    if isinstance(config_entry, dict):
+        return int(config_entry.get('functional_chan', default_value))
+    return int(default_value)
+
+
+def _suite2p_chan2_detection(config_entry):
+    if isinstance(config_entry, dict):
+        return str(config_entry.get('chan2_detection', 'off')).lower()
+    return 'off'
+
+
 def _suite2p_config_path(user_id, config_names, queued_command=None):
     config_root = _suite2p_config_root(queued_command)
-    return ','.join(os.path.join(config_root, user_id, config_name) for config_name in config_names)
+    return ','.join(
+        os.path.join(config_root, user_id, _suite2p_config_name(config_entry))
+        for config_entry in config_names
+    )
 
 
 def _should_emit_progress_line(line, progress_state):
     stripped = line.strip()
+    message = re.sub(
+        r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \[(?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+',
+        '',
+        stripped,
+    )
+    if message:
+        stripped = message
     lowered = stripped.lower()
 
     if not stripped:
         return True
+
+    if stripped in {'warn(', 'warnings.warn('}:
+        return False
 
     if any(
         token in lowered
@@ -216,6 +251,17 @@ def _should_emit_progress_line(line, progress_state):
     if re.match(r'^(25|50|75|100)% complete$', stripped):
         return True
 
+    suite2p_tqdm = re.match(r'^(\d+)%\|.*\|\s*(\d+)/(\d+)\s*\[', stripped)
+    if suite2p_tqdm:
+        percent = int(suite2p_tqdm.group(1))
+        current = int(suite2p_tqdm.group(2))
+        total = int(suite2p_tqdm.group(3))
+        key = (total, (percent // 25) * 25)
+        if current == total or (key[1] >= 25 and key not in progress_state['suite2p_tqdm_milestones']):
+            progress_state['suite2p_tqdm_milestones'].add(key)
+            return True
+        return False
+
     return True
 
 
@@ -224,6 +270,7 @@ def _stream_subprocess(cmd, log_path, raw_log_path):
         'last_binary_frame': 0,
         'last_registered_frame': 0,
         'dlc_percent_milestones': set(),
+        'suite2p_tqdm_milestones': set(),
     }
     with subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -265,16 +312,33 @@ def _suite2p_cmd_for_work_unit(
     queued_command,
     work_unit_id,
 ):
-    suite2p_env = queued_command['config'].get('suite2p_env', 'suite2p')
+    suite2p_env = queued_command['config'].get('suite2p_env')
+    validate_suite2p_env(suite2p_env, context='Queued Step 1 config')
     run_s2p_as_user = 'suite2p_env' in queued_command['config']
     launcher = str(APP_ROOT / 's2p_launcher.py')
+    config_path = _suite2p_config_path(user_id, config_names, queued_command=queued_command)
+    validate_suite2p_env_config_compatibility(
+        suite2p_env,
+        config_path,
+        context='Queued Step 1 config',
+    )
     launcher_args = [
         user_id,
         exp_id,
         tif_path,
         output_path,
-        _suite2p_config_path(user_id, config_names, queued_command=queued_command),
+        config_path,
     ]
+    functional_chans = [
+        _suite2p_functional_chan(config_entry, index + 1)
+        for index, config_entry in enumerate(config_names)
+    ]
+    launcher_args.append('--functional-chans=' + ','.join(str(chan) for chan in functional_chans))
+    chan2_detection = [
+        _suite2p_chan2_detection(config_entry)
+        for config_entry in config_names
+    ]
+    launcher_args.append('--chan2-detection=' + ','.join(chan2_detection))
     if queued_command["config"].get("runsrdtrans", False):
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
     if queued_command["config"].get("register_with_summed_channel", False):

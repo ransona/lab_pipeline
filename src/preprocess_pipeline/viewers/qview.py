@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import traceback
+import importlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -25,6 +26,7 @@ from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths
 from preprocess_pipeline.srdtrans import build_model as srdtrans_build
+from preprocess_pipeline.suite2p.config_validation import is_native_suite2p_1x_config
 from preprocess_pipeline.step1 import split_combined_s2p
 from preprocess_pipeline.step1.run_batch import run_step1_batch_universal
 from preprocess_pipeline.step2.run_batch import run_step2_batch
@@ -41,6 +43,15 @@ INITIAL_LOG_LINES = 10000
 S2P_CONFIG_ROOT = Path("/data/common/configs/s2p_configs")
 CONFIG_ROOT = S2P_CONFIG_ROOT.parent
 SRDTRANS_TMUX_TTL_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_STEP2_SETTINGS = {
+    "neuropil_coeff": [0.7, 0.7],
+    "subtract_overall_frame": False,
+}
+DEFAULT_SRDTRANS_STEP1_JSON = (
+    '{"model_root": "/home/adamranson/data/srt_models", "model": "", '
+    '"patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", '
+    '"channels": ["ch1"]}'
+)
 
 
 def _step1_preset_root(username: str) -> Path:
@@ -131,6 +142,7 @@ class StandardMetadata:
     nplanes: Optional[int]
     nchannels: int
     scan_frame_rate: Optional[float]
+    scan_zoom_factor: Optional[float]
     fs: Optional[float]
     tif_path: str
 
@@ -142,6 +154,7 @@ class MesoPathMetadata:
     nrois: int
     nchannels: int
     scan_frame_rate: Optional[float]
+    scan_zoom_factor: Optional[float]
     fs_per_roi: Optional[float]
     roi_names: list[str]
 
@@ -183,6 +196,13 @@ def _infer_nplanes_from_frame_data(frame_data: dict) -> Optional[int]:
     return None
 
 
+def _optional_float(value) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
 def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
     tif_candidates = sorted(Path(exp_dir_raw).glob("*.tif"))
     if not tif_candidates:
@@ -191,11 +211,8 @@ def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
     frame_data = _read_scanimage_frame_data_from_tiff(tif_path)
     nplanes = _infer_nplanes_from_frame_data(frame_data)
     nchannels = _parse_channel_count(frame_data.get("SI.hChannels.channelSave"))
-    scan_frame_rate = frame_data.get("SI.hRoiManager.scanFrameRate")
-    try:
-        scan_frame_rate = float(scan_frame_rate) if scan_frame_rate is not None else None
-    except Exception:
-        scan_frame_rate = None
+    scan_frame_rate = _optional_float(frame_data.get("SI.hRoiManager.scanFrameRate"))
+    scan_zoom_factor = _optional_float(frame_data.get("SI.hRoiManager.scanZoomFactor"))
     fs = None
     if scan_frame_rate is not None and nplanes and nplanes > 0:
         fs = scan_frame_rate / float(nplanes)
@@ -203,6 +220,7 @@ def _infer_standard_metadata(exp_dir_raw: str) -> StandardMetadata:
         nplanes=nplanes,
         nchannels=nchannels,
         scan_frame_rate=scan_frame_rate,
+        scan_zoom_factor=scan_zoom_factor,
         fs=fs,
         tif_path=tif_path,
     )
@@ -247,11 +265,8 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
         nplanes = _infer_nplanes_from_frame_data(header)
         nchannels = _parse_channel_count(header.get("SI.hChannels.channelSave"))
         global_nchannels = max(global_nchannels, nchannels)
-        scan_frame_rate = header.get("SI.hRoiManager.scanFrameRate")
-        try:
-            scan_frame_rate = float(scan_frame_rate) if scan_frame_rate is not None else None
-        except Exception:
-            scan_frame_rate = None
+        scan_frame_rate = _optional_float(header.get("SI.hRoiManager.scanFrameRate"))
+        scan_zoom_factor = _optional_float(header.get("SI.hRoiManager.scanZoomFactor"))
         fs_per_roi = None
         if scan_frame_rate is not None and nplanes and nplanes > 0:
             fs_per_roi = scan_frame_rate / float(nplanes) / float(len(roi_names))
@@ -262,6 +277,7 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
             nrois=len(roi_names),
             nchannels=nchannels,
             scan_frame_rate=scan_frame_rate,
+            scan_zoom_factor=scan_zoom_factor,
             fs_per_roi=fs_per_roi,
             roi_names=roi_names,
         )
@@ -269,7 +285,8 @@ def _infer_meso_descriptor(exp_dir_raw: str, exp_id: str) -> ExperimentDescripto
     path_summaries = []
     for path_name, meta in per_path.items():
         path_summaries.append(
-            f"{path_name}: {meta.nrois} ROI(s), {meta.nplanes or '?'} plane(s), {meta.nchannels} channel(s)"
+            f"{path_name}: {meta.nrois} ROI(s), {meta.nplanes or '?'} plane(s), "
+            f"{meta.nchannels} channel(s), zoom={meta.scan_zoom_factor or '?'}"
         )
     summary = "Meso | " + "; ".join(path_summaries)
     return ExperimentDescriptor(
@@ -299,6 +316,7 @@ def describe_experiment(user_id: str, exp_id: str) -> ExperimentDescriptor:
     summary = (
         f"Standard | {standard.nplanes or '?'} plane(s), "
         f"{standard.nchannels} channel(s), "
+        f"zoom={standard.scan_zoom_factor or '?'}, "
         f"scanFrameRate={standard.scan_frame_rate or '?'} Hz, "
         f"fs={standard.fs or '?'} Hz"
     )
@@ -348,13 +366,24 @@ def inspect_combined_split_sources(user_id: str, exp_id: str) -> list[dict]:
     if not plane_dirs:
         raise FileNotFoundError(f"No plane folders found in {suite2p_path}")
 
-    plane0_ops = np.load(plane_dirs[0] / "ops.npy", allow_pickle=True).item()
+    plane0_ops = split_combined_s2p.load_plane_metadata(str(plane_dirs[0]))
     layout_mode = split_combined_s2p.infer_layout_mode_from_split_root(split_root)
+    source_data_paths = split_combined_s2p.get_source_data_paths(plane0_ops, str(plane_dirs[0]))
     source_exp_ids = [
         split_combined_s2p.extract_exp_id_from_data_path(data_path, layout_mode)
-        for data_path in plane0_ops["data_path"]
+        for data_path in source_data_paths
     ]
-    frames_per_folder = [int(frame_count) for frame_count in plane0_ops.get("frames_per_folder", [])]
+    try:
+        frames_per_folder = [
+            int(frame_count)
+            for frame_count in split_combined_s2p.get_frames_per_folder(
+                plane0_ops,
+                str(plane_dirs[0]),
+                len(source_exp_ids),
+            )
+        ]
+    except Exception:
+        frames_per_folder = []
 
     rows = []
     for index, source_exp_id in enumerate(source_exp_ids):
@@ -467,15 +496,38 @@ def _parse_ops_value(text: str, old_value):
     return stripped
 
 
+def _install_numpy_core_pickle_aliases():
+    """Allow NumPy 1.x GUI envs to read NumPy 2.x-authored pickled .npy files."""
+    for module_name in (
+        "numpy.core",
+        "numpy.core.multiarray",
+        "numpy.core.numeric",
+        "numpy.core.umath",
+        "numpy.core._multiarray_umath",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        alias = module_name.replace("numpy.core", "numpy._core", 1)
+        sys.modules.setdefault(alias, module)
+
+
+def load_suite2p_ops(config_path: Path) -> dict:
+    _install_numpy_core_pickle_aliases()
+    ops = np.load(config_path, allow_pickle=True).item()
+    if not isinstance(ops, dict):
+        raise ValueError(f"Suite2p config is not a dict: {config_path}")
+    return ops
+
+
 class Suite2pOpsEditorDialog(QtWidgets.QDialog):
     def __init__(self, config_path: Path, parent=None, default_save_dir: Optional[Path] = None):
         super().__init__(parent)
         self.config_path = Path(config_path)
         self.default_save_dir = Path(default_save_dir) if default_save_dir else self.config_path.parent
         self.saved_as_path: Optional[Path] = None
-        self.ops = np.load(self.config_path, allow_pickle=True).item()
-        if not isinstance(self.ops, dict):
-            raise ValueError(f"Suite2p config is not a dict: {self.config_path}")
+        self.ops = load_suite2p_ops(self.config_path)
         self.dirty = False
         self.setWindowTitle(f"Edit Suite2p config: {self.config_path.name}")
         self.resize(900, 700)
@@ -623,6 +675,8 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
 
 
 class Suite2pConfigSelector(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_dir: Optional[Path] = None
@@ -633,6 +687,7 @@ class Suite2pConfigSelector(QtWidgets.QWidget):
         layout.addWidget(self.combo, 1)
         layout.addWidget(self.edit_button)
         self.edit_button.clicked.connect(self.edit_current_config)
+        self.combo.currentTextChanged.connect(self.configChanged.emit)
 
     def set_config_dir(self, config_dir: Optional[Path]):
         self.config_dir = Path(config_dir) if config_dir else None
@@ -778,6 +833,12 @@ class QueueTab(QtWidgets.QWidget):
         self.queue_selector = QtWidgets.QComboBox()
         self.queue_selector.addItems(["Normal queue", "Debug queue"])
         controls.addWidget(self.queue_selector)
+        self.start_queue_button = QtWidgets.QPushButton("Start")
+        self.stop_queue_button = QtWidgets.QPushButton("Stop")
+        self.restart_queue_button = QtWidgets.QPushButton("Restart")
+        for button in (self.start_queue_button, self.stop_queue_button, self.restart_queue_button):
+            button.setVisible(self.username == "adamranson")
+            controls.addWidget(button)
         controls.addStretch(1)
         self.remove_button = QtWidgets.QPushButton("Remove Selected Job")
         controls.addWidget(self.remove_button)
@@ -811,6 +872,9 @@ class QueueTab(QtWidgets.QWidget):
         layout.addWidget(main_splitter)
 
         self.queue_selector.currentIndexChanged.connect(self.on_queue_source_changed)
+        self.start_queue_button.clicked.connect(self.start_current_queue)
+        self.stop_queue_button.clicked.connect(self.stop_current_queue)
+        self.restart_queue_button.clicked.connect(self.restart_current_queue)
         self.remove_button.clicked.connect(self.remove_selected_job)
         self.queue_list.itemSelectionChanged.connect(self._remember_selection)
         self.queue_list.itemDoubleClicked.connect(self.show_selected_job_config)
@@ -822,6 +886,117 @@ class QueueTab(QtWidgets.QWidget):
         box_layout = QtWidgets.QVBoxLayout(box)
         box_layout.addWidget(widget)
         return box
+
+    def _current_queue_session_name(self) -> str:
+        return "lab_pipeline_queue" if self.queue_selector.currentIndex() == 0 else "lab_pipeline_debug_queue"
+
+    def _current_queue_label(self) -> str:
+        return "normal queue" if self.queue_selector.currentIndex() == 0 else "debug queue"
+
+    def _current_queue_listener_command(self) -> str:
+        repo_root = Path(__file__).resolve().parents[3]
+        listener = repo_root / "apps" / "queue_listener.py"
+        command = f"cd {shlex.quote(str(repo_root))} && /opt/scripts/conda-run.sh base python {shlex.quote(str(listener))}"
+        if self.queue_selector.currentIndex() == 1:
+            command += " --debug"
+        return command
+
+    def _tmux_session_exists(self, session_name: str) -> bool:
+        return subprocess.run(
+            ["tmux", "has-session", "-t", f"={session_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 0
+
+    def _append_queue_control_message(self, message: str):
+        self._add_log_line(f"** {message}")
+        self.log_list.scrollToBottom()
+
+    def start_current_queue(self):
+        session_name = self._current_queue_session_name()
+        if self._tmux_session_exists(session_name):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Queue Control",
+                f"{self._current_queue_label().title()} is already running in tmux session:\n{session_name}",
+            )
+            return
+        command = self._current_queue_listener_command()
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, command],
+                check=True,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not start {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Started {self._current_queue_label()} in tmux session {session_name}")
+
+    def stop_current_queue(self):
+        session_name = self._current_queue_session_name()
+        if not self._tmux_session_exists(session_name):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Queue Control",
+                f"{self._current_queue_label().title()} is not running in tmux session:\n{session_name}",
+            )
+            return
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Stop Queue",
+            (
+                f"Stop the {self._current_queue_label()} tmux session?\n\n"
+                f"Session: {session_name}\n"
+                "This will also stop any currently running job launched by that listener."
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            subprocess.run(["tmux", "kill-session", "-t", f"={session_name}"], check=True)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not stop {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Stopped {self._current_queue_label()} tmux session {session_name}")
+
+    def restart_current_queue(self):
+        session_name = self._current_queue_session_name()
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Restart Queue",
+            (
+                f"Restart the {self._current_queue_label()}?\n\n"
+                f"Session: {session_name}\n"
+                "If a job is currently running, it will be stopped."
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if self._tmux_session_exists(session_name):
+            try:
+                subprocess.run(["tmux", "kill-session", "-t", f"={session_name}"], check=True)
+            except Exception as exc:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Queue Control",
+                    f"Could not stop {self._current_queue_label()} before restart:\n{exc}",
+                )
+                return
+        command = self._current_queue_listener_command()
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, command],
+                check=True,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Queue Control", f"Could not restart {self._current_queue_label()}:\n{exc}")
+            return
+        self._append_queue_control_message(f"Restarted {self._current_queue_label()} in tmux session {session_name}")
 
     def _connect_timers(self):
         self.queue_timer = QtCore.QTimer(self)
@@ -1179,6 +1354,8 @@ class ExperimentListEditor(QtWidgets.QWidget):
 
 
 class StandardConfigWidget(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._config_files: list[str] = []
@@ -1191,11 +1368,42 @@ class StandardConfigWidget(QtWidgets.QWidget):
         self.register_with_summed_channel.setEnabled(False)
         self.ch1_combo = Suite2pConfigSelector()
         self.ch2_combo = Suite2pConfigSelector()
+        self.ch1_func_combo = QtWidgets.QComboBox()
+        self.ch1_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch1_chan2_detection_combo = QtWidgets.QComboBox()
+        self.ch1_chan2_detection_combo.addItems(["off", "intensity", "cellpose"])
+        self.ch2_func_combo = QtWidgets.QComboBox()
+        self.ch2_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch2_func_combo.setCurrentText("2")
+        ch1_row = QtWidgets.QWidget()
+        ch1_layout = QtWidgets.QVBoxLayout(ch1_row)
+        ch1_layout.setContentsMargins(0, 0, 0, 0)
+        ch1_layout.addWidget(QtWidgets.QLabel("Channel 1 config"))
+        ch1_layout.addWidget(self.ch1_combo)
+        ch1_controls = QtWidgets.QHBoxLayout()
+        ch1_controls.addWidget(QtWidgets.QLabel("Functional ch"))
+        ch1_controls.addWidget(self.ch1_func_combo)
+        ch1_controls.addWidget(QtWidgets.QLabel("Chan2 detection"))
+        ch1_controls.addWidget(self.ch1_chan2_detection_combo)
+        ch1_controls.addStretch(1)
+        ch1_layout.addLayout(ch1_controls)
+        self.ch2_row = QtWidgets.QWidget()
+        ch2_layout = QtWidgets.QVBoxLayout(self.ch2_row)
+        ch2_layout.setContentsMargins(0, 0, 0, 0)
+        ch2_layout.addWidget(QtWidgets.QLabel("Channel 2 config"))
+        ch2_layout.addWidget(self.ch2_combo)
+        ch2_controls = QtWidgets.QHBoxLayout()
+        ch2_controls.addWidget(QtWidgets.QLabel("Functional ch"))
+        ch2_controls.addWidget(self.ch2_func_combo)
+        ch2_controls.addStretch(1)
+        ch2_layout.addLayout(ch2_controls)
         layout.addRow(self.same_for_both)
         layout.addRow(self.register_with_summed_channel)
-        layout.addRow("Channel 1 config", self.ch1_combo)
-        layout.addRow("Channel 2 config", self.ch2_combo)
+        layout.addRow(ch1_row)
+        layout.addRow(self.ch2_row)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.ch1_combo.configChanged.connect(self.configChanged.emit)
+        self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
 
     def set_config_files(self, config_files: list[str], config_dir: Optional[Path] = None):
@@ -1216,31 +1424,52 @@ class StandardConfigWidget(QtWidgets.QWidget):
         if not dual:
             self.same_for_both.setChecked(True)
             self.register_with_summed_channel.setChecked(False)
-        self.ch2_combo.setVisible(dual)
+            self.ch1_chan2_detection_combo.setCurrentText("off")
+        self.ch2_row.setVisible(dual)
+        self.ch1_chan2_detection_combo.setEnabled(dual)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
         use_same = self.same_for_both.isChecked()
         self.ch2_combo.setEnabled(not use_same and self.ch2_combo.isVisible())
 
+    def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
+        return {
+            "config": config_name,
+            "functional_chan": int(functional_chan),
+            "chan2_detection": chan2_detection,
+        }
+
     def config_value(self, nchannels: int):
         ch1 = self.ch1_combo.value()
         if not ch1:
             raise ValueError("Channel 1 Suite2p config is required.")
+        ch1_entry = self._config_entry(
+            ch1,
+            int(self.ch1_func_combo.currentText()),
+            self.ch1_chan2_detection_combo.currentText(),
+        )
         if nchannels < 2:
-            return ch1
+            return ch1_entry
+        ch2_functional_chan = int(self.ch2_func_combo.currentText())
         if self.same_for_both.isChecked():
-            return ch1
+            return [
+                ch1_entry,
+                self._config_entry(ch1, ch2_functional_chan),
+            ]
         ch2 = self.ch2_combo.value()
         if not ch2:
             raise ValueError("Channel 2 Suite2p config is required for dual-channel runs.")
-        return [ch1, ch2]
+        return [ch1_entry, self._config_entry(ch2, ch2_functional_chan)]
 
     def apply_preset(self, preset: dict, nchannels: int):
         self.same_for_both.setChecked(preset.get("same_for_both", True))
         self.register_with_summed_channel.setChecked(preset.get("register_with_summed_channel", False))
         self.ch1_combo.set_value(preset.get("ch1", ""))
         self.ch2_combo.set_value(preset.get("ch2", ""))
+        self.ch1_func_combo.setCurrentText(str(preset.get("ch1_functional_chan", 1)))
+        self.ch2_func_combo.setCurrentText(str(preset.get("ch2_functional_chan", 2)))
+        self.ch1_chan2_detection_combo.setCurrentText(str(preset.get("ch1_chan2_detection", "off")))
         self.set_channel_count(nchannels)
 
     def preset_state(self) -> dict:
@@ -1249,6 +1478,9 @@ class StandardConfigWidget(QtWidgets.QWidget):
             "register_with_summed_channel": self.register_with_summed_channel.isChecked(),
             "ch1": self.ch1_combo.value(),
             "ch2": self.ch2_combo.value(),
+            "ch1_functional_chan": int(self.ch1_func_combo.currentText()),
+            "ch2_functional_chan": int(self.ch2_func_combo.currentText()),
+            "ch1_chan2_detection": self.ch1_chan2_detection_combo.currentText(),
         }
 
     def register_with_summed_channel_enabled(self) -> bool:
@@ -1256,6 +1488,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
 
 
 class PathConfigRow(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(
         self,
         path_name: str,
@@ -1267,64 +1501,131 @@ class PathConfigRow(QtWidgets.QWidget):
         super().__init__(parent)
         self.path_name = path_name
         self.nchannels = nchannels
-        layout = QtWidgets.QHBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QtWidgets.QLabel(path_name))
+        title = QtWidgets.QLabel(path_name)
+        font = title.font()
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
         self.ch1_combo = Suite2pConfigSelector()
         self.ch1_combo.set_config_dir(config_dir)
         self.ch1_combo.addItems(config_files)
-        layout.addWidget(QtWidgets.QLabel("Ch1"))
-        layout.addWidget(self.ch1_combo, 1)
+        self.ch1_func_combo = QtWidgets.QComboBox()
+        self.ch1_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch1_chan2_detection_combo = QtWidgets.QComboBox()
+        self.ch1_chan2_detection_combo.addItems(["off", "intensity", "cellpose"])
+        layout.addWidget(QtWidgets.QLabel("Channel 1 config"))
+        layout.addWidget(self.ch1_combo)
+        ch1_controls = QtWidgets.QHBoxLayout()
+        ch1_controls.addWidget(QtWidgets.QLabel("Functional ch"))
+        ch1_controls.addWidget(self.ch1_func_combo)
+        ch1_controls.addWidget(QtWidgets.QLabel("Chan2 detection"))
+        ch1_controls.addWidget(self.ch1_chan2_detection_combo)
+        ch1_controls.addStretch(1)
+        layout.addLayout(ch1_controls)
         self.same_for_both = QtWidgets.QCheckBox("Same for ch2")
         self.same_for_both.setChecked(True)
         layout.addWidget(self.same_for_both)
         self.ch2_combo = Suite2pConfigSelector()
         self.ch2_combo.set_config_dir(config_dir)
         self.ch2_combo.addItems(config_files)
-        layout.addWidget(QtWidgets.QLabel("Ch2"))
-        layout.addWidget(self.ch2_combo, 1)
+        self.ch2_func_combo = QtWidgets.QComboBox()
+        self.ch2_func_combo.addItems(["1", "2", "3", "4"])
+        self.ch2_func_combo.setCurrentText("2")
+        self.ch2_label = QtWidgets.QLabel("Channel 2 config")
+        layout.addWidget(self.ch2_label)
+        layout.addWidget(self.ch2_combo)
+        ch2_controls = QtWidgets.QHBoxLayout()
+        self.ch2_func_label = QtWidgets.QLabel("Functional ch")
+        ch2_controls.addWidget(self.ch2_func_label)
+        ch2_controls.addWidget(self.ch2_func_combo)
+        ch2_controls.addStretch(1)
+        layout.addLayout(ch2_controls)
         self.ch2_combo.setVisible(nchannels >= 2)
+        self.ch2_label.setVisible(nchannels >= 2)
+        self.ch2_func_label.setVisible(nchannels >= 2)
+        self.ch2_func_combo.setVisible(nchannels >= 2)
         self.same_for_both.setVisible(nchannels >= 2)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.ch1_combo.configChanged.connect(self.configChanged.emit)
+        self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
         self.ch2_combo.setEnabled(not self.same_for_both.isChecked() and self.ch2_combo.isVisible())
 
+    def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
+        return {
+            "config": config_name,
+            "functional_chan": int(functional_chan),
+            "chan2_detection": chan2_detection,
+        }
+
     def config_value(self):
         ch1 = self.ch1_combo.value()
         if not ch1:
             raise ValueError(f"{self.path_name}: channel 1 config is required.")
+        ch1_entry = self._config_entry(
+            ch1,
+            int(self.ch1_func_combo.currentText()),
+            self.ch1_chan2_detection_combo.currentText(),
+        )
         if self.nchannels < 2:
-            return ch1
+            return ch1_entry
+        ch2_functional_chan = int(self.ch2_func_combo.currentText())
         if self.same_for_both.isChecked():
-            return [ch1, ch1]
+            return [ch1_entry, self._config_entry(ch1, ch2_functional_chan)]
         ch2 = self.ch2_combo.value()
         if not ch2:
             raise ValueError(f"{self.path_name}: channel 2 config is required.")
-        return [ch1, ch2]
+        return [ch1_entry, self._config_entry(ch2, ch2_functional_chan)]
 
     def apply_value(self, value):
         if isinstance(value, dict):
             same_for_both = value.get("same_for_both", True)
-            ch1 = value.get("ch1", "") or ""
-            ch2 = value.get("ch2", ch1) or ch1
+            if "config" in value or "path" in value:
+                ch1 = value.get("config") or value.get("path") or ""
+                ch2 = ch1
+                ch1_functional_chan = value.get("functional_chan", 1)
+                ch2_functional_chan = 2
+                ch1_chan2_detection = value.get("chan2_detection", "off")
+            else:
+                ch1 = value.get("ch1", "") or ""
+                ch2 = value.get("ch2", ch1) or ch1
+                ch1_functional_chan = value.get("ch1_functional_chan", 1)
+                ch2_functional_chan = value.get("ch2_functional_chan", 2)
+                ch1_chan2_detection = value.get("ch1_chan2_detection", "off")
             self.same_for_both.setChecked(bool(same_for_both))
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
+            self.ch1_func_combo.setCurrentText(str(ch1_functional_chan))
+            self.ch2_func_combo.setCurrentText(str(ch2_functional_chan))
+            self.ch1_chan2_detection_combo.setCurrentText(str(ch1_chan2_detection))
             self._sync_channel_mode()
             return
         if isinstance(value, (list, tuple)):
-            ch1 = value[0] if value else ""
-            ch2 = value[1] if len(value) > 1 else ch1
+            first = value[0] if value else ""
+            second = value[1] if len(value) > 1 else first
+            ch1 = first.get("config", first.get("path", "")) if isinstance(first, dict) else first
+            ch2 = second.get("config", second.get("path", ch1)) if isinstance(second, dict) else second
+            ch1_functional_chan = first.get("functional_chan", 1) if isinstance(first, dict) else 1
+            ch2_functional_chan = second.get("functional_chan", 2) if isinstance(second, dict) else 2
+            ch1_chan2_detection = first.get("chan2_detection", "off") if isinstance(first, dict) else "off"
             self.same_for_both.setChecked(ch1 == ch2)
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
+            self.ch1_func_combo.setCurrentText(str(ch1_functional_chan))
+            self.ch2_func_combo.setCurrentText(str(ch2_functional_chan))
+            self.ch1_chan2_detection_combo.setCurrentText(str(ch1_chan2_detection))
             self._sync_channel_mode()
         else:
             self.same_for_both.setChecked(True)
             self.ch1_combo.set_value(value or "")
             self.ch2_combo.set_value(value or "")
+            self.ch1_func_combo.setCurrentText("1")
+            self.ch2_func_combo.setCurrentText("2")
+            self.ch1_chan2_detection_combo.setCurrentText("off")
             self._sync_channel_mode()
 
     def preset_state(self):
@@ -1332,10 +1633,15 @@ class PathConfigRow(QtWidgets.QWidget):
             "same_for_both": self.same_for_both.isChecked(),
             "ch1": self.ch1_combo.value(),
             "ch2": self.ch2_combo.value(),
+            "ch1_functional_chan": int(self.ch1_func_combo.currentText()),
+            "ch2_functional_chan": int(self.ch2_func_combo.currentText()),
+            "ch1_chan2_detection": self.ch1_chan2_detection_combo.currentText(),
         }
 
 
 class MesoConfigWidget(QtWidgets.QWidget):
+    configChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_files: list[str] = []
@@ -1357,6 +1663,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
         layout.addWidget(self.stack)
 
         self.global_widget = StandardConfigWidget()
+        self.global_widget.configChanged.connect(self.configChanged.emit)
         self.global_container = QtWidgets.QWidget()
         global_layout = QtWidgets.QVBoxLayout(self.global_container)
         global_layout.addWidget(self.global_widget)
@@ -1402,6 +1709,7 @@ class MesoConfigWidget(QtWidgets.QWidget):
             container_layout.addWidget(roi_label)
             self.path_layout.addWidget(container)
             self.path_rows[path_name] = row
+            row.configChanged.connect(self.configChanged.emit)
         self.path_layout.addStretch(1)
 
     def config_value(self):
@@ -1451,8 +1759,10 @@ class Step1Tab(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
 
         toolbar = QtWidgets.QHBoxLayout()
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.submit_button = QtWidgets.QPushButton("Submit Step 1 Job")
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.submit_button)
         outer.addLayout(toolbar)
 
@@ -1496,8 +1806,9 @@ class Step1Tab(QtWidgets.QWidget):
         self.jump_queue.setChecked(False)
         if self.username == "adamranson":
             left_form.addRow("jump_queue", self.jump_queue)
-        self.suite2p_env = QtWidgets.QLineEdit()
-        self.suite2p_env.setPlaceholderText("Optional")
+        self.suite2p_env = QtWidgets.QComboBox()
+        self.suite2p_env.addItems(["suite2p", "suite2p_1.1.0"])
+        self.suite2p_env.setCurrentText("suite2p_1.1.0")
         left_form.addRow("suite2p_env", self.suite2p_env)
 
         self.summary_box = QtWidgets.QPlainTextEdit()
@@ -1545,9 +1856,7 @@ class Step1Tab(QtWidgets.QWidget):
         self.settings_json.setMaximumHeight(90)
         config_layout.addWidget(QtWidgets.QLabel('Optional settings override JSON'))
         config_layout.addWidget(self.settings_json)
-        self.srdtrans_json = QtWidgets.QPlainTextEdit(
-            '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}'
-        )
+        self.srdtrans_json = QtWidgets.QPlainTextEdit(DEFAULT_SRDTRANS_STEP1_JSON)
         self.srdtrans_json.setPlaceholderText('JSON dict for step1_config["srdtrans"]')
         self.srdtrans_json.setMaximumHeight(90)
         config_layout.addWidget(QtWidgets.QLabel('SRDTrans JSON'))
@@ -1573,10 +1882,64 @@ class Step1Tab(QtWidgets.QWidget):
         self.preset_list.itemDoubleClicked.connect(lambda _item: self.load_preset())
         self.save_preset_button.clicked.connect(self.save_preset)
         self.save_preset_as_button.clicked.connect(self.save_preset_as)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.submit_button.clicked.connect(self.submit_job)
         self.picker_button.clicked.connect(self.open_picker)
+        self.standard_widget.configChanged.connect(self.update_suite2p_env_from_config)
+        self.meso_widget.configChanged.connect(self.update_suite2p_env_from_config)
         self.refresh_preset_list()
         self.update_config_preview()
+
+    def clear_to_defaults(self):
+        self.pending_preset = None
+        self.detected_descriptor = None
+        self.active_preset_path = None
+        self.save_preset_button.setEnabled(False)
+        self.user_edit.setText(self.username)
+        self.mode_combo.setCurrentIndex(0)
+        self.queue_combo.setCurrentIndex(0)
+        self.exp_editor.clear_all()
+        self.runs2p.setChecked(True)
+        self.rundlc.setChecked(True)
+        self.runfitpupil.setChecked(True)
+        self.runsrdtrans.setChecked(False)
+        self.runhabituate.setChecked(False)
+        self.jump_queue.setChecked(False)
+        self.suite2p_env.setCurrentText("suite2p_1.1.0")
+        self.summary_box.clear()
+        self.settings_json.setPlainText("{}")
+        self.srdtrans_json.setPlainText(DEFAULT_SRDTRANS_STEP1_JSON)
+        self.standard_widget.apply_preset({}, 2)
+        self.meso_widget.mode_combo.setCurrentIndex(0)
+        self.meso_widget.apply_preset({})
+        self.config_stack.setCurrentWidget(self.standard_widget)
+        self.refresh_config_choices()
+        self.refresh_preset_list()
+        self.update_config_preview()
+
+    def _resolve_s2p_config_path(self, config_name: str) -> Optional[Path]:
+        config_name = (config_name or "").strip()
+        if not config_name:
+            return None
+        path = Path(config_name)
+        if path.is_absolute():
+            return path
+        user_id = self.user_edit.text().strip() or self.username
+        return S2P_CONFIG_ROOT / user_id / config_name
+
+    def update_suite2p_env_from_config(self, config_name: str):
+        config_path = self._resolve_s2p_config_path(config_name)
+        if config_path is None or not config_path.exists():
+            return
+        try:
+            env_name = "suite2p_1.1.0" if is_native_suite2p_1x_config(config_path) else "suite2p"
+        except Exception as exc:
+            self.summary_box.setPlainText(
+                f"Could not inspect Suite2p config version:\n{config_path}\n\n{exc}"
+            )
+            return
+        if self.suite2p_env.currentText() != env_name:
+            self.suite2p_env.setCurrentText(env_name)
 
     def on_user_edit_finished(self):
         self.active_preset_path = None
@@ -1703,9 +2066,10 @@ class Step1Tab(QtWidgets.QWidget):
             config["register_with_summed_channel"] = True
         if self.queue_combo.currentIndex() == 1:
             config["queue"] = "debug"
-        suite2p_env = self.suite2p_env.text().strip()
-        if suite2p_env:
-            config["suite2p_env"] = suite2p_env
+        suite2p_env = self.suite2p_env.currentText().strip()
+        if not suite2p_env:
+            raise ValueError("suite2p_env is required.")
+        config["suite2p_env"] = suite2p_env
         settings_text = self.settings_json.toPlainText().strip()
         if settings_text and settings_text != "{}":
             config["settings"] = json.loads(settings_text)
@@ -1745,7 +2109,7 @@ class Step1Tab(QtWidgets.QWidget):
             "runsrdtrans": self.runsrdtrans.isChecked(),
             "runhabituate": self.runhabituate.isChecked(),
             "jump_queue": self.jump_queue.isChecked(),
-            "suite2p_env": self.suite2p_env.text().strip(),
+            "suite2p_env": self.suite2p_env.currentText().strip(),
             "settings_json": self.settings_json.toPlainText(),
             "srdtrans_json": self.srdtrans_json.toPlainText(),
             "topology": self.detected_descriptor.topology if self.detected_descriptor else None,
@@ -1767,7 +2131,12 @@ class Step1Tab(QtWidgets.QWidget):
         self.runsrdtrans.setChecked(payload.get("runsrdtrans", False))
         self.runhabituate.setChecked(payload.get("runhabituate", False))
         self.jump_queue.setChecked(payload.get("jump_queue", False))
-        self.suite2p_env.setText(payload.get("suite2p_env", ""))
+        suite2p_env = payload.get("suite2p_env", "suite2p_1.1.0") or "suite2p_1.1.0"
+        index = self.suite2p_env.findText(suite2p_env)
+        if index < 0:
+            self.suite2p_env.addItem(suite2p_env)
+            index = self.suite2p_env.findText(suite2p_env)
+        self.suite2p_env.setCurrentIndex(index)
         self.settings_json.setPlainText(payload.get("settings_json", "{}"))
         self.srdtrans_json.setPlainText(
             payload.get(
@@ -2030,10 +2399,12 @@ class Step2Tab(QtWidgets.QWidget):
         toolbar = QtWidgets.QHBoxLayout()
         self.load_preset_button = QtWidgets.QPushButton("Load Preset")
         self.save_preset_button = QtWidgets.QPushButton("Save Preset")
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.run_button = QtWidgets.QPushButton("Run Step 2")
         toolbar.addWidget(self.load_preset_button)
         toolbar.addWidget(self.save_preset_button)
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.run_button)
         outer.addLayout(toolbar)
 
@@ -2073,15 +2444,7 @@ class Step2Tab(QtWidgets.QWidget):
         self.run_cuttraces.setChecked(True)
         form.addRow("run_cuttraces", self.run_cuttraces)
 
-        self.settings_json = QtWidgets.QPlainTextEdit(
-            json.dumps(
-                {
-                    "neuropil_coeff": [0.7, 0.7],
-                    "subtract_overall_frame": False,
-                },
-                indent=2,
-            )
-        )
+        self.settings_json = QtWidgets.QPlainTextEdit(json.dumps(DEFAULT_STEP2_SETTINGS, indent=2))
         form.addRow("settings JSON", self.settings_json)
         controls_layout.addLayout(form)
         controls_layout.addStretch(1)
@@ -2096,6 +2459,7 @@ class Step2Tab(QtWidgets.QWidget):
 
         self.load_preset_button.clicked.connect(self.load_preset)
         self.save_preset_button.clicked.connect(self.save_preset)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.run_button.clicked.connect(self.run_step2)
         self.picker_button.clicked.connect(self.open_picker)
 
@@ -2225,6 +2589,22 @@ class Step2Tab(QtWidgets.QWidget):
         self.step2_thread.finished.connect(self._clear_step2_worker)
         self.step2_thread.start()
 
+    def clear_to_defaults(self):
+        if self.step2_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Step 2", "Step 2 is currently running.")
+            return
+        self.user_edit.setText(self.username)
+        self.exp_editor.clear_all()
+        self.pre_secs.setValue(5)
+        self.post_secs.setValue(5)
+        self.run_bonvision.setChecked(True)
+        self.run_s2p_timestamp.setChecked(True)
+        self.run_ephys.setChecked(True)
+        self.run_dlc_timestamp.setChecked(True)
+        self.run_cuttraces.setChecked(True)
+        self.settings_json.setPlainText(json.dumps(DEFAULT_STEP2_SETTINGS, indent=2))
+        self.step2_output.clear()
+
     def _append_step2_output(self, text: str):
         at_bottom = (
             self.step2_output.verticalScrollBar().value()
@@ -2256,14 +2636,17 @@ class SplitTab(QtWidgets.QWidget):
         self.username = getpass.getuser()
         self.split_thread = None
         self.split_worker = None
+        self._cleanup_prompted_exp_ids = set()
         self._build_ui()
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
         toolbar = QtWidgets.QHBoxLayout()
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.expand_button = QtWidgets.QPushButton("Expand")
         self.split_button = QtWidgets.QPushButton("Split")
         toolbar.addStretch(1)
+        toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.expand_button)
         toolbar.addWidget(self.split_button)
         outer.addLayout(toolbar)
@@ -2279,6 +2662,10 @@ class SplitTab(QtWidgets.QWidget):
         self.exp_edit.setPlaceholderText("Combined/base expID")
         form.addRow("combined expID", self.exp_edit)
         left_layout.addLayout(form)
+
+        self.status_label = QtWidgets.QLabel("Split status: enter an expID and click Expand.")
+        self.status_label.setWordWrap(True)
+        left_layout.addWidget(self.status_label)
 
         self.source_table = QtWidgets.QTableWidget(0, 3)
         self.source_table.setHorizontalHeaderLabels(
@@ -2297,8 +2684,11 @@ class SplitTab(QtWidgets.QWidget):
         main_splitter.setSizes([620, 620])
         outer.addWidget(main_splitter)
 
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.expand_button.clicked.connect(self.expand_combined_experiment)
         self.split_button.clicked.connect(self.run_split)
+        self.user_edit.editingFinished.connect(self.refresh_split_status)
+        self.exp_edit.editingFinished.connect(self.refresh_split_status)
 
     def _group_box(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox(title)
@@ -2313,11 +2703,142 @@ class SplitTab(QtWidgets.QWidget):
             raise ValueError("userID and combined expID are required.")
         return user_id, exp_id
 
+    def clear_to_defaults(self):
+        if self.split_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Split", "Split is currently running.")
+            return
+        self.user_edit.setText(self.username)
+        self.exp_edit.clear()
+        self.source_table.setRowCount(0)
+        self.split_output.clear()
+        self.status_label.setText("Split status: enter an expID and click Expand.")
+        self.status_label.setStyleSheet("")
+        self._cleanup_prompted_exp_ids.clear()
+
+    def refresh_split_status(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            status_info = split_combined_s2p.read_split_status_log(exp_dir_processed)
+        except Exception as exc:
+            self.status_label.setText(f"Split status: could not read status ({exc})")
+            self.status_label.setStyleSheet("color: #9a3412; font-weight: bold;")
+            return
+
+        status = status_info["status"].lower()
+        timestamp = status_info.get("timestamp", "")
+        suffix = f" at {timestamp}" if timestamp else ""
+        if status == "completed":
+            self.status_label.setText(
+                f"Split status: completed without errors{suffix}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #166534; font-weight: bold;")
+        elif status == "error":
+            self.status_label.setText(
+                f"Split status: ERROR{suffix} - {status_info.get('message', '')}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #b91c1c; font-weight: bold;")
+        elif status == "missing":
+            self.status_label.setText(
+                f"Split status: no split log yet\nExpected: {status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #a16207; font-weight: bold;")
+        elif status == "running":
+            self.status_label.setText(
+                f"Split status: running{suffix}\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #1d4ed8; font-weight: bold;")
+        else:
+            self.status_label.setText(
+                f"Split status: unknown status '{status}'\n{status_info['path']}"
+            )
+            self.status_label.setStyleSheet("color: #9a3412; font-weight: bold;")
+
+    def append_split_status_log(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            status_info = split_combined_s2p.read_split_status_log(exp_dir_processed)
+        except Exception as exc:
+            self._append_split_output(f"Split status: could not read status ({exc})\n")
+            return
+        self._append_split_output(
+            f"Split status log: {status_info['path']}\n"
+            f"status: {status_info['status']}\n"
+        )
+        if status_info.get("raw"):
+            self._append_split_output(status_info["raw"] + "\n")
+
+    def maybe_prompt_delete_legacy_combined_bins(self):
+        try:
+            user_id, exp_id = self._split_inputs()
+        except Exception:
+            return
+        prompt_key = (user_id, exp_id)
+        if prompt_key in self._cleanup_prompted_exp_ids:
+            return
+        self._cleanup_prompted_exp_ids.add(prompt_key)
+
+        try:
+            audit = split_combined_s2p.audit_completed_split_with_combined_bins(user_id, exp_id)
+        except Exception as exc:
+            self._append_split_output(f"Combined-bin cleanup audit failed: {exc}\n")
+            return
+
+        if audit.get("missing"):
+            self._append_split_output(
+                "Combined-bin cleanup not offered because split outputs are incomplete or inconsistent:\n"
+            )
+            for message in audit["missing"][:20]:
+                self._append_split_output(f"  - {message}\n")
+            if len(audit["missing"]) > 20:
+                self._append_split_output(f"  ...and {len(audit['missing']) - 20} more issue(s)\n")
+            return
+
+        combined_bins = audit.get("combined_bins", [])
+        if not audit.get("can_cleanup") or not combined_bins:
+            return
+
+        total_bytes = sum(os.path.getsize(path) for path in combined_bins if os.path.isfile(path))
+        response = QtWidgets.QMessageBox.question(
+            self,
+            "Delete combined binaries?",
+            (
+                "This split appears to have all split output files, but the original combined "
+                f"binary file(s) are still present.\n\nDelete {len(combined_bins)} combined "
+                f"data.bin file(s), freeing {total_bytes} bytes?"
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response != QtWidgets.QMessageBox.StandardButton.Yes:
+            self._append_split_output("User chose not to delete combined binary files.\n")
+            return
+
+        try:
+            split_combined_s2p.delete_combined_bins_after_success(combined_bins)
+            _, _, _, exp_dir_processed, _ = paths.find_paths(user_id, exp_id)
+            split_combined_s2p.append_split_status_log(
+                exp_dir_processed,
+                f"Deleted {len(combined_bins)} legacy combined binary file(s), freeing {total_bytes} bytes.",
+            )
+        except Exception as exc:
+            self._append_split_output(f"Failed to delete legacy combined binary files: {exc}\n")
+            QtWidgets.QMessageBox.critical(self, "Delete combined binaries", str(exc))
+            return
+        self._append_split_output(
+            f"Deleted {len(combined_bins)} legacy combined binary file(s), freeing {total_bytes} bytes.\n"
+        )
+        self.refresh_split_status()
+        self.append_split_status_log()
+
     def expand_combined_experiment(self):
         try:
             user_id, exp_id = self._split_inputs()
             rows = inspect_combined_split_sources(user_id, exp_id)
         except Exception as exc:
+            self.refresh_split_status()
+            self.append_split_status_log()
             QtWidgets.QMessageBox.critical(self, "Split Expand", str(exc))
             return
 
@@ -2340,12 +2861,17 @@ class SplitTab(QtWidgets.QWidget):
             warnings = [warning for row in rows for warning in row.get("warnings", [])]
             for warning in warnings:
                 self._append_split_output(f"WARNING: {warning}\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
+        self.maybe_prompt_delete_legacy_combined_bins()
 
     def run_split(self):
         try:
             user_id, exp_id = self._split_inputs()
             rows = inspect_combined_split_sources(user_id, exp_id)
         except Exception as exc:
+            self.refresh_split_status()
+            self.append_split_status_log()
             QtWidgets.QMessageBox.critical(self, "Split", str(exc))
             return
 
@@ -2364,6 +2890,7 @@ class SplitTab(QtWidgets.QWidget):
 
         self.split_output.clear()
         self._append_split_output(f"** Starting split for {exp_id}\n")
+        self.refresh_split_status()
         self.expand_button.setEnabled(False)
         self.split_button.setEnabled(False)
 
@@ -2395,11 +2922,15 @@ class SplitTab(QtWidgets.QWidget):
 
     def _split_finished(self):
         self._append_split_output("\n** Split finished without errors\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
         self.expand_button.setEnabled(True)
         self.split_button.setEnabled(True)
 
     def _split_failed(self, message: str):
         self._append_split_output(f"\n** Split failed: {message}\n")
+        self.refresh_split_status()
+        self.append_split_status_log()
         self.expand_button.setEnabled(True)
         self.split_button.setEnabled(True)
 
@@ -2493,6 +3024,7 @@ def _format_descriptor_payload(payload: dict) -> str:
                 "",
                 "Standard imaging:",
                 f"  nplanes: {standard.get('nplanes')}",
+                f"  zoom: {standard.get('scan_zoom_factor')}",
                 f"  scan_frame_rate: {standard.get('scan_frame_rate')}",
                 f"  fs per plane: {standard.get('fs')}",
                 f"  tif: {standard.get('tif_path')}",
@@ -2508,6 +3040,7 @@ def _format_descriptor_payload(payload: dict) -> str:
                     f"    nplanes: {meta.get('nplanes')}",
                     f"    nrois: {meta.get('nrois')}",
                     f"    nchannels: {meta.get('nchannels')}",
+                    f"    zoom: {meta.get('scan_zoom_factor')}",
                     f"    scan_frame_rate: {meta.get('scan_frame_rate')}",
                     f"    fs per ROI/plane: {meta.get('fs_per_roi')}",
                     f"    rois: {', '.join(meta.get('roi_names', []))}",
@@ -2536,6 +3069,7 @@ def _descriptor_to_payload(descriptor: ExperimentDescriptor, user_id: str) -> di
             "nplanes": descriptor.standard.nplanes,
             "nchannels": descriptor.standard.nchannels,
             "scan_frame_rate": descriptor.standard.scan_frame_rate,
+            "scan_zoom_factor": descriptor.standard.scan_zoom_factor,
             "fs": descriptor.standard.fs,
             "tif_path": descriptor.standard.tif_path,
         }
@@ -2545,6 +3079,7 @@ def _descriptor_to_payload(descriptor: ExperimentDescriptor, user_id: str) -> di
             "nrois": meta.nrois,
             "nchannels": meta.nchannels,
             "scan_frame_rate": meta.scan_frame_rate,
+            "scan_zoom_factor": meta.scan_zoom_factor,
             "fs_per_roi": meta.fs_per_roi,
             "roi_names": meta.roi_names,
         }
@@ -3153,12 +3688,14 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.create_button = QtWidgets.QPushButton("Create")
         self.load_button = QtWidgets.QPushButton("Load existing")
         self.save_config_button = QtWidgets.QPushButton("Save config")
+        self.clear_button = QtWidgets.QPushButton("Clear")
         self.register_button = QtWidgets.QPushButton("1) Register data")
         self.extract_button = QtWidgets.QPushButton("2) Extract frames")
         self.build_button = QtWidgets.QPushButton("3) Build model")
         action_row.addWidget(self.create_button)
         action_row.addWidget(self.load_button)
         action_row.addWidget(self.save_config_button)
+        action_row.addWidget(self.clear_button)
         action_row.addWidget(self.register_button)
         action_row.addWidget(self.extract_button)
         action_row.addWidget(self.build_button)
@@ -3180,9 +3717,42 @@ class BuildSRDTransTab(QtWidgets.QWidget):
         self.create_button.clicked.connect(self.create_model)
         self.load_button.clicked.connect(self.load_existing_model)
         self.save_config_button.clicked.connect(self.save_current_config)
+        self.clear_button.clicked.connect(self.clear_to_defaults)
         self.register_button.clicked.connect(lambda: self.run_action("register"))
         self.extract_button.clicked.connect(lambda: self.run_action("extract"))
         self.build_button.clicked.connect(lambda: self.run_action("build"))
+
+    def clear_to_defaults(self):
+        if self.command_thread is not None:
+            QtWidgets.QMessageBox.warning(self, "Build SRDTrans", "A command is currently running.")
+            return
+        if self.detached_timer.isActive():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Build SRDTrans",
+                "A detached command is currently being monitored. Wait for it to finish or load another model later.",
+            )
+            return
+        self.config_path = None
+        self.detached_session = None
+        self.detached_log_path = None
+        self.detached_log_offset = 0
+        self.detached_action = None
+        self.experiments = []
+        self.user_edit.setText(self.username)
+        self.indicators_edit.clear()
+        self.frame_rate_edit.clear()
+        self.label_edit.clear()
+        self.model_name_edit.clear()
+        self.model_root_edit.clear()
+        self.exp_edit.clear()
+        self.s2p_combo.set_value("")
+        self.experiment_table.setRowCount(0)
+        self.selection_table.setRowCount(0)
+        self.train_params_json.setPlainText(json.dumps(srdtrans_build.default_train_params(), indent=2))
+        self.output.clear()
+        self.refresh_s2p_configs()
+        self.update_model_preview()
 
     def refresh_s2p_configs(self):
         current = self.s2p_combo.value()
@@ -3746,6 +4316,7 @@ class BuildSRDTransTab(QtWidgets.QWidget):
             self.create_button,
             self.load_button,
             self.save_config_button,
+            self.clear_button,
             self.register_button,
             self.extract_button,
             self.build_button,

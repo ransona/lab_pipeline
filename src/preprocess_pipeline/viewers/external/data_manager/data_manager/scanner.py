@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import getpass
+import json
 import os
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .config import DataPaths
-from .database import DataStore, ScopeKey
+from .database import DataStore, MetricsKey, ScopeKey
 from .models import DataNode
 
 
@@ -64,6 +65,23 @@ def guess_owner(animal_id: str, exp_id: Optional[str], user_map: Dict[str, str])
     return user_map.get(initials)
 
 
+def raw_metadata_user(exp_dir: Path, exp_id: Optional[str]) -> Optional[str]:
+    if not exp_id:
+        return None
+    metadata_path = exp_dir / f"{exp_id}_experiment_metadata.json"
+    try:
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    user = metadata.get("user")
+    if isinstance(user, str):
+        user = user.strip()
+        if user:
+            return user
+    return None
+
+
 def _make_node(
     scope: str,
     animal_id: str,
@@ -72,15 +90,19 @@ def _make_node(
     exp_id: Optional[str],
     owner: Optional[str],
     has_override: bool,
-    metrics_lookup: Dict[ScopeKey, object],
+    metrics_lookup: Dict[MetricsKey, object],
     kill_lookup: Dict[ScopeKey, object],
 ) -> DataNode:
-    key: ScopeKey = (scope, animal_id, exp_id)
-    metric_row = metrics_lookup.get(key)
-    kill_row = kill_lookup.get(key)
+    metric_key: MetricsKey = (scope, user or "", animal_id, exp_id)
+    kill_key: ScopeKey = (scope, animal_id, exp_id)
+    metric_row = metrics_lookup.get(metric_key)
+    kill_row = kill_lookup.get(kill_key)
     size_bytes = metric_row["size_bytes"] if metric_row else None
     last_access_ts = metric_row["last_access_ts"] if metric_row else None
-    marked = kill_row is not None
+    marked = kill_row is not None and (
+        kill_row["status"] in ("pending", "blocked")
+        or (scope == "raw" and kill_row["status"] == "deleted")
+    )
     return DataNode(
         scope=scope,
         animal_id=animal_id,
@@ -99,6 +121,7 @@ def _resolve_owner(
     scope: str,
     animal_id: str,
     exp_id: Optional[str],
+    path: Optional[Path],
     user_map: Dict[str, str],
     overrides: Dict[ScopeKey, str],
     default_user: Optional[str],
@@ -111,10 +134,12 @@ def _resolve_owner(
         parent_key: ScopeKey = (scope, animal_id, None)
         if parent_key in overrides:
             return overrides[parent_key], True
-    # Guess based on initials for raw data; processed defaults to the selected user
+    # Raw data uses metadata ownership; processed defaults to the selected user.
     if scope == "raw":
-        guessed = guess_owner(animal_id, exp_id, user_map)
-        return guessed or default_user, False
+        metadata_owner = raw_metadata_user(path, exp_id) if path else None
+        if metadata_owner:
+            return metadata_owner, False
+        return default_user, False
     return default_user, False
 
 
@@ -182,7 +207,13 @@ def scan_scope(
             if excluded and animal_id.lower() in excluded:
                 continue
             owner, has_override = _resolve_owner(
-                scope, animal_id, None, user_map, overrides, default_user=default_owner
+                scope,
+                animal_id,
+                None,
+                animal_entry,
+                user_map,
+                overrides,
+                default_user=default_owner,
             )
             animal_node = _make_node(
                 scope,
@@ -209,6 +240,7 @@ def scan_scope(
                     scope,
                     animal_id,
                     exp_id,
+                    exp_entry,
                     user_map,
                     overrides,
                     default_user=owner or default_owner,
@@ -259,5 +291,5 @@ def update_metrics_for_nodes(datastore: DataStore, nodes: Iterable[DataNode]) ->
             continue
         size_bytes, last_access = calculate_metrics_for_path(node.path)
         datastore.upsert_metrics(
-            node.scope, node.animal_id, node.exp_id, size_bytes, last_access
+            node.scope, node.user, node.animal_id, node.exp_id, size_bytes, last_access
         )

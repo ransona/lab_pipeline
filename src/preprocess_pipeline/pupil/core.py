@@ -27,7 +27,7 @@ def preprocess_pupil_run(userID, expID):
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
         exp_dir_raw = paths.find_paths(userID, expID)
-    exp_dir_processed_recordings = os.path.join(processed_root, animalID, expID,'recordings')
+    exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
 
     if not os.path.exists(exp_dir_processed_recordings):
         os.mkdir(exp_dir_processed_recordings)

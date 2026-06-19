@@ -11,7 +11,7 @@ def apply_pupil_calib(userID, expIDs):
         print('** Starting expID: ' + expID)
         animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
         exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
-        meta_data_path = os.path.join(processed_root,animalID,'meta')
+        meta_data_path = os.path.join(os.path.dirname(exp_dir_processed),'meta')
 
         # load the pupil calibration file
         with open(os.path.join(meta_data_path,'eye_pix_angle_map.pickle'),'rb') as file: pupil_maps = pickle.load(file)
