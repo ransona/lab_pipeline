@@ -20,7 +20,7 @@ from typing import List, Tuple
 # Defaults
 DEFAULT_MIN_AGE_DAYS = 0
 DEFAULT_AUTO = False
-DEFAULT_INCLUDE_DELETED = True
+DEFAULT_INCLUDE_DELETED = False
 NAS_RAW_ROOT = Path("/mnt/nas2/Remote_Repository")
 LOG_PATH = Path("/data/common/configs/data_manager/delete_runner_log.txt")
 

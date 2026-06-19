@@ -58,7 +58,7 @@ def main() -> None:
             if node.path.exists():
                 size_bytes, last_access = calculate_metrics_for_path(node.path)
                 datastore.upsert_metrics(
-                    node.scope, node.animal_id, node.exp_id, size_bytes, last_access
+                    node.scope, node.user, node.animal_id, node.exp_id, size_bytes, last_access
                 )
             node.size_bytes = size_bytes
             node.last_access_ts = last_access

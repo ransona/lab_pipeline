@@ -149,6 +149,16 @@ def split_combined_channel(userID, split_root, channel_root):
     split_suffix = split_root[len(base_processed_root(split_root)) :].lstrip(os.sep)
     combined_bins_to_delete = []
 
+    dest_channel_roots = []
+    for exp_id in exp_ids:
+        _, _, _, exp_dir_processed2, _ = paths.find_paths(userID, exp_id)
+        dest_split_root = map_destination_root(
+            exp_dir_processed2=exp_dir_processed2,
+            split_suffix=split_suffix,
+        )
+        dest_channel_roots.append(get_dest_channel_root(dest_split_root, is_ch2))
+    clear_existing_suite2p_destinations(dest_channel_roots)
+
     for plane_dir in plane_dirs:
         plane_name = os.path.basename(plane_dir)
         print(f"Plane {plane_name}")
@@ -286,6 +296,19 @@ def get_dest_channel_root(dest_split_root, is_ch2):
     if is_ch2:
         return os.path.join(dest_split_root, "ch2")
     return dest_split_root
+
+
+def clear_existing_suite2p_destinations(dest_channel_roots):
+    """Remove stale Suite2p output trees before writing any split output."""
+    for dest_channel_root in sorted(set(map(os.fspath, dest_channel_roots))):
+        suite2p_path = os.path.join(dest_channel_root, "suite2p")
+        if os.path.islink(suite2p_path) or os.path.isfile(suite2p_path):
+            os.unlink(suite2p_path)
+        elif os.path.isdir(suite2p_path):
+            shutil.rmtree(suite2p_path)
+        else:
+            continue
+        print(f"Removed existing Suite2p destination: {suite2p_path}")
 
 
 def copy_spines_gui_artifacts(suite2p_combined_path, dest_channel_root):

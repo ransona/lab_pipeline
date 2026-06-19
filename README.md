@@ -46,6 +46,15 @@ The local processing launchers are different because they run on the Windows mac
 
 `apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
 
+Data Manager is an exception in one detail: `apps/data_manager.py` launches the
+external Tk app in
+`src/preprocess_pipeline/viewers/external/data_manager/` by changing into that
+directory and executing its `main.py`. The GUI only writes shared SQLite state;
+destructive deletion is performed separately by the admin runner
+`src/preprocess_pipeline/viewers/external/data_manager/delete_runner.py`. See
+`src/preprocess_pipeline/viewers/external/data_manager/README.md` for the full
+GUI, conflict, TIFF cleanup, metrics, and deletion-runner workflow.
+
 ## Repository Layout
 
 The repo is organised around workflow, not around old script-vs-library splits:

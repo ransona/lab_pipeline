@@ -19,6 +19,7 @@ from .scanner import (
     detect_current_user,
     guess_owner,
     list_available_users,
+    raw_metadata_user,
     scan_scope,
     update_metrics_for_nodes,
 )
@@ -66,6 +67,7 @@ class DataManagerApp:
         self.action_progress = tk.DoubleVar(value=0.0)
         self.action_progress_label = tk.StringVar(value="")
         self.conflict_banner = tk.StringVar(value="")
+        self.conflict_actor_var = tk.StringVar(value=self.current_user)
         self._conflict_choice_cached = None  # (choice, apply_all)
         self.cross_prompt_var = tk.BooleanVar(value=False)
         self.active_tree: Optional[ttk.Treeview] = None
@@ -275,6 +277,14 @@ class DataManagerApp:
         )
 
         if not show_all:
+            def owner_is_unknown(node: DataNode) -> bool:
+                return not node.owner or node.owner == "unknown"
+
+            def owner_matches_selected(node: DataNode) -> bool:
+                return (node.owner or "") == selected_user or (
+                    self.show_unknown_var.get() and owner_is_unknown(node)
+                )
+
             def filter_nodes(nodes: List[DataNode]) -> List[DataNode]:
                 grouped: Dict[str, List[DataNode]] = {}
                 for n in nodes:
@@ -286,16 +296,13 @@ class DataManagerApp:
                         i
                         for i in items
                         if i.exp_id
-                        and ((i.owner or "") == selected_user or (self.show_unknown_var.get() and not i.owner))
+                        and owner_matches_selected(i)
                     ]
                     if matching_exps:
                         if animal_node:
                             filtered.append(animal_node)
                         filtered.extend(matching_exps)
-                    elif animal_node and (
-                        (animal_node.owner or "") == selected_user
-                        or (self.show_unknown_var.get() and not animal_node.owner)
-                    ):
+                    elif animal_node and owner_matches_selected(animal_node):
                         filtered.append(animal_node)
                 if self.show_only_marked_var.get():
                     marked = []
@@ -434,6 +441,27 @@ class DataManagerApp:
         if self.current_user == "adamranson" and sel != "all":
             return sel
         return self.current_user
+
+    def _conflict_actor(self) -> str:
+        if self.current_user == "adamranson":
+            actor = self.conflict_actor_var.get().strip()
+            if actor and actor != "all":
+                return actor
+        return self._acting_user()
+
+    def _conflict_actor_choices(self, blocks, kill_flags) -> List[str]:
+        users = set(self.available_users)
+        users.add(self.current_user)
+        for rows in blocks.values():
+            for row in rows:
+                if row["blocking_user"]:
+                    users.add(row["blocking_user"])
+                if row["requested_by"]:
+                    users.add(row["requested_by"])
+        for row in kill_flags.values():
+            if row["marked_by"]:
+                users.add(row["marked_by"])
+        return sorted(u for u in users if u and u != "all")
 
     def _on_select(self, event=None) -> None:
         if event is not None:
@@ -604,7 +632,7 @@ class DataManagerApp:
         if total > 10:
             self._hide_progress_modal()
         self._on_select()
-        self._update_conflict_banner(self.selected_user.get())
+        self._update_conflict_banner(self._acting_user())
 
     def apply_owner_override(self) -> None:
         node = self._selected_node()
@@ -678,7 +706,11 @@ class DataManagerApp:
         tree.item(node.key, tags=tuple(tags))
         # Display blocked status in marked column if relevant
         key = (node.scope, node.animal_id, node.exp_id)
-        blocks = self.datastore.load_blocks().get(key, [])
+        blocks = [
+            row
+            for row in self.datastore.load_blocks().get(key, [])
+            if row["status"] == "pending"
+        ]
         if blocks:
             blockers = ", ".join(sorted({row["blocking_user"] for row in blocks}))
             tree.set(node.key, "marked", f"blocked by {blockers}")
@@ -707,7 +739,7 @@ class DataManagerApp:
 
                 size_bytes, last_access = calculate_metrics_for_path(node.path)
                 self.datastore.upsert_metrics(
-                    node.scope, node.animal_id, node.exp_id, size_bytes, last_access
+                    node.scope, node.user, node.animal_id, node.exp_id, size_bytes, last_access
                 )
             node.size_bytes = size_bytes
             node.last_access_ts = last_access
@@ -993,21 +1025,29 @@ class DataManagerApp:
             if row["exp_id"] and parent_key in overrides:
                 return overrides[parent_key]
             if row["scope"] == "raw":
-                exp_owner = guess_owner(row["animal_id"], row["exp_id"], self.user_map)
-                if exp_owner:
-                    return exp_owner
-                animal_owner = guess_owner(row["animal_id"], None, self.user_map)
-                return animal_owner or "unknown"
+                exp_id = row["exp_id"]
+                if exp_id:
+                    metadata_owner = raw_metadata_user(
+                        self.paths.raw_root / row["animal_id"] / exp_id,
+                        exp_id,
+                    )
+                    if metadata_owner:
+                        return metadata_owner
+                return "unknown"
             return "unknown"
 
         def owner_for_file(row) -> str:
             if row["scope"] == "processed":
                 return row["marked_by"] or "unknown"
-            exp_owner = guess_owner(row["animal_id"], row["exp_id"], self.user_map)
-            if exp_owner:
-                return exp_owner
-            animal_owner = guess_owner(row["animal_id"], None, self.user_map)
-            return animal_owner or "unknown"
+            exp_id = row["exp_id"]
+            if exp_id:
+                metadata_owner = raw_metadata_user(
+                    self.paths.raw_root / row["animal_id"] / exp_id,
+                    exp_id,
+                )
+                if metadata_owner:
+                    return metadata_owner
+            return "unknown"
 
         def render(filter_user: str) -> None:
             tree.delete(*tree.get_children())
@@ -1025,7 +1065,8 @@ class DataManagerApp:
                     continue
                 owner = owner_for_row(row)
                 grouped.setdefault(owner, []).append(row)
-                mkey = (row["scope"], row["animal_id"], row["exp_id"])
+                metric_user = row["marked_by"] if row["scope"] == "processed" else ""
+                mkey = (row["scope"], metric_user or "", row["animal_id"], row["exp_id"])
                 mrow = metrics.get(mkey)
                 if mrow and mrow["size_bytes"]:
                     total_bytes += mrow["size_bytes"]
@@ -1124,7 +1165,24 @@ class DataManagerApp:
         kill_flags = self.datastore.load_kill_flags()
         metrics = self.datastore.load_metrics()
 
-        actor = self._acting_user()
+        if self.current_user == "adamranson":
+            actor_choices = self._conflict_actor_choices(blocks, kill_flags)
+            if self.conflict_actor_var.get() not in actor_choices:
+                self.conflict_actor_var.set(self._acting_user())
+            controls = ttk.Frame(win)
+            controls.pack(fill=tk.X, padx=10, pady=(10, 0))
+            ttk.Label(controls, text="Act as:").pack(side=tk.LEFT)
+            actor_combo = ttk.Combobox(
+                controls,
+                values=actor_choices,
+                textvariable=self.conflict_actor_var,
+                state="readonly",
+                width=28,
+            )
+            actor_combo.pack(side=tk.LEFT, padx=5)
+            actor_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_conflicts_window())
+
+        actor = self._conflict_actor()
         blocking_me = []
         for key, rows in blocks.items():
             for row in rows:
@@ -1163,7 +1221,9 @@ class DataManagerApp:
 
             for key, others in entries:
                 scope, animal_id, exp_id = key
-                mrow = metrics.get(key)
+                scope, animal_id, exp_id = key
+                metric_user = "" if scope == "raw" else actor
+                mrow = metrics.get((scope, metric_user, animal_id, exp_id))
                 size_txt = format_size(mrow["size_bytes"]) if mrow and mrow["size_bytes"] else "—"
                 status_txt = ""
                 tag = ""
@@ -1240,7 +1300,7 @@ class DataManagerApp:
         ttk.Button(
             win,
             text="Close",
-            command=lambda: (win.destroy(), self._update_conflict_banner(self._acting_user())),
+            command=lambda: (win.destroy(), self._update_conflict_banner(self._conflict_actor())),
         ).pack(pady=5)
         # Update banner based on whether conflicts exist
         if blocking_me or blocked_by:
@@ -1254,7 +1314,7 @@ class DataManagerApp:
             return
         scope, animal_id, exp_id = sel[0].split("|")
         # Take ownership and clear deletion + block
-        actor = self._acting_user()
+        actor = self._conflict_actor()
         self.datastore.set_override(scope, animal_id, exp_id, actor)
         self.datastore.clear_kill_flag(scope, animal_id, exp_id)
         self.datastore.clear_blocks(scope, animal_id, exp_id)
@@ -1273,7 +1333,7 @@ class DataManagerApp:
         sel = tree.selection()
         if not sel:
             return
-        actor = self._acting_user()
+        actor = self._conflict_actor()
         # Determine current blocking state from DB
         blocks = self.datastore.load_blocks()
         pending_count = 0
@@ -1328,7 +1388,7 @@ class DataManagerApp:
             return
         scope, animal_id, exp_id = sel[0].split("|")
         # Approve deletion: remove our block
-        actor = self._acting_user()
+        actor = self._conflict_actor()
         self.datastore.resolve_block(scope, animal_id, exp_id, actor)
         # If no more blocks, update kill status to pending
         remaining = self.datastore.load_blocks().get((scope, animal_id, exp_id), [])
@@ -1355,7 +1415,9 @@ class DataManagerApp:
             blockers = [r["blocking_user"] for r in blk_rows if r["status"] == "pending"]
             if not blockers:
                 continue
-            mrow = metrics.get(key)
+            scope, animal_id, exp_id = key
+            metric_user = "" if scope == "raw" else requested_by
+            mrow = metrics.get((scope, metric_user or "", animal_id, exp_id))
             size_txt = format_size(mrow["size_bytes"]) if mrow and mrow["size_bytes"] else "—"
             days = ""
             if row["marked_at"]:
@@ -1517,8 +1579,12 @@ class DataManagerApp:
             self.user_map,
             available_users=self.available_users,
         )
-        # exclude raw items already marked for deletion
-        kill_flags = self.datastore.load_kill_flags()
+        # Exclude raw items once requested for deletion; raw expIDs are not regenerated.
+        kill_flags = {
+            key: row
+            for key, row in self.datastore.load_kill_flags().items()
+            if row["scope"] == "raw" and row["status"] in ("pending", "blocked", "deleted")
+        }
         raw_keep = [
             n
             for n in raw_nodes
