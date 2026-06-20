@@ -6,7 +6,7 @@ import sys
 from preprocess_pipeline.shared import paths
 from preprocess_pipeline.step2 import runtime
 
-def run_step2_batch(step2_config):
+def run_step2_batch(step2_config, confirm_callback=None):
     userID = step2_config['userID']
     expIDs = step2_config['expIDs']
     local_repository_root = step2_config.get('local_repository_root')
@@ -43,7 +43,8 @@ def run_step2_batch(step2_config):
             # final ops are presecs, post secs and whether to process: 1.bonvision, 2.s2p_timestamp, 3.ephys, 4.dlc_timestamp, 5.cutraces
             runtime.run_preprocess_step2(
                 userID,expID, pre_secs, post_secs, run_bonvision, run_s2p_timestamp,
-                run_ephys, run_dlc_timestamp, run_cuttraces
+                run_ephys, run_dlc_timestamp, run_cuttraces,
+                confirm_callback=confirm_callback,
             )
             
             if local_mode or os.name == 'nt':

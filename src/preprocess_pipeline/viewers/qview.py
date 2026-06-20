@@ -10,6 +10,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import importlib
@@ -766,6 +767,7 @@ class EmittingTextStream:
 
 class Step2Worker(QtCore.QObject):
     output = QtCore.pyqtSignal(str)
+    confirmation_requested = QtCore.pyqtSignal(str, object)
     finished = QtCore.pyqtSignal()
     failed = QtCore.pyqtSignal(str)
 
@@ -773,11 +775,17 @@ class Step2Worker(QtCore.QObject):
         super().__init__()
         self.config = config
 
+    def confirm(self, message: str) -> bool:
+        request = {"accepted": False, "event": threading.Event()}
+        self.confirmation_requested.emit(message, request)
+        request["event"].wait()
+        return request["accepted"]
+
     def run(self):
         stream = EmittingTextStream(self.output.emit)
         try:
             with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
-                run_step2_batch(self.config)
+                run_step2_batch(self.config, confirm_callback=self.confirm)
         except Exception as exc:
             self.output.emit(traceback.format_exc())
             self.failed.emit(str(exc))
@@ -2610,6 +2618,7 @@ class Step2Tab(QtWidgets.QWidget):
         self.step2_worker.moveToThread(self.step2_thread)
         self.step2_thread.started.connect(self.step2_worker.run)
         self.step2_worker.output.connect(self._append_step2_output)
+        self.step2_worker.confirmation_requested.connect(self._confirm_step2)
         self.step2_worker.finished.connect(self._step2_finished)
         self.step2_worker.failed.connect(self._step2_failed)
         self.step2_worker.finished.connect(self.step2_thread.quit)
@@ -2618,6 +2627,18 @@ class Step2Tab(QtWidgets.QWidget):
         self.step2_thread.finished.connect(self.step2_thread.deleteLater)
         self.step2_thread.finished.connect(self._clear_step2_worker)
         self.step2_thread.start()
+
+    def _confirm_step2(self, message: str, request: dict):
+        response = QtWidgets.QMessageBox.warning(
+            self,
+            "Step 2 timing warning",
+            message,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        request["accepted"] = response == QtWidgets.QMessageBox.StandardButton.Yes
+        request["event"].set()
 
     def clear_to_defaults(self):
         if self.step2_thread is not None:

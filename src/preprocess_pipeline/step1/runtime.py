@@ -314,7 +314,6 @@ def _suite2p_cmd_for_work_unit(
 ):
     suite2p_env = queued_command['config'].get('suite2p_env')
     validate_suite2p_env(suite2p_env, context='Queued Step 1 config')
-    run_s2p_as_user = 'suite2p_env' in queued_command['config']
     launcher = str(APP_ROOT / 's2p_launcher.py')
     config_path = _suite2p_config_path(user_id, config_names, queued_command=queued_command)
     validate_suite2p_env_config_compatibility(
@@ -357,18 +356,6 @@ def _suite2p_cmd_for_work_unit(
             *launcher_args,
         ]
 
-    if run_s2p_as_user:
-        return [
-            'sudo',
-            '-u',
-            user_id,
-            '/opt/scripts/conda-run.sh',
-            suite2p_env,
-            'python',
-            '-u',
-            launcher,
-            *launcher_args,
-        ]
     return ['/opt/scripts/conda-run.sh', suite2p_env, 'python', '-u', launcher, *launcher_args]
 
 

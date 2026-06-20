@@ -22,6 +22,12 @@ def _is_local_run():
     return os.name == "nt" or any(os.environ.get(env_name) for env_name in local_env_names)
 
 
+def _confirm_continue(message, confirm_callback=None):
+    if confirm_callback is not None:
+        return bool(confirm_callback(message))
+    return input("Do you want to continue? (y/n): ").strip().lower() == "y"
+
+
 def _as_1d_float(array):
     return np.atleast_1d(np.squeeze(np.asarray(array, dtype=float)))
 
@@ -611,7 +617,13 @@ def _show_debug_tabs(expID, raw_panels, filtered_panels, excluded_panels=None, e
 
     plt.show()
 
-def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
+def run_preprocess_bv2(
+    userID,
+    expID,
+    debug=False,
+    debug_params=None,
+    confirm_callback=None,
+):
     print('Starting run_preprocess_bv...')
     # filter_timing_pulses = True allows removal of timing pulses with duration < min_pulse_width
     # this is used to deal with random fast alterations that bonsai still sometimes produces
@@ -761,8 +773,12 @@ def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
         elif _is_local_run():
             print('Local run detected: continuing without prompting despite invalid PD signal.')
         else:
-            choice = input("Do you want to continue? (y/n): ").strip().lower()
-            if choice != 'y':
+            message = (
+                "One or both photodiode signals are invalid. This is expected for an "
+                "experiment run with the screens off. Otherwise, it indicates a problem.\n\n"
+                "Continue processing this experiment?"
+            )
+            if not _confirm_continue(message, confirm_callback):
                 print("Exiting...")
                 return
         
@@ -831,8 +847,12 @@ def run_preprocess_bv2(userID, expID, debug=False, debug_params=None):
                 elif _is_local_run():
                     print('Local run detected: continuing without prompting and switching to BV encoder data.')
                 else:
-                    choice = input("Do you want to continue? (y/n): ").strip().lower()
-                    if choice != 'y':
+                    message = (
+                        "The Harp and Bonvision flip counts do not match, but the other timing "
+                        "signals do. Continuing will use Bonvision rotary encoder data instead "
+                        "of Harp data.\n\nContinue processing this experiment?"
+                    )
+                    if not _confirm_continue(message, confirm_callback):
                         print("Exiting...")
                         return
                 # else set to not use PD and thus not use Harp for encoder

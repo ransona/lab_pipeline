@@ -19,7 +19,7 @@ from preprocess_pipeline.behavior import (
 from preprocess_pipeline.pupil import timestamp as preprocess_pupil_timestamp
 from preprocess_pipeline.suite2p import preprocess as preprocess_s2p
 
-def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_s2p_timestamp, run_ephys, run_dlc_timestamp, run_cuttraces): 
+def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_s2p_timestamp, run_ephys, run_dlc_timestamp, run_cuttraces, confirm_callback=None):
     animalID, remote_repository_root, \
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
@@ -35,7 +35,11 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         ###########################################################
         # process bonvision related data, this includes relating bon vision time to TL time and wheel data
         print('** Starting bonvision section...')
-        bonvision.run_preprocess_bonvision(userID, expID)
+        bonvision.run_preprocess_bonvision(
+            userID,
+            expID,
+            confirm_callback=confirm_callback,
+        )
         
 
     if run_s2p_timestamp:

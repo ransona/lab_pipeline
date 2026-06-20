@@ -2,12 +2,16 @@ import datetime
 import sys
 
 
-def run_preprocess_bonvision(userID, expID):
+def run_preprocess_bonvision(userID, expID, confirm_callback=None):
     exp_date = expID[0:10]
     bonvision_v2_cutoff = datetime.datetime.strptime('2025-01-24', '%Y-%m-%d')
     if datetime.datetime.strptime(exp_date, '%Y-%m-%d') > bonvision_v2_cutoff:
         from preprocess_pipeline.behavior import preprocess_bv2
-        preprocess_bv2.run_preprocess_bv2(userID, expID)
+        preprocess_bv2.run_preprocess_bv2(
+            userID,
+            expID,
+            confirm_callback=confirm_callback,
+        )
     else:
         from preprocess_pipeline.behavior import preprocess_bv
         preprocess_bv.run_preprocess_bv(userID, expID)
