@@ -1,13 +1,12 @@
 import glob
 import os
 import shutil
-import sys
 import traceback
 from datetime import datetime
 
 import numpy as np
 
-from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import paths, suite2p_npy
 
 
 SPINES_GUI_ARTIFACT_PATTERNS = [
@@ -18,27 +17,8 @@ SPINES_GUI_ARTIFACT_PATTERNS = [
 SPLIT_STATUS_LOG_NAME = "split_status.log"
 
 
-def ensure_numpy_core_pickle_compat():
-    """Allow NumPy 1.x environments to read object arrays saved by NumPy 2.x."""
-    if "numpy._core" in sys.modules:
-        return
-    try:
-        import numpy.core as numpy_core
-
-        sys.modules.setdefault("numpy._core", numpy_core)
-        for module_name in ("multiarray", "numeric", "fromnumeric", "shape_base", "_methods"):
-            try:
-                module = __import__(f"numpy.core.{module_name}", fromlist=["*"])
-            except Exception:
-                continue
-            sys.modules.setdefault(f"numpy._core.{module_name}", module)
-    except Exception:
-        return
-
-
 def load_npy(path, **kwargs):
-    ensure_numpy_core_pickle_compat()
-    return np.load(path, **kwargs)
+    return suite2p_npy.load_npy_compat(path, **kwargs)
 
 
 def split_combined_suite2p():
@@ -164,6 +144,7 @@ def split_combined_channel(userID, split_root, channel_root):
         print(f"Plane {plane_name}")
 
         plane_ops = load_plane_metadata(plane_dir)
+        suite2p_flavor = suite2p_npy.classify_suite2p_npy(os.path.join(plane_dir, "ops.npy"), plane_ops)
         plane_db = load_optional_plane_dict(plane_dir, "db.npy")
         plane_settings = load_optional_plane_dict(plane_dir, "settings.npy")
         frames_per_folder = get_frames_per_folder(plane_ops, plane_dir, len(exp_ids))
@@ -202,7 +183,11 @@ def split_combined_channel(userID, split_root, channel_root):
             np.save(os.path.join(dest_plane_dir, "Fneu.npy"), Fneu_exp)
             np.save(os.path.join(dest_plane_dir, "spks.npy"), spks_exp)
             np.save(os.path.join(dest_plane_dir, "iscell.npy"), iscell)
-            np.save(os.path.join(dest_plane_dir, "stat.npy"), stat)
+            suite2p_npy.save_object_npy(
+                os.path.join(dest_plane_dir, "stat.npy"),
+                stat,
+                suite2p_flavor=suite2p_flavor,
+            )
 
             print("Cropping and saving binary file (registered frames)...")
             source_bin = os.path.join(plane_dir, "data.bin")
@@ -229,7 +214,11 @@ def split_combined_channel(userID, split_root, channel_root):
                 dest_plane_dir=dest_plane_dir,
                 frames_in_exp=frames_in_exp,
             )
-            np.save(os.path.join(dest_plane_dir, "ops.npy"), split_ops)
+            suite2p_npy.save_object_npy(
+                os.path.join(dest_plane_dir, "ops.npy"),
+                split_ops,
+                suite2p_flavor=suite2p_flavor,
+            )
             if plane_db:
                 split_db = rewrite_ops_for_split(
                     plane_ops=plane_db,
@@ -240,9 +229,13 @@ def split_combined_channel(userID, split_root, channel_root):
                 )
                 split_db["db_path"] = os.path.join(dest_plane_dir, "db.npy")
                 split_db["settings_path"] = os.path.join(dest_plane_dir, "settings.npy")
-                np.save(split_db["db_path"], split_db)
+                suite2p_npy.save_object_npy(split_db["db_path"], split_db, suite2p_flavor=suite2p_flavor)
             if plane_settings:
-                np.save(os.path.join(dest_plane_dir, "settings.npy"), plane_settings)
+                suite2p_npy.save_object_npy(
+                    os.path.join(dest_plane_dir, "settings.npy"),
+                    plane_settings,
+                    suite2p_flavor=suite2p_flavor,
+                )
 
         combined_bins_to_delete.append(os.path.join(plane_dir, "data.bin"))
 
@@ -335,10 +328,7 @@ def load_optional_plane_dict(plane_dir, filename):
     path = os.path.join(plane_dir, filename)
     if not os.path.exists(path):
         return {}
-    value = load_npy(path, allow_pickle=True).item()
-    if not isinstance(value, dict):
-        raise TypeError(f"Expected {path} to contain a dict, got {type(value).__name__}")
-    return value
+    return suite2p_npy.load_object_dict(path)
 
 
 def load_plane_metadata(plane_dir):

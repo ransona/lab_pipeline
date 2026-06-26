@@ -262,6 +262,24 @@ def _command_filename(now, user_id, exp_id, jump_queue):
     return f'{prefix}_{user_id}_{exp_id}.pickle'
 
 
+def _combined_s2p_command_filename(now, user_id, exp_id, jump_queue):
+    if jump_queue:
+        prefix = now.strftime('00_00_00_00_00_00')
+    else:
+        prefix = now.strftime('%Y_%m_%d_%H_%M_%S')
+    return f'{prefix}_{user_id}_combined_s2p_{exp_id}.pickle'
+
+
+def _combined_per_experiment_command_filename(now, user_id, exp_id, jump_queue, rundlc):
+    if rundlc:
+        if jump_queue:
+            prefix = now.strftime('00_00_00_00_00_00')
+        else:
+            prefix = now.strftime('%Y_%m_%d_%H_%M_%S')
+        return f'{prefix}_{user_id}_dlc_{exp_id}.pickle'
+    return _command_filename(now, user_id, exp_id, jump_queue)
+
+
 def run_step1_batch_universal(step1_config):
     user_id = step1_config['userID']
     exp_ids = step1_config['expIDs']
@@ -406,7 +424,7 @@ def run_step1_batch_universal(step1_config):
                 _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
                 all_exp_ids = ','.join(exp_id)
                 now = datetime.now()
-                command_filename = _command_filename(now, user_id, exp_id[0], False)
+                command_filename = _combined_s2p_command_filename(now, user_id, exp_id[0], False)
                 runtime.run_preprocess_step1_universal(
                     command_filename,
                     user_id,
@@ -431,7 +449,9 @@ def run_step1_batch_universal(step1_config):
                 )
                 for exp_id_sub in exp_id:
                     now = datetime.now()
-                    command_filename = _command_filename(now, user_id, exp_id_sub, False)
+                    command_filename = _combined_per_experiment_command_filename(
+                        now, user_id, exp_id_sub, False, rundlc
+                    )
                     runtime.run_preprocess_step1_universal(
                         command_filename,
                         user_id,
@@ -492,7 +512,7 @@ def run_step1_batch_universal(step1_config):
             _validate_combined_work_units(user_id, exp_id, topology, work_unit_ids)
             all_exp_ids = ','.join(exp_id)
             now = datetime.now()
-            command_filename = _command_filename(now, user_id, exp_id[0], jump_queue)
+            command_filename = _combined_s2p_command_filename(now, user_id, exp_id[0], jump_queue)
             command = _build_command(command_filename, user_id, all_exp_ids, runs2p, False, False)
             queued_command = _queue_single_job(
                 command_filename,
@@ -516,7 +536,9 @@ def run_step1_batch_universal(step1_config):
                     + ' to the queue for non-combined processing of non-suite2p experiment data'
                 )
                 now = datetime.now()
-                command_filename = _command_filename(now, user_id, exp_id_sub, jump_queue)
+                command_filename = _combined_per_experiment_command_filename(
+                    now, user_id, exp_id_sub, jump_queue, rundlc
+                )
                 command = _build_command(
                     command_filename, user_id, exp_id_sub, False, rundlc, runfitpupil
                 )

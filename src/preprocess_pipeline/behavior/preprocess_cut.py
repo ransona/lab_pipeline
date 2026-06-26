@@ -10,6 +10,17 @@ import pickle
 from preprocess_pipeline.shared import paths
 
 
+S2P_METADATA_KEYS = (
+    "Depths",
+    "OriginalSuite2pCellIDs",
+    "AllRoiPix",
+    "AllRoiMaps",
+    "AllFOV",
+    "Scanpaths",
+    "SIRois",
+)
+
+
 def _is_local_run():
     return any(
         os.environ.get(env_name)
@@ -43,6 +54,14 @@ def sparse_cat_np(original_np,new_np):
     combined_np = np.concatenate([original_np,new_np],axis = 0)
     return combined_np
 
+
+def copy_s2p_metadata(source, *destinations):
+    for key in S2P_METADATA_KEYS:
+        if key in source:
+            for destination in destinations:
+                destination[key] = source[key]
+
+
 def run_preprocess_cut(userID, expID,pre_time,post_time):
     # work out path stuff
     animalID, remote_repository_root, \
@@ -74,9 +93,8 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
     # cycle through each
     for iS2P_file in all_s2p_files:
         # load data s2p ca data
-        pickle_in = open(os.path.join(exp_dir_processed_recordings,iS2P_file),"rb")
-        ca_data = pickle.load(pickle_in)
-        pickle_in.close
+        with open(os.path.join(exp_dir_processed_recordings,iS2P_file),"rb") as pickle_in:
+            ca_data = pickle.load(pickle_in)
     
 
         # preallocate an array with shape:
@@ -89,7 +107,7 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         s2p_F_cut = {}
         s2p_Spikes_cut = {}
         s2p_dF_cut['dF'] = np.full([roi_count, trial_count,max_snippet_len],np.nan,dtype=np.float16)
-        s2p_F_cut['F'] = np.full([roi_count, trial_count,max_snippet_len],np.nan,dtype=np.int16)
+        s2p_F_cut['F'] = np.full([roi_count, trial_count,max_snippet_len],np.nan,dtype=np.float32)
         s2p_Spikes_cut['Spikes'] = np.full([roi_count, trial_count,max_snippet_len],np.nan,dtype=np.float16)
 
 
@@ -117,6 +135,7 @@ def run_preprocess_cut(userID, expID,pre_time,post_time):
         s2p_dF_cut['t'] = np.linspace(0,s2p_dF_cut['dF'].shape[2]/ca_framerate,s2p_dF_cut['dF'].shape[2]) - pre_time
         s2p_F_cut['t'] = s2p_dF_cut['t']
         s2p_Spikes_cut['t'] = s2p_dF_cut['t']
+        copy_s2p_metadata(ca_data, s2p_dF_cut, s2p_F_cut, s2p_Spikes_cut)
         with open(os.path.join(exp_dir_processed_cut,iS2P_file[0:7]+'_dF_cut.pickle'), 'wb') as f: pickle.dump(s2p_dF_cut, f)
         with open(os.path.join(exp_dir_processed_cut,iS2P_file[0:7]+'_F_cut.pickle'), 'wb') as f: pickle.dump(s2p_F_cut, f)
         with open(os.path.join(exp_dir_processed_cut,iS2P_file[0:7]+'_Spikes_cut.pickle'), 'wb') as f: pickle.dump(s2p_Spikes_cut, f)

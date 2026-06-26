@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import suite2p_npy
 from preprocess_pipeline.srdtrans.launcher import encode_config_arg as encode_srdtrans_config_arg, decode_config_arg as decode_srdtrans_config_arg
 from preprocess_pipeline.suite2p import backend as suite2p_backend
 import numpy as np
@@ -253,7 +254,7 @@ def resolve_first_tif_path(data_path):
 
 def load_ops_with_inferred_nplanes(config_path, all_tif_paths, functional_chan=None):
     """Load Suite2p ops and optionally populate nplanes/fs from raw ScanImage metadata."""
-    ops = np.load(config_path, allow_pickle=True).item()
+    ops = suite2p_npy.load_object_dict(config_path)
     if suite2p_backend.is_suite2p_1x():
         suite2p_backend.validate_suite2p_1x_config(ops, source=str(config_path))
     nplanes_value = ops.get("nplanes")
@@ -308,7 +309,7 @@ def resolve_nplanes(config_path, all_tif_paths):
 
 
 def load_suite2p_settings(config_path, functional_chan=None):
-    ops = np.load(config_path, allow_pickle=True).item()
+    ops = suite2p_npy.load_object_dict(config_path)
     if suite2p_backend.is_suite2p_1x():
         suite2p_backend.validate_suite2p_1x_config(ops, source=str(config_path))
     if functional_chan is not None:
@@ -442,14 +443,14 @@ def strip_chan2_reg_outputs(plane_dir):
     reg_outputs_path = os.path.join(plane_dir, "reg_outputs.npy")
     if not os.path.exists(reg_outputs_path):
         return
-    reg_outputs = np.load(reg_outputs_path, allow_pickle=True).item()
+    reg_outputs = suite2p_npy.load_object_dict(reg_outputs_path)
     changed = False
     for key in ("meanImg_chan2", "meanImg_chan2_corrected"):
         if key in reg_outputs:
             reg_outputs.pop(key, None)
             changed = True
     if changed:
-        np.save(reg_outputs_path, reg_outputs)
+        suite2p_npy.save_object_npy(reg_outputs_path, reg_outputs)
 
 
 def apply_chan2_detection_mode(ops, mode, plane_save_dir, paired_channel_available):
@@ -591,13 +592,13 @@ def update_combined_ops(save_root, nplanes):
     if not os.path.exists(combined_ops_path):
         return
 
-    combined_ops = np.load(combined_ops_path, allow_pickle=True).item()
+    combined_ops = suite2p_npy.load_object_dict(combined_ops_path)
     combined_ops["nplanes"] = int(nplanes)
     if combined_ops.get("nchannels") == 1:
         for key in ["reg_file_chan2", "raw_file_chan2", "meanImg_chan2", "meanImg_chan2_corrected"]:
             if key in combined_ops:
                 del combined_ops[key]
-    np.save(combined_ops_path, combined_ops)
+    suite2p_npy.save_object_npy(combined_ops_path, combined_ops)
 
 
 def copy_ops_for_extraction(registration_ops, extraction_ops):
@@ -661,9 +662,10 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
     nframes = int(plane_ops.get("nframes", 0))
     ops_path = plane_ops.get("ops_path") or os.path.join(plane_save_dir, "ops.npy")
     if os.path.exists(ops_path):
-        saved_ops = np.load(ops_path, allow_pickle=True).item()
+        saved_ops = suite2p_npy.load_object_dict(ops_path)
         saved_ops.update({key: value for key, value in plane_ops.items() if key not in saved_ops})
         plane_ops = saved_ops
+    suite2p_flavor = suite2p_npy.classify_suite2p_npy(ops_path, plane_ops)
 
     mean_img = plane_ops.get("meanImg")
     if mean_img is not None:
@@ -697,13 +699,17 @@ def write_empty_detection_outputs(plane_save_dir, plane_ops):
         ],
         dtype=object,
     )
-    np.save(os.path.join(plane_save_dir, "stat.npy"), dummy_stat)
+    suite2p_npy.save_object_npy(
+        os.path.join(plane_save_dir, "stat.npy"),
+        dummy_stat,
+        suite2p_flavor=suite2p_flavor,
+    )
     np.save(os.path.join(plane_save_dir, "F.npy"), np.zeros((1, nframes), dtype=np.float32))
     np.save(os.path.join(plane_save_dir, "Fneu.npy"), np.zeros((1, nframes), dtype=np.float32))
     np.save(os.path.join(plane_save_dir, "iscell.npy"), np.array([[0.0, 0.0]], dtype=np.float32))
     np.save(os.path.join(plane_save_dir, "spks.npy"), np.zeros((1, nframes), dtype=np.float32))
     plane_ops["ops_path"] = ops_path
-    np.save(ops_path, plane_ops)
+    suite2p_npy.save_object_npy(ops_path, plane_ops, suite2p_flavor=suite2p_flavor)
 
 
 def is_no_usable_roi_exception(exc):
@@ -857,7 +863,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
         plane_name = os.path.basename(plane_dir)
         print(f">>>>>>>>>>>>>>>>>>>>> COMBINED-CHANNEL REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
         plane_ops_path = os.path.join(plane_dir, "ops.npy")
-        plane_ops = np.load(plane_ops_path, allow_pickle=True).item()
+        plane_ops = suite2p_npy.load_object_dict(plane_ops_path)
         ch1_file = plane_ops["reg_file"]
         ch2_file = plane_ops.get("reg_file_chan2", os.path.join(plane_dir, "data_chan2.bin"))
         if not os.path.exists(ch2_file):
@@ -912,7 +918,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
             reg_ops["register_with_summed_channel"] = True
             reg_ops["registration_channel_combination"] = "average"
             reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
-            np.save(plane_ops_path, reg_ops)
+            suite2p_npy.save_object_npy(plane_ops_path, reg_ops)
         finally:
             if scratch_is_temp:
                 shutil.rmtree(scratch_dir, ignore_errors=True)
@@ -945,7 +951,7 @@ def run_extraction_stage(
 
     for canonical_plane_dir in canonical_plane_dirs:
         plane_name = os.path.basename(canonical_plane_dir)
-        registration_ops = np.load(os.path.join(canonical_plane_dir, "ops.npy"), allow_pickle=True).item()
+        registration_ops = suite2p_npy.load_object_dict(os.path.join(canonical_plane_dir, "ops.npy"))
 
         plane_save_dir = os.path.join(save_root, "suite2p", plane_name)
         os.makedirs(plane_save_dir, exist_ok=True)
@@ -1024,7 +1030,7 @@ def run_extraction_stage(
                 extra_path = os.path.join(plane_save_dir, filename)
                 if os.path.exists(extra_path):
                     os.remove(extra_path)
-        np.save(plane_ops["ops_path"], plane_ops)
+        suite2p_npy.save_object_npy(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(extraction_config) and suite2p_detection_enabled(extraction_config):
         suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
@@ -1102,7 +1108,7 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
         plane_name = os.path.basename(canonical_plane_dir)
         print(f">>>>>>>>>>>>>>>>>>>>> FINAL COMBINED-CHANNEL REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
         plane_ops_path = os.path.join(canonical_plane_dir, "ops.npy")
-        registration_ops = np.load(plane_ops_path, allow_pickle=True).item()
+        registration_ops = suite2p_npy.load_object_dict(plane_ops_path)
 
         ch1_file = os.path.join(canonical_plane_dir, "data.bin")
         ch2_file = os.path.join(canonical_plane_dir, "data_chan2.bin")
@@ -1161,7 +1167,7 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
             reg_ops["final_register_with_summed_channel"] = True
             reg_ops["registration_channel_combination"] = "average"
             reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
-            np.save(plane_ops_path, reg_ops)
+            suite2p_npy.save_object_npy(plane_ops_path, reg_ops)
         finally:
             if scratch_is_temp:
                 shutil.rmtree(scratch_dir, ignore_errors=True)
@@ -1184,7 +1190,7 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes, fu
         plane_name = os.path.basename(canonical_plane_dir)
         print(f">>>>>>>>>>>>>>>>>>>>> FINAL SHARED REGISTRATION {plane_name} <<<<<<<<<<<<<<<<<<<<<<")
         plane_ops_path = os.path.join(canonical_plane_dir, "ops.npy")
-        registration_ops = np.load(plane_ops_path, allow_pickle=True).item()
+        registration_ops = suite2p_npy.load_object_dict(plane_ops_path)
 
         ch1_file = os.path.join(canonical_plane_dir, "data.bin")
         ch2_file = os.path.join(canonical_plane_dir, "data_chan2.bin")
@@ -1214,7 +1220,7 @@ def run_final_shared_registration(canonical_root, final_config_path, nplanes, fu
         plane_ops["reg_file"] = ch1_file
         plane_ops["reg_file_chan2"] = ch2_file
         plane_ops["final_shared_registration"] = True
-        np.save(plane_ops_path, plane_ops)
+        suite2p_npy.save_object_npy(plane_ops_path, plane_ops)
 
     fix_binary_permissions(canonical_root)
 
@@ -1233,7 +1239,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
 
     for canonical_plane_dir in canonical_plane_dirs:
         plane_name = os.path.basename(canonical_plane_dir)
-        registration_ops = np.load(os.path.join(canonical_plane_dir, "ops.npy"), allow_pickle=True).item()
+        registration_ops = suite2p_npy.load_object_dict(os.path.join(canonical_plane_dir, "ops.npy"))
 
         plane_save_dir = os.path.join(save_root, "suite2p", plane_name)
         os.makedirs(plane_save_dir, exist_ok=True)
@@ -1295,7 +1301,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
             extra_path = os.path.join(plane_save_dir, filename)
             if os.path.exists(extra_path):
                 os.remove(extra_path)
-        np.save(plane_ops["ops_path"], plane_ops)
+        suite2p_npy.save_object_npy(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(final_config) and suite2p_detection_enabled(final_config):
         suite2p_backend.suite2p_io.combined(os.path.join(save_root, "suite2p"), save=True)
@@ -1360,7 +1366,7 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_
 
         root_ops_path = os.path.join(canonical_plane_dir, "ops.npy")
         if os.path.exists(root_ops_path):
-            root_ops = np.load(root_ops_path, allow_pickle=True).item()
+            root_ops = suite2p_npy.load_object_dict(root_ops_path)
             root_ops["reg_file"] = root_green_bin
             root_ops["nplanes"] = int(nplanes)
             if keep_root_chan2:
@@ -1371,11 +1377,11 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_
             else:
                 root_ops["nchannels"] = 1
                 strip_chan2_runtime_fields(root_ops)
-            np.save(root_ops_path, root_ops)
+            suite2p_npy.save_object_npy(root_ops_path, root_ops)
 
         ch2_ops_path = os.path.join(ch2_plane_dir, "ops.npy")
         if os.path.exists(ch2_ops_path):
-            ch2_ops = np.load(ch2_ops_path, allow_pickle=True).item()
+            ch2_ops = suite2p_npy.load_object_dict(ch2_ops_path)
             if os.path.exists(ch2_red_bin):
                 ch2_ops["reg_file"] = ch2_red_bin
             ch2_ops["nchannels"] = 1
@@ -1389,7 +1395,7 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_
             ]:
                 if key in ch2_ops:
                     del ch2_ops[key]
-            np.save(ch2_ops_path, ch2_ops)
+            suite2p_npy.save_object_npy(ch2_ops_path, ch2_ops)
 
     update_combined_ops(canonical_root, nplanes)
     update_combined_ops(ch2_root, nplanes)

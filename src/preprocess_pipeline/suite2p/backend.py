@@ -10,6 +10,8 @@ from suite2p import io as suite2p_io
 from suite2p.run_s2p import run_plane as suite2p_run_plane
 from suite2p.registration import register as suite2p_register
 
+from preprocess_pipeline.shared import suite2p_npy
+
 
 class Suite2pProgressNoiseFilter(logging.Filter):
     """Drop high-frequency Suite2p ROI candidate progress messages."""
@@ -172,11 +174,11 @@ def run_plane_compat(plane_ops: dict) -> dict:
     db, settings = _plane_db_settings_from_ops(plane_ops)
     save_path = db["save_path"]
     os.makedirs(save_path, exist_ok=True)
-    np.save(db["db_path"], db)
-    np.save(db["settings_path"], settings)
+    suite2p_npy.save_object_npy(db["db_path"], db)
+    suite2p_npy.save_object_npy(db["settings_path"], settings)
     suite2p_run_plane(db=db, settings=settings)
     ops_path = plane_ops.get("ops_path") or os.path.join(save_path, "ops.npy")
-    result = np.load(ops_path, allow_pickle=True).item()
+    result = suite2p_npy.load_object_dict(ops_path)
     result.setdefault("ops_path", ops_path)
     result.setdefault("save_path", save_path)
     if db.get("save_path0") is not None:

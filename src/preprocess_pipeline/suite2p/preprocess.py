@@ -8,7 +8,7 @@ from scipy import signal
 from scipy.io import loadmat
 from tqdm import tqdm
 
-from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import paths, suite2p_npy
 
 
 def save_plane_timing_outputs(plane_dir, frame_times, frame_start_times, output_times):
@@ -251,8 +251,8 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
                 Fall = np.load(os.path.join(plane_dir, "F.npy"))
                 Fneu = np.load(os.path.join(plane_dir, "Fneu.npy"))
                 spks = np.load(os.path.join(plane_dir, "spks.npy"))
-                s2p_stat = np.load(os.path.join(plane_dir, "stat.npy"), allow_pickle=True)
-                s2p_ops = np.load(os.path.join(plane_dir, "ops.npy"), allow_pickle=True).item()
+                s2p_stat = suite2p_npy.load_object_npy(os.path.join(plane_dir, "stat.npy"))
+                s2p_ops = suite2p_npy.load_object_dict(os.path.join(plane_dir, "ops.npy"))
                 print("Frames = " + str(Fall.shape[1]))
                 print("Time pulses = " + str(frame_pulses_per_depth))
                 if abs(frame_pulses_per_depth - Fall.shape[1]) / max([frame_pulses_per_depth, Fall.shape[1]]) > 0.01:

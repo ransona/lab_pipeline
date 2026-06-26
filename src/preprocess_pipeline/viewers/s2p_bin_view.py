@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 from scipy.ndimage import median_filter
 
-from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import paths, suite2p_npy
 
 
 @dataclass
@@ -45,7 +45,7 @@ def _load_ops_for_binary(bin_path: str):
     ops_path = os.path.join(plane_dir, "ops.npy")
     if not os.path.exists(ops_path):
         raise FileNotFoundError(f"Could not find ops.npy beside binary: {bin_path}")
-    return np.load(ops_path, allow_pickle=True).item()
+    return suite2p_npy.load_object_dict(ops_path)
 
 
 def _plane_binary_from_path(bin_path: str):
