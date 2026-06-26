@@ -7,7 +7,7 @@ executing approved deletions.
 The normal user-facing entry point is:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/<username>/code/lab_pipeline/apps/data_manager.py
+/opt/scripts/conda-run.sh lab_pipeline python /home/<username>/code/lab_pipeline/apps/data_manager.py
 ```
 
 `apps/data_manager.py` is only a launcher shim. It resolves this directory under
@@ -165,15 +165,15 @@ Typical manual run:
 
 ```bash
 cd /home/<username>/code/lab_pipeline/src/preprocess_pipeline/viewers/external/data_manager
-sudo /home/<username>/miniconda3/envs/sci/bin/python delete_runner.py
+sudo /home/<username>/miniconda3/envs/lab_pipeline/bin/python delete_runner.py
 ```
 
 Useful options:
 
 ```bash
-sudo /home/<username>/miniconda3/envs/sci/bin/python delete_runner.py --min-age-days 7
-sudo /home/<username>/miniconda3/envs/sci/bin/python delete_runner.py --auto
-sudo /home/<username>/miniconda3/envs/sci/bin/python delete_runner.py --include-deleted
+sudo /home/<username>/miniconda3/envs/lab_pipeline/bin/python delete_runner.py --min-age-days 7
+sudo /home/<username>/miniconda3/envs/lab_pipeline/bin/python delete_runner.py --auto
+sudo /home/<username>/miniconda3/envs/lab_pipeline/bin/python delete_runner.py --include-deleted
 ```
 
 Important behavior:
@@ -215,8 +215,8 @@ Use `scan_verbose.py` when you want to populate metrics outside the GUI:
 
 ```bash
 cd /home/<username>/code/lab_pipeline/src/preprocess_pipeline/viewers/external/data_manager
-/opt/scripts/conda-run.sh sci python scan_verbose.py
-/opt/scripts/conda-run.sh sci python scan_verbose.py --watch
+/opt/scripts/conda-run.sh lab_pipeline python scan_verbose.py
+/opt/scripts/conda-run.sh lab_pipeline python scan_verbose.py --watch
 ```
 
 Without `--watch`, it scans once. With `--watch`, it scans immediately and then

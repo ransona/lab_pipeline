@@ -6,7 +6,7 @@ standalone `eye_check_py` application.
 Launch it through:
 
 ```bash
-/opt/scripts/conda-run.sh sci python ~/code/lab_pipeline/apps/eye_check.py
+/opt/scripts/conda-run.sh lab_pipeline python ~/code/lab_pipeline/apps/eye_check.py
 ```
 
 The GUI imports the canonical resolver from `preprocess_pipeline.shared.paths`

@@ -1,5 +1,5 @@
 ' Double-click this file on Windows to launch the local processing GUI without a console window.
-' It runs apps\local_run.py in the local sci conda environment using pythonw.exe.
+' It runs apps\local_run.py in the local lab_pipeline conda environment using pythonw.exe.
 
 Option Explicit
 
@@ -17,10 +17,10 @@ userProfile = shell.ExpandEnvironmentStrings("%USERPROFILE%")
 ' Edit this path if your conda installation is elsewhere.
 pythonw = ""
 candidates = Array( _
-    userProfile & "\miniconda3\envs\sci\pythonw.exe", _
-    userProfile & "\anaconda3\envs\sci\pythonw.exe", _
-    userProfile & "\mambaforge\envs\sci\pythonw.exe", _
-    userProfile & "\miniforge3\envs\sci\pythonw.exe" _
+    userProfile & "\miniconda3\envs\lab_pipeline\pythonw.exe", _
+    userProfile & "\anaconda3\envs\lab_pipeline\pythonw.exe", _
+    userProfile & "\mambaforge\envs\lab_pipeline\pythonw.exe", _
+    userProfile & "\miniforge3\envs\lab_pipeline\pythonw.exe" _
 )
 
 For Each candidate In candidates
@@ -31,8 +31,8 @@ For Each candidate In candidates
 Next
 
 If pythonw = "" Then
-    MsgBox "Could not find pythonw.exe for the sci conda env." & vbCrLf & _
-           "Edit windows_launchers\run_local_gui.vbs and set pythonw to your sci env pythonw.exe path.", _
+    MsgBox "Could not find pythonw.exe for the lab_pipeline conda env." & vbCrLf & _
+           "Edit windows_launchers\run_local_gui.vbs and set pythonw to your lab_pipeline env pythonw.exe path.", _
            vbCritical, "lab_pipeline local GUI"
     WScript.Quit 1
 End If
@@ -52,7 +52,7 @@ activateBat = fso.BuildPath(fso.GetParentFolderName(fso.GetParentFolderName(pyth
 pythonExe = fso.BuildPath(pythonDir, "python.exe")
 
 If fso.FileExists(activateBat) And fso.FileExists(pythonExe) Then
-    command = "cmd.exe /c call """ & activateBat & """ sci && """ & pythonw & """ """ & appPath & """"
+    command = "cmd.exe /c call """ & activateBat & """ lab_pipeline && """ & pythonw & """ """ & appPath & """"
 Else
     command = """" & pythonw & """ """ & appPath & """"
 End If

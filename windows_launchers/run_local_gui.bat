@@ -11,14 +11,14 @@ set "PYTHON_EXE="
 set "ACTIVATE_BAT="
 
 rem Edit this path if your conda installation is elsewhere.
-if exist "%USERPROFILE%\miniconda3\envs\sci\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniconda3\envs\sci\python.exe"
-if not defined PYTHON_EXE if exist "%USERPROFILE%\anaconda3\envs\sci\python.exe" set "PYTHON_EXE=%USERPROFILE%\anaconda3\envs\sci\python.exe"
-if not defined PYTHON_EXE if exist "%USERPROFILE%\mambaforge\envs\sci\python.exe" set "PYTHON_EXE=%USERPROFILE%\mambaforge\envs\sci\python.exe"
-if not defined PYTHON_EXE if exist "%USERPROFILE%\miniforge3\envs\sci\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniforge3\envs\sci\python.exe"
+if exist "%USERPROFILE%\miniconda3\envs\lab_pipeline\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniconda3\envs\lab_pipeline\python.exe"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\anaconda3\envs\lab_pipeline\python.exe" set "PYTHON_EXE=%USERPROFILE%\anaconda3\envs\lab_pipeline\python.exe"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\mambaforge\envs\lab_pipeline\python.exe" set "PYTHON_EXE=%USERPROFILE%\mambaforge\envs\lab_pipeline\python.exe"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\miniforge3\envs\lab_pipeline\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniforge3\envs\lab_pipeline\python.exe"
 
 if not defined PYTHON_EXE (
-    echo Could not find python.exe for the sci conda env.
-    echo Edit %~nx0 and set PYTHON_EXE to your sci env python.exe path.
+    echo Could not find python.exe for the lab_pipeline conda env.
+    echo Edit %~nx0 and set PYTHON_EXE to your lab_pipeline env python.exe path.
     pause
     exit /b 1
 )
@@ -38,13 +38,13 @@ if not exist "%APP_PATH%" (
 
 echo Running local pipeline GUI:
 if defined ACTIVATE_BAT (
-    echo call "%ACTIVATE_BAT%" sci ^&^& python "%APP_PATH%"
+    echo call "%ACTIVATE_BAT%" lab_pipeline ^&^& python "%APP_PATH%"
 ) else (
     echo "%PYTHON_EXE%" "%APP_PATH%"
 )
 echo.
 if defined ACTIVATE_BAT (
-    call "%ACTIVATE_BAT%" sci
+    call "%ACTIVATE_BAT%" lab_pipeline
     python "%APP_PATH%"
 ) else (
     "%PYTHON_EXE%" "%APP_PATH%"

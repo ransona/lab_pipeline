@@ -912,7 +912,7 @@ class QueueTab(QtWidgets.QWidget):
     def _current_queue_listener_command(self) -> str:
         repo_root = Path(__file__).resolve().parents[3]
         listener = repo_root / "apps" / "queue_listener.py"
-        command = f"cd {shlex.quote(str(repo_root))} && /opt/scripts/conda-run.sh base python {shlex.quote(str(listener))}"
+        command = f"cd {shlex.quote(str(repo_root))} && /opt/scripts/conda-run.sh lab_pipeline python {shlex.quote(str(listener))}"
         if self.queue_selector.currentIndex() == 1:
             command += " --debug"
         return command

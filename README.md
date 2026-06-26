@@ -69,11 +69,11 @@ Pipeline and subsystem apps:
 
 | App | Purpose | Typical command |
 | --- | --- | --- |
-| `queue_listener.py` | Normal Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py` |
-| `queue_listener.py --debug` | Debug Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug` |
+| `queue_listener.py` | Normal Step 1 queue listener | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/queue_listener.py` |
+| `queue_listener.py --debug` | Debug Step 1 queue listener | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug` |
 | `run_step1.py` | Submit Step 1 jobs from a config | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/run_step1.py` |
 | `run_step2.py` | Run Step 2 jobs from a config | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/run_step2.py` |
-| `preprocess_step1.py` | Execute one queued Step 1 runtime job directly | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/preprocess_step1.py` |
+| `preprocess_step1.py` | Execute one queued Step 1 runtime job directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step1.py` |
 | `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
 | `s2p_launcher.py` | Suite2p launcher for one work unit | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/s2p_launcher.py` |
 | `dlc_launcher.py` | DeepLabCut launcher | `/opt/scripts/conda-run.sh DLC_05_02_2026 python /home/[username]/code/lab_pipeline/apps/dlc_launcher.py` |
@@ -282,8 +282,8 @@ When qView starts, it backs up the Picker database at most once per calendar mon
 If you need the listener manually, the new queue listener can be run with:
 
 ```bash
-/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py
-/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug
+/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/queue_listener.py
+/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug
 ```
 
 The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/common/queues/step1/`.

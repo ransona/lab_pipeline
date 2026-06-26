@@ -16,7 +16,7 @@ if __name__ == "__main__":
             raise SystemExit(
                 "PyQt6 is not available in this environment. Launch qview from an environment "
                 "that has PyQt6 installed, for example:\n"
-                "/opt/scripts/conda-run.sh sci python /home/adamranson/code/lab_pipeline/apps/qview.py"
+                "/opt/scripts/conda-run.sh lab_pipeline python /home/adamranson/code/lab_pipeline/apps/qview.py"
             )
         raise
     main()

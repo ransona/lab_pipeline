@@ -16,7 +16,7 @@ if "%~1"=="" (
 
 set "APP_FILE=%~1"
 set "CONDA_ENV=%~2"
-if "%CONDA_ENV%"=="" set "CONDA_ENV=sci"
+if "%CONDA_ENV%"=="" set "CONDA_ENV=lab_pipeline"
 
 for /f "usebackq delims=" %%U in (`ssh %SSH_ALIAS% "whoami" 2^>nul`) do (
     if not defined REMOTE_USER set "REMOTE_USER=%%U"
