@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 import traceback
-import importlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -25,7 +24,7 @@ import tifffile
 from PyQt6 import QtCore, QtGui, QtWidgets
 from scipy.io import loadmat
 
-from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import paths, suite2p_npy
 from preprocess_pipeline.srdtrans import build_model as srdtrans_build
 from preprocess_pipeline.suite2p.config_validation import is_native_suite2p_1x_config
 from preprocess_pipeline.step1 import split_combined_s2p
@@ -527,29 +526,8 @@ def _parse_ops_value(text: str, old_value):
     return stripped
 
 
-def _install_numpy_core_pickle_aliases():
-    """Allow NumPy 1.x GUI envs to read NumPy 2.x-authored pickled .npy files."""
-    for module_name in (
-        "numpy.core",
-        "numpy.core.multiarray",
-        "numpy.core.numeric",
-        "numpy.core.umath",
-        "numpy.core._multiarray_umath",
-    ):
-        try:
-            module = importlib.import_module(module_name)
-        except Exception:
-            continue
-        alias = module_name.replace("numpy.core", "numpy._core", 1)
-        sys.modules.setdefault(alias, module)
-
-
 def load_suite2p_ops(config_path: Path) -> dict:
-    _install_numpy_core_pickle_aliases()
-    ops = np.load(config_path, allow_pickle=True).item()
-    if not isinstance(ops, dict):
-        raise ValueError(f"Suite2p config is not a dict: {config_path}")
-    return ops
+    return suite2p_npy.load_object_dict(config_path)
 
 
 class Suite2pOpsEditorDialog(QtWidgets.QDialog):
@@ -655,7 +633,7 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
         self.dirty = True
 
     def save(self):
-        np.save(self.config_path, self.ops)
+        suite2p_npy.save_object_npy(self.config_path, self.ops)
         self.dirty = False
         QtWidgets.QMessageBox.information(self, "Suite2p Config", f"Saved:\n{self.config_path}")
 
@@ -673,7 +651,7 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
         new_path = Path(path_text)
         if new_path.suffix.lower() != ".npy":
             new_path = new_path.with_suffix(".npy")
-        np.save(new_path, self.ops)
+        suite2p_npy.save_object_npy(new_path, self.ops)
         self.config_path = new_path
         self.saved_as_path = new_path
         self.default_save_dir = new_path.parent
@@ -700,7 +678,7 @@ class Suite2pOpsEditorDialog(QtWidgets.QDialog):
                 event.ignore()
                 return
             if response == QtWidgets.QMessageBox.StandardButton.Save:
-                np.save(self.config_path, self.ops)
+                suite2p_npy.save_object_npy(self.config_path, self.ops)
                 self.dirty = False
         event.accept()
 

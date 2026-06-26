@@ -29,6 +29,7 @@ LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
 WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / 'apps'
+PIPELINE_CONDA_ENV = 'lab_pipeline_np_check'
 
 
 def _is_local_mode_config(config):
@@ -394,7 +395,7 @@ def _run_dlc(job_id, user_id, exp_id, topology, queue_path=DEFAULT_QUEUE_PATH):
 
 def _run_fit_pupil(job_id, user_id, exp_id, queue_path=DEFAULT_QUEUE_PATH):
     launcher = str(APP_ROOT / 'preprocess_pupil.py')
-    cmd = ['conda', 'run', '--no-capture-output', '--name', 'sci', 'python', launcher, user_id, exp_id]
+    cmd = ['/opt/scripts/conda-run.sh', PIPELINE_CONDA_ENV, 'python', launcher, user_id, exp_id]
     _stream_subprocess_for_job(cmd, job_id, queue_path)
 
 

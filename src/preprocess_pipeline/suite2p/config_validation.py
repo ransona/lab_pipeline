@@ -1,7 +1,4 @@
-import importlib
-import sys
-
-import numpy as np
+from preprocess_pipeline.shared import suite2p_npy
 
 
 KNOWN_SUITE2P_ENVS = {"suite2p", "suite2p_1.1.0"}
@@ -24,31 +21,16 @@ def _raise_suite2p_config_error(message):
 
 def install_numpy_core_pickle_aliases():
     """Allow NumPy 1.x envs to inspect NumPy 2.x-authored .npy configs."""
-    for module_name in (
-        "numpy.core",
-        "numpy.core.multiarray",
-        "numpy.core.numeric",
-        "numpy.core.umath",
-        "numpy.core._multiarray_umath",
-    ):
-        try:
-            module = importlib.import_module(module_name)
-        except Exception:
-            continue
-        alias = module_name.replace("numpy.core", "numpy._core", 1)
-        sys.modules.setdefault(alias, module)
+    suite2p_npy.install_numpy_core_pickle_aliases()
 
 
 def load_suite2p_config_for_validation(config_path):
-    install_numpy_core_pickle_aliases()
     try:
-        config = np.load(config_path, allow_pickle=True).item()
+        config = suite2p_npy.load_object_dict(config_path)
     except ModuleNotFoundError as exc:
         if str(exc).startswith("No module named 'numpy._core"):
             return {"__native_suite2p_1x_pickle__": True}
         raise
-    if not isinstance(config, dict):
-        raise ValueError(f"Suite2p config is not a dict: {config_path}")
     return config
 
 
@@ -56,7 +38,7 @@ def is_native_suite2p_1x_config(config_path):
     config = load_suite2p_config_for_validation(config_path)
     if config.get("__native_suite2p_1x_pickle__"):
         return True
-    return all(isinstance(config.get(key), dict) for key in SUITE2P_1X_SETTINGS_SECTIONS)
+    return suite2p_npy.is_suite2p_1x_payload(config)
 
 
 def validate_suite2p_env(suite2p_env, *, context="step1_config"):

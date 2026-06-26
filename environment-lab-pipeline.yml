@@ -1,4 +1,4 @@
-name: lab_pipeline
+name: lab_pipeline_np_check
 channels:
   - conda-forge
 dependencies:
@@ -10,17 +10,18 @@ dependencies:
   - scikit-image
   - matplotlib
   - pyqt
-  - opencv
   - tifffile
   - imageio
   - pillow
   - tqdm
   - pytorch
   - torchvision
+  - xcb-util-cursor
   - pip
   - pip:
       - -e .
       - PyQt6==6.11.0
+      - opencv-python-headless==4.13.0.92
       - suite2p==1.1.0
       - harp-python==0.4.1
       - circle-fit==0.2.1

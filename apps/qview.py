@@ -6,6 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 if __name__ == "__main__":
     try:
+        # Import OpenCV before PyQt6. In the NumPy-2 pipeline env, importing
+        # PyQt6 first can load an incompatible GLib symbol set before cv2 loads.
+        import cv2  # noqa: F401
+
         from preprocess_pipeline.viewers.qview import main
     except ModuleNotFoundError as exc:
         if exc.name == "PyQt6":

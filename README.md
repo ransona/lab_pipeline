@@ -2,49 +2,53 @@
 
 Canonical preprocessing repository for the lab pipeline.
 
-## Installation
+## Simple installation
 
-On `dream`, clone the repository into the standard location:
+On `dream`, install the NumPy-fix pipeline checkout:
 
 ```bash
 mkdir -p ~/code
-git clone git@github.com:ransona/lab_pipeline.git ~/code/lab_pipeline
-cd ~/code/lab_pipeline
+git clone git@github.com:ransona/lab_pipeline.git ~/code/lab_pipeline_np_check
+cd ~/code/lab_pipeline_np_check
+git checkout np_check
 ```
 
-Create the pipeline conda environment from the repository specification:
+Create or update the main pipeline env:
 
 ```bash
 conda env create -f environment-lab-pipeline.yml
+# or, if it already exists:
+conda env update -n lab_pipeline_np_check -f environment-lab-pipeline.yml --prune
 ```
 
-For an existing environment, update it with:
+Create or update the minimal NumPy 1 helper env used only for legacy Suite2p `.npy` compatibility:
 
 ```bash
-conda env update -n lab_pipeline -f environment-lab-pipeline.yml --prune
+conda env create -f environment-numpy1.yml
+# or, if it already exists:
+conda env update -n numpy1.x -f environment-numpy1.yml --prune
 ```
 
-The `lab_pipeline` environment contains the main pipeline, GUI, Step 2,
-Suite2p 1.1, and NumPy 2.x dependencies. The runnable files in `apps/` add this
-repository's `src/` directory to Python automatically, so `conda develop` is
-not required.
+The `lab_pipeline_np_check` env runs the main pipeline, GUI, Step 2, and general preprocessing with NumPy 2.x. Suite2p and DLC still run in their own configured envs. The `numpy1.x` env is intentionally minimal and is called automatically when old Suite2p NumPy files need NumPy 1-compatible writes.
 
-Launch the main queue GUI to check the installation:
+Check the GUI:
 
 ```bash
-/opt/scripts/conda-run.sh lab_pipeline python ~/code/lab_pipeline/apps/qview.py
+/opt/scripts/conda-run.sh lab_pipeline_np_check python ~/code/lab_pipeline_np_check/apps/qview.py
 ```
 
-Run the test suite to verify the environment:
+Run tests:
 
 ```bash
-QT_QPA_PLATFORM=offscreen conda run -n lab_pipeline python -m unittest discover -s tests -v
+QT_QPA_PLATFORM=offscreen conda run -n lab_pipeline_np_check python -m unittest discover -s tests -v
 ```
 
-For an existing checkout, update it with:
+Run the queue listener from the same checkout/env:
 
 ```bash
-git -C ~/code/lab_pipeline pull --ff-only
+/opt/scripts/conda-run.sh lab_pipeline_np_check python ~/code/lab_pipeline_np_check/apps/queue_listener.py
+# debug queue:
+/opt/scripts/conda-run.sh lab_pipeline_np_check python ~/code/lab_pipeline_np_check/apps/queue_listener.py --debug
 ```
 
 ## Apps And Launchers

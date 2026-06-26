@@ -11,6 +11,7 @@ import cv2
 from scipy.io import loadmat
 from typing import Any, Dict, Optional, List
 from core.base_source import DataSource
+from preprocess_pipeline.shared import suite2p_npy
 
 
 class VideoBinSource(DataSource):
@@ -119,7 +120,7 @@ class VideoBinSource(DataSource):
                 f"Missing ops.npy alongside binary file; provide explicit height/width or restore Suite2p metadata: {ops_path}"
             )
 
-        ops = np.load(ops_path, allow_pickle=True).item()
+        ops = suite2p_npy.load_object_dict(ops_path)
         if "Ly" in ops and "Lx" in ops:
             return int(ops["Ly"]), int(ops["Lx"])
         if "meanImg" in ops and getattr(ops["meanImg"], "shape", None) is not None:

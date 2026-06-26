@@ -9,7 +9,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-from preprocess_pipeline.shared import paths
+from preprocess_pipeline.shared import paths, suite2p_npy
 
 
 MODEL_ROOT = Path("/data/common/srdtrans_models")
@@ -133,7 +133,7 @@ def registered_work_unit_root(config: dict, exp_id: str, work_unit_name: str) ->
 
 
 def _copy_config_with_forced_rigid_settings(source_config: Union[str, Path], destination: Path) -> Path:
-    ops = np.load(source_config, allow_pickle=True).item()
+    ops = suite2p_npy.load_object_dict(source_config)
     if not isinstance(ops, dict):
         raise ValueError(f"Suite2p config is not a dict: {source_config}")
     ops = dict(ops)
@@ -143,7 +143,7 @@ def _copy_config_with_forced_rigid_settings(source_config: Union[str, Path], des
     ops["roidetect"] = False
     ops["spikedetect"] = False
     destination.parent.mkdir(parents=True, exist_ok=True)
-    np.save(destination, ops)
+    suite2p_npy.save_object_npy(destination, ops)
     return destination
 
 
@@ -173,7 +173,7 @@ def _load_plane_shape(plane_dir: Path, bin_path: Path) -> tuple[int, int, int, n
     ops_path = plane_dir / "ops.npy"
     if not ops_path.exists():
         raise FileNotFoundError(f"Missing ops.npy for registered binary: {ops_path}")
-    ops = np.load(ops_path, allow_pickle=True).item()
+    ops = suite2p_npy.load_object_dict(ops_path)
     ly = int(ops.get("Ly", ops.get("meanImg", np.empty((0, 0))).shape[0]))
     lx = int(ops.get("Lx", ops.get("meanImg", np.empty((0, 0))).shape[1]))
     dtype = np.dtype("int16")
