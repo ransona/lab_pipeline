@@ -29,7 +29,7 @@ LOCAL_CONFIG_ROOT_ENV = 'LAB_PIPELINE_S2P_CONFIG_ROOT'
 WINDOWS_LOCAL_CONFIG_ROOT = r'F:\s2p_ops'
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT / 'apps'
-PIPELINE_CONDA_ENV = 'lab_pipeline_np_check'
+PIPELINE_CONDA_ENV = 'lab_pipeline'
 
 
 def _is_local_mode_config(config):

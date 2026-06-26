@@ -1,4 +1,4 @@
-name: lab_pipeline_np_check
+name: lab_pipeline
 channels:
   - conda-forge
 dependencies:

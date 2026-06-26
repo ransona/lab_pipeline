@@ -43,7 +43,7 @@ class Suite2pRuntimeCommandTests(unittest.TestCase):
             command,
             [
                 "/opt/scripts/conda-run.sh",
-                "lab_pipeline_np_check",
+                "lab_pipeline",
                 "python",
                 str(runtime.APP_ROOT / "preprocess_pupil.py"),
                 "submitter",
