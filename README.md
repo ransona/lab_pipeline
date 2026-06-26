@@ -20,7 +20,7 @@ conda env create -f environment-lab-pipeline.yml
 conda env update -n lab_pipeline -f environment-lab-pipeline.yml --prune
 ```
 
-Create or update the minimal NumPy 1 helper env used only for legacy Suite2p `.npy` compatibility:
+Create or update the minimal NumPy 1 helper env. This is needed for old Suite2p v0.x data because those `ops.npy`, `stat.npy`, and related object `.npy` files were written with NumPy 1-era pickle module paths:
 
 ```bash
 conda env create -f environment-numpy1.yml
@@ -28,7 +28,7 @@ conda env create -f environment-numpy1.yml
 conda env update -n numpy1.x -f environment-numpy1.yml --prune
 ```
 
-The `lab_pipeline` env runs the main pipeline, GUI, Step 2, and general preprocessing with NumPy 2.x. Suite2p and DLC still run in their own configured envs. The `numpy1.x` env is intentionally minimal and is called automatically when old Suite2p NumPy files need NumPy 1-compatible writes.
+The `lab_pipeline` env runs the main pipeline, GUI, Step 2, and general preprocessing with NumPy 2.x. Suite2p and DLC still run in their own configured envs. The `numpy1.x` env is intentionally minimal and is called automatically only when the pipeline reads or writes old Suite2p v0.x NumPy object files that need NumPy 1-compatible handling.
 
 Check the GUI:
 
