@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 from typing import Optional
 
@@ -10,17 +11,35 @@ from suite2p.run_s2p import run_plane as suite2p_run_plane
 from suite2p.registration import register as suite2p_register
 
 
+class Suite2pProgressNoiseFilter(logging.Filter):
+    """Drop high-frequency Suite2p ROI candidate progress messages."""
+
+    _noisy_patterns = (
+        re.compile(r"^ROIs:\s*\d+,\s*candidates:\s*\d+", re.IGNORECASE),
+        re.compile(r"^ROIs:\s*\d+,\s*last score:", re.IGNORECASE),
+        re.compile(r"current peak score:.*minimum peak score:", re.IGNORECASE),
+        re.compile(r"size rejected:", re.IGNORECASE),
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().strip()
+        return not any(pattern.search(message) for pattern in self._noisy_patterns)
+
+
 def ensure_suite2p_console_logging() -> None:
     """Attach Suite2p API logger output to stderr for queue log capture."""
     s2p_logger = logging.getLogger("suite2p")
     s2p_logger.setLevel(logging.DEBUG)
     for handler in s2p_logger.handlers:
         if getattr(handler, "_lab_pipeline_console", False):
+            if not any(isinstance(item, Suite2pProgressNoiseFilter) for item in handler.filters):
+                handler.addFilter(Suite2pProgressNoiseFilter())
             return
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(logging.INFO)
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    handler.addFilter(Suite2pProgressNoiseFilter())
     handler._lab_pipeline_console = True
     s2p_logger.addHandler(handler)
 
