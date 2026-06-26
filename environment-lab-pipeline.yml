@@ -1,0 +1,27 @@
+name: lab_pipeline
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=2,<3
+  - scipy
+  - pandas>=2,<3
+  - scikit-learn
+  - scikit-image
+  - matplotlib
+  - pyqt
+  - opencv
+  - tifffile
+  - imageio
+  - pillow
+  - tqdm
+  - pytorch
+  - torchvision
+  - pip
+  - pip:
+      - -e .
+      - PyQt6==6.11.0
+      - suite2p==1.1.0
+      - harp-python==0.4.1
+      - circle-fit==0.2.1
+      - pynwb==3.1.3

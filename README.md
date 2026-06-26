@@ -12,23 +12,33 @@ git clone git@github.com:ransona/lab_pipeline.git ~/code/lab_pipeline
 cd ~/code/lab_pipeline
 ```
 
-The server pipeline uses the existing shared conda environments, including
-`sci`, `suite2p`, `suite2p_1.1.0`, and `DLC_05_02_2026`. The runnable files in
-`apps/` add this repository's `src/` directory to Python automatically, so
-`conda develop` is not required.
+Create the pipeline conda environment from the repository specification:
+
+```bash
+conda env create -f environment-lab-pipeline.yml
+```
+
+For an existing environment, update it with:
+
+```bash
+conda env update -n lab_pipeline -f environment-lab-pipeline.yml --prune
+```
+
+The `lab_pipeline` environment contains the main pipeline, GUI, Step 2,
+Suite2p 1.1, and NumPy 2.x dependencies. The runnable files in `apps/` add this
+repository's `src/` directory to Python automatically, so `conda develop` is
+not required.
 
 Launch the main queue GUI to check the installation:
 
 ```bash
-/opt/scripts/conda-run.sh sci python ~/code/lab_pipeline/apps/qview.py
+/opt/scripts/conda-run.sh lab_pipeline python ~/code/lab_pipeline/apps/qview.py
 ```
 
-If your own scripts need to import `preprocess_pipeline` directly, install the
-repository into the relevant conda environment in editable mode:
+Run the test suite to verify the environment:
 
 ```bash
-conda activate sci
-python -m pip install -e ~/code/lab_pipeline
+QT_QPA_PLATFORM=offscreen conda run -n lab_pipeline python -m unittest discover -s tests -v
 ```
 
 For an existing checkout, update it with:
@@ -45,12 +55,12 @@ GUI apps:
 
 | App | Purpose | Linux command | Windows launcher |
 | --- | --- | --- | --- |
-| `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
+| `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
 | `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
-| `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
-| `data_manager.py` | Data Manager GUI for browsing/scanning repository data and deletion workflow support | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/data_manager.py` | `windows_launchers/run_data_manager.bat` |
-| `eye_check.py` | Integrated eye tracking QC GUI | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
-| `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
+| `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
+| `data_manager.py` | Data Manager GUI for browsing/scanning repository data and deletion workflow support | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/data_manager.py` | `windows_launchers/run_data_manager.bat` |
+| `eye_check.py` | Integrated eye tracking QC GUI | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
+| `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
 
 Pipeline and subsystem apps:
 
@@ -58,26 +68,26 @@ Pipeline and subsystem apps:
 | --- | --- | --- |
 | `queue_listener.py` | Normal Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py` |
 | `queue_listener.py --debug` | Debug Step 1 queue listener | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/queue_listener.py --debug` |
-| `run_step1.py` | Submit Step 1 jobs from a config | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/run_step1.py` |
-| `run_step2.py` | Run Step 2 jobs from a config | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/run_step2.py` |
+| `run_step1.py` | Submit Step 1 jobs from a config | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/run_step1.py` |
+| `run_step2.py` | Run Step 2 jobs from a config | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/run_step2.py` |
 | `preprocess_step1.py` | Execute one queued Step 1 runtime job directly | `/opt/scripts/conda-run.sh base python /home/[username]/code/lab_pipeline/apps/preprocess_step1.py` |
-| `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
+| `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
 | `s2p_launcher.py` | Suite2p launcher for one work unit | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/s2p_launcher.py` |
 | `dlc_launcher.py` | DeepLabCut launcher | `/opt/scripts/conda-run.sh DLC_05_02_2026 python /home/[username]/code/lab_pipeline/apps/dlc_launcher.py` |
 | `srdtrans_launcher.py` | SRDTrans denoising launcher | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/srdtrans_launcher.py` |
-| `split_combined_s2p.py` | Split combined Suite2p output back into source experiments | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/split_combined_s2p.py` |
-| `preprocess_bv.py` | Bonvision preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_bv.py` |
-| `preprocess_cam.py` | Camera timing preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_cam.py` |
-| `preprocess_cut.py` | Trace cutting/preprocessing helper | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_cut.py` |
-| `preprocess_ephys.py` | Ephys preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_ephys.py` |
-| `preprocess_habituate.py` | Habituation data copy/preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_habituate.py` |
-| `preprocess_pupil.py` | Pupil preprocessing | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_pupil.py` |
-| `preprocess_pupil_timestamp.py` | Pupil timestamp alignment | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_pupil_timestamp.py` |
-| `preprocess_s2p.py` | Suite2p postprocessing/timestamp extraction | `/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/preprocess_s2p.py` |
+| `split_combined_s2p.py` | Split combined Suite2p output back into source experiments | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/split_combined_s2p.py` |
+| `preprocess_bv.py` | Bonvision preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_bv.py` |
+| `preprocess_cam.py` | Camera timing preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_cam.py` |
+| `preprocess_cut.py` | Trace cutting/preprocessing helper | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_cut.py` |
+| `preprocess_ephys.py` | Ephys preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_ephys.py` |
+| `preprocess_habituate.py` | Habituation data copy/preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_habituate.py` |
+| `preprocess_pupil.py` | Pupil preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_pupil.py` |
+| `preprocess_pupil_timestamp.py` | Pupil timestamp alignment | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_pupil_timestamp.py` |
+| `preprocess_s2p.py` | Suite2p postprocessing/timestamp extraction | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_s2p.py` |
 
 Windows launchers are in `windows_launchers/`. Most `.bat` launchers assume the SSH alias is `dream`, infer the remote username with `ssh dream "whoami"`, and run the GUI apps from `/home/<username>/code/lab_pipeline`. If inference fails, edit `windows_launchers/_run_remote_gui.bat` and set `CODE_HOME`.
 
-The local processing launchers are different because they run on the Windows machine itself. `windows_launchers/run_local_gui.vbs` starts the GUI without opening a black command prompt window. `windows_launchers/run_local_gui.bat` starts the same GUI with a visible command prompt, which is useful for debugging startup errors. Both look for the local `sci` conda env under `%USERPROFILE%\miniconda3\envs\sci`, `%USERPROFILE%\anaconda3\envs\sci`, `%USERPROFILE%\mambaforge\envs\sci`, or `%USERPROFILE%\miniforge3\envs\sci`. If conda is installed elsewhere, edit the Python path in the launcher file.
+The local processing launchers are different because they run on the Windows machine itself. `windows_launchers/run_local_gui.vbs` starts the GUI without opening a black command prompt window. `windows_launchers/run_local_gui.bat` starts the same GUI with a visible command prompt, which is useful for debugging startup errors. Both look for the local `lab_pipeline` conda env under `%USERPROFILE%\miniconda3\envs\lab_pipeline`, `%USERPROFILE%\anaconda3\envs\lab_pipeline`, `%USERPROFILE%\mambaforge\envs\lab_pipeline`, or `%USERPROFILE%\miniforge3\envs\lab_pipeline`. If conda is installed elsewhere, edit the Python path in the launcher file.
 
 `apps/` shims prepend `src/` to `sys.path`, so you do not need `conda develop` for normal use.
 
@@ -217,7 +227,7 @@ The queue GUI is the default Step 1 submission path.
 Launch it with:
 
 ```bash
-/opt/scripts/conda-run.sh sci python /home/[username]/code/lab_pipeline/apps/qview.py
+/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/qview.py
 ```
 
 Step 1 config files are still self-runnable if you want to bypass the GUI:
@@ -563,13 +573,12 @@ The older `local_repository_root` setting is still accepted as a shortcut where 
 
 For local Step 1 and Step 2 processing, install the pipeline on the workstation and make these environments available:
 
-- `sci` or equivalent analysis env: runs the config files, Step 2, BonVision processing, trace cutting, and general pipeline code.
+- `lab_pipeline` env: runs the config files, Step 2, BonVision processing, trace cutting, general pipeline code, and the standard GUIs.
 - `suite2p` env: required for Step 1 Suite2p processing. The Step 1 runner calls this env when `runs2p=True`.
 - Suite2p config files: available under `F:\s2p_ops\<userID>\` for local Windows runs, or under `/data/common/configs/s2p_configs/<userID>/` on the server.
 - NAS access: the Windows UNC path `\\ar-lab-nas1\DataServer\Remote_Repository` must be readable for missing metadata fallback.
-- Python packages for Step 2: `numpy`, `scipy`, `pandas`, `scikit-learn`, `matplotlib`, `scikit-image`, `opencv-python`, `tifffile`, and `suite2p` where relevant.
-- BonVision v2 support: `harp` is needed when processing newer BonVision/Harp experiments.
-- DLC and pupil support: only needed if `rundlc=True`, `runfitpupil=True`, or `run_dlc_timestamp=True`; the default local examples leave these off.
+- Python packages for Step 2 and BonVision v2 support are installed by `environment-lab-pipeline.yml`.
+- Pupil support is included in `lab_pipeline`; enable it only when the required local files are present.
 - Element/Matrix notifications: optional. Local runs continue silently if Matrix/Element packages, tokens, or server config are not present. Set `LAB_PIPELINE_DISABLE_ELEMENT=1` to disable notification attempts explicitly.
 
 ### Local mesoscope processing
@@ -668,7 +677,7 @@ step1_config["suite2p_config"] = {
 Run local Step 1 directly; it is not submitted to the server queue:
 
 ```bat
-conda activate sci
+conda activate lab_pipeline
 python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
 ```
 
@@ -711,13 +720,13 @@ run_step2_batch(step2_config)
 Run Step 2 directly:
 
 ```bat
-conda activate sci
+conda activate lab_pipeline
 python D:\code\lab_pipeline\configs\local\config_run_step2_meso.py
 ```
 
 Local mode limitations:
 
-- It currently assumes the local machine has a working `sci` env and a working `suite2p` env.
+- It currently assumes the local machine has a working `lab_pipeline` env and the requested Suite2p env.
 - It is intended first for Suite2p and Suite2p postprocessing/trace cutting.
 - DLC, pupil fitting, ephys, and Bonvision steps should only be enabled if the required local files and envs are present.
 - The normal server queue GUI is not required for local mode; local configs execute immediately.
@@ -725,19 +734,17 @@ Local mode limitations:
 ## Environment Expectations
 
 - `apps/qview.py`
-  - run in `sci`
+  - run in `lab_pipeline`
 - `apps/imaging_view.py`
-  - run in `sci`
+  - run in `lab_pipeline`
 - `apps/s2p_bin_view.py`
-  - run in `sci`
+  - run in `lab_pipeline`
 - `apps/eye_check.py`
-  - run in `sci`
+  - run in `lab_pipeline`
 - `apps/s2p_launcher.py`
   - run in `suite2p`
-- `apps/dlc_launcher.py`
-  - run in `DLC_05_02_2026`
 - `apps/preprocess_pupil.py`
-  - run in `sci`
+  - run in `lab_pipeline`
 - `apps/srdtrans_launcher.py`
   - run in `srdtrans`
 
