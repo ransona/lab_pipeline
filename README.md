@@ -77,7 +77,7 @@ Pipeline and subsystem apps:
 | `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
 | `s2p_launcher.py` | Suite2p launcher for one work unit | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/s2p_launcher.py` |
 | `dlc_launcher.py` | DeepLabCut launcher | `/opt/scripts/conda-run.sh DLC_05_02_2026 python /home/[username]/code/lab_pipeline/apps/dlc_launcher.py` |
-| `srdtrans_launcher.py` | SRDTrans denoising launcher | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/srdtrans_launcher.py` |
+| `srdtrans_launcher.py` | SRDTrans denoising launcher | `/opt/scripts/conda-run.sh srdtrans python /home/[username]/code/lab_pipeline/apps/srdtrans_launcher.py` |
 | `split_combined_s2p.py` | Split combined Suite2p output back into source experiments | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/split_combined_s2p.py` |
 | `preprocess_bv.py` | Bonvision preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_bv.py` |
 | `preprocess_cam.py` | Camera timing preprocessing | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_cam.py` |

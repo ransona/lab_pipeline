@@ -18,7 +18,7 @@ step1_config["suite2p_env"] = "suite2p_1.1.0"
 Launch the debug listener when testing:
 
 ```bash
-/opt/scripts/conda-run.sh base python ~/code/lab_pipeline/apps/queue_listener.py --debug
+/opt/scripts/conda-run.sh lab_pipeline python ~/code/lab_pipeline/apps/queue_listener.py --debug
 ```
 
 ## Compatibility Layer
