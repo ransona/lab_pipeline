@@ -133,6 +133,26 @@ def _build_interp_pair(reference_flips, target_flips, debug=False, pair_name='fl
     return reference_flips, target_flips
 
 
+def _pulse_count_summary(flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv):
+    return {
+        'tl_pd': len(_as_1d_float(flip_times_pd_tl)),
+        'harp': len(_as_1d_float(flip_times_harp)),
+        'tl_bv': len(_as_1d_float(flip_times_bv_tl)),
+        'bv': len(_as_1d_float(flip_times_bv_bv)),
+    }
+
+
+def _is_timeline_pd_only_count_mismatch(flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv):
+    counts = _pulse_count_summary(
+        flip_times_pd_tl,
+        flip_times_harp,
+        flip_times_bv_tl,
+        flip_times_bv_bv,
+    )
+    non_pd_counts = {counts['harp'], counts['tl_bv'], counts['bv']}
+    return len(non_pd_counts) == 1 and counts['tl_pd'] != counts['bv']
+
+
 def _find_excluded_flips(raw_flips, filtered_flips, atol=1e-9):
     raw_flips = _as_1d_float(raw_flips)
     filtered_flips = _as_1d_float(filtered_flips)
@@ -857,6 +877,32 @@ def run_preprocess_bv2(
                         return
                 # else set to not use PD and thus not use Harp for encoder
                 pd_valid = True 
+                harp_valid = False
+            elif _is_timeline_pd_only_count_mismatch(flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv):
+                print('Number of flips detected in Timeline photodiode does not match after filtering, but BV, Timeline Bonvision, and Harp do match.')
+                print('TL PD flips = ' + str(len(flip_times_pd_tl)))
+                print('BV TL flips = ' + str(len(flip_times_bv_tl)))
+                print('BV flips = ' + str(len(flip_times_bv_bv)))
+                print('Harp flips = ' + str(len(flip_times_harp)))
+                print('You may continue by ignoring the Timeline photodiode signal and using the Timeline Bonvision digital signal for BV-to-Timeline alignment.')
+                if debug:
+                    print('Debug mode enabled: continuing without prompting and ignoring Timeline photodiode pulses.')
+                elif _is_local_run():
+                    print('Local run detected: continuing without prompting and ignoring Timeline photodiode pulses.')
+                else:
+                    message = (
+                        "The Timeline photodiode pulse count does not match after filtering, "
+                        "but Bonvision, Timeline Bonvision digital sync, and Harp pulse counts "
+                        "do match.\n\n"
+                        "Continuing will ignore the Timeline photodiode signal, align Bonvision "
+                        "time to Timeline using the Timeline Bonvision digital sync pulses, and "
+                        "use Bonvision rotary encoder data instead of Harp encoder data.\n\n"
+                        "Continue processing this experiment?"
+                    )
+                    if not _confirm_continue(message, confirm_callback):
+                        print("Exiting...")
+                        return
+                pd_valid = False
                 harp_valid = False
             elif len({len(flip_times_pd_tl),len(flip_times_harp),len(flip_times_bv_tl),len(flip_times_bv_bv)}) != 1:
                 print('Number of flips detected in TL, BV and Harp do not match:')

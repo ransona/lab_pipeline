@@ -1960,6 +1960,24 @@ class VideoAnalysisApp(QMainWindow):
         self.updateFrame()
         self.plotPupilProperties(preserve_view=True)
 
+    def _safe_plot_limits(self, values, lower_pct, upper_pct, fallback=(-1, 1)):
+        values = np.asarray(values, dtype=float)
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
+            return fallback
+
+        lower_lim = np.nanpercentile(finite_values, lower_pct)
+        upper_lim = np.nanpercentile(finite_values, upper_pct)
+        if not np.isfinite(lower_lim) or not np.isfinite(upper_lim):
+            return fallback
+
+        if upper_lim <= lower_lim:
+            center = float(lower_lim)
+            pad = max(abs(center) * 0.05, 1.0)
+            return center - pad, center + pad
+
+        return lower_lim, upper_lim
+
     def plotPupilProperties(self, preserve_view: bool = False):
         """
         Plots:
@@ -1996,11 +2014,12 @@ class VideoAnalysisApp(QMainWindow):
             ax.plot(left_x, color='skyblue')
             ax.plot(left_y, color='navy')
             combined = np.concatenate([left_x, left_y])
-            lower_lim = np.nanpercentile(combined, lower_pct)
-            upper_lim = np.nanpercentile(combined, upper_pct)
-            if np.isnan(lower_lim) or np.isnan(upper_lim):
-                lower_lim = -1
-                upper_lim = 1
+            lower_lim, upper_lim = self._safe_plot_limits(
+                combined,
+                lower_pct,
+                upper_pct,
+                fallback=(-1, 1),
+            )
             ax.set_ylim(lower_lim, upper_lim)
             ax.set_ylabel('Left Pos')
             ax.spines['top'].set_visible(False)
@@ -2018,11 +2037,12 @@ class VideoAnalysisApp(QMainWindow):
             ax.plot(right_x, color='lightcoral')
             ax.plot(right_y, color='maroon')
             combined = np.concatenate([right_x, right_y])
-            lower_lim = np.nanpercentile(combined, lower_pct)
-            upper_lim = np.nanpercentile(combined, upper_pct)
-            if np.isnan(lower_lim) or np.isnan(upper_lim):
-                lower_lim = -1
-                upper_lim = 1
+            lower_lim, upper_lim = self._safe_plot_limits(
+                combined,
+                lower_pct,
+                upper_pct,
+                fallback=(-1, 1),
+            )
             ax.set_ylim(lower_lim, upper_lim)
             ax.set_ylabel('Right Pos')
             ax.spines['top'].set_visible(False)
@@ -2037,11 +2057,12 @@ class VideoAnalysisApp(QMainWindow):
         ax.plot(left_dlc['radius'], color='blue')
         ax.plot(right_dlc['radius'], color='red')
         combined = np.concatenate([left_dlc['radius'], right_dlc['radius']])
-        lower_lim = np.nanpercentile(combined, lower_pct)
-        upper_lim = np.nanpercentile(combined, upper_pct)
-        if np.isnan(lower_lim) or np.isnan(upper_lim):
-            lower_lim = 0
-            upper_lim = 1
+        lower_lim, upper_lim = self._safe_plot_limits(
+            combined,
+            lower_pct,
+            upper_pct,
+            fallback=(0, 1),
+        )
         ax.set_ylim(lower_lim, upper_lim)
         ax.set_ylabel('Radius')
         ax.spines['top'].set_visible(False)
@@ -2055,11 +2076,12 @@ class VideoAnalysisApp(QMainWindow):
         ax.plot(left_dlc['velocity'], color='blue')
         ax.plot(right_dlc['velocity'], color='red')
         combined = np.concatenate([left_dlc['velocity'], right_dlc['velocity']])
-        lower_lim = np.nanpercentile(combined, lower_pct)
-        upper_lim = np.nanpercentile(combined, upper_pct)
-        if np.isnan(lower_lim) or np.isnan(upper_lim):
-            lower_lim = 0
-            upper_lim = 1
+        lower_lim, upper_lim = self._safe_plot_limits(
+            combined,
+            lower_pct,
+            upper_pct,
+            fallback=(0, 1),
+        )
         ax.set_ylim(lower_lim, upper_lim)
         ax.set_ylabel('Velocity')
         ax.spines['top'].set_visible(False)
