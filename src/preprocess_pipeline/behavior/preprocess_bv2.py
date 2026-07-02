@@ -914,16 +914,17 @@ def run_preprocess_bv2(
             else:
                 print('Number of flips detected in TL, BV and Harp match:')
                 print('BV flips = ' + str(len(flip_times_bv_tl)))
-            # the relative times of flips should be near identical between flip_times_pd_tl and flip_times_bv_tl
-            pd_tl_v_bv_tl_jitter = np.abs((flip_times_pd_tl-flip_times_pd_tl[0]) - (flip_times_bv_tl-flip_times_bv_tl[0]))
-            if max(pd_tl_v_bv_tl_jitter) > 50:
-                print('Jitter between TL and BV timing pulses is too large:')
-                print('Max jitter = ' + str(round(max(pd_tl_v_bv_tl_jitter)*1000)) + ' ms')
-                raise ValueError('Jitter mismatch')
-            else:
-                print('Jitter between TL and BV timing pulses is acceptable:')
-                print('Median jitter = ' + str(round(np.median(pd_tl_v_bv_tl_jitter)*1000))+ ' ms')
-                print('Max jitter = ' + str(round(max(pd_tl_v_bv_tl_jitter)*1000)) + ' ms')
+            if pd_valid:
+                # the relative times of flips should be near identical between flip_times_pd_tl and flip_times_bv_tl
+                pd_tl_v_bv_tl_jitter = np.abs((flip_times_pd_tl-flip_times_pd_tl[0]) - (flip_times_bv_tl-flip_times_bv_tl[0]))
+                if max(pd_tl_v_bv_tl_jitter) > 50:
+                    print('Jitter between TL and BV timing pulses is too large:')
+                    print('Max jitter = ' + str(round(max(pd_tl_v_bv_tl_jitter)*1000)) + ' ms')
+                    raise ValueError('Jitter mismatch')
+                else:
+                    print('Jitter between TL and BV timing pulses is acceptable:')
+                    print('Median jitter = ' + str(round(np.median(pd_tl_v_bv_tl_jitter)*1000))+ ' ms')
+                    print('Max jitter = ' + str(round(max(pd_tl_v_bv_tl_jitter)*1000)) + ' ms')
         else:
             # number of flips should be the same on BV and TL
             if len(flip_times_bv_bv) != len(flip_times_bv_tl):
