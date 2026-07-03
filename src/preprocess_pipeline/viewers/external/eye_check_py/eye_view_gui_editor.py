@@ -1592,7 +1592,7 @@ class VideoAnalysisApp(QMainWindow):
         # Update vertical sliding lines on the plots.
         if self.vlines:
             for vline in self.vlines:
-                vline.set_xdata(position)
+                vline.set_xdata([position, position])
             self.canvas.draw_idle()
 
         # Update the frame number box
