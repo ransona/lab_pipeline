@@ -2,12 +2,12 @@ import sys
 import os
 import numpy as np
 import cv2
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QPushButton,
     QSlider, QFileDialog, QHBoxLayout, QLineEdit, QComboBox, QProgressBar
 )
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 
 
 # ---------- Worker Thread for File Loading ----------
@@ -114,13 +114,13 @@ class VideoViewer(QWidget):
 
         # --- Image display ---
         self.label = QLabel("No video loaded")
-        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.label)
 
         # --- Frame slider ---
         frame_layout = QHBoxLayout()
         frame_label = QLabel("Frame")
-        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider = QSlider(Qt.Orientation.Horizontal)
         self.frame_slider.setEnabled(False)
         self.frame_slider.valueChanged.connect(self.update_frame_from_slider)
         frame_layout.addWidget(frame_label)
@@ -130,7 +130,7 @@ class VideoViewer(QWidget):
         # --- Intensity sliders ---
         min_layout = QHBoxLayout()
         min_label = QLabel("Min")
-        self.min_slider = QSlider(Qt.Horizontal)
+        self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.min_slider.setRange(0, 65535)
         self.min_slider.setValue(0)
         self.min_slider.valueChanged.connect(self.update_display)
@@ -140,7 +140,7 @@ class VideoViewer(QWidget):
 
         max_layout = QHBoxLayout()
         max_label = QLabel("Max")
-        self.max_slider = QSlider(Qt.Horizontal)
+        self.max_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider.setRange(0, 65535)
         self.max_slider.setValue(2000)
         self.max_slider.valueChanged.connect(self.update_display)
@@ -253,7 +253,7 @@ class VideoViewer(QWidget):
         frame = np.clip((frame - vmin) / (vmax - vmin) * 255.0, 0, 255).astype(np.uint8)
 
         qimg = QImage(frame.data, self.width, self.height, self.width, QImage.Format_Grayscale8)
-        self.label.setPixmap(QPixmap.fromImage(qimg).scaled(512, 512, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.label.setPixmap(QPixmap.fromImage(qimg).scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def update_display(self):
         # Update intensity scaling without changing image type
@@ -307,4 +307,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     viewer = VideoViewer()
     viewer.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

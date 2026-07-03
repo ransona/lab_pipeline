@@ -40,7 +40,7 @@ def launch(user_id=None, exp_id=None):
     win.show()
 
     if created_app:
-        return app.exec_()
+        return app.exec()
     return 0
 
 

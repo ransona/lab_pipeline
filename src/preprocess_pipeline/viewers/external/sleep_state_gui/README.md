@@ -1,6 +1,6 @@
 # Sleep State GUI and Scoring
 
-PyQt5 GUI plus offline scorer for mouse sleep/wake states.
+PyQt6 GUI plus offline scorer for mouse sleep/wake states.
 
 - GUI: `sleep_state_gui.py`
 - Scoring pipeline: `sleep_score.py`
@@ -15,7 +15,7 @@ Use Python 3.9+ and install:
 - `matplotlib`
 - `scikit-learn`
 - `opencv-python`
-- `PyQt5`
+- `PyQt6`
 
 The code expects your data paths to be resolved by `organise_paths.find_paths(user_id, exp_id)`.
 

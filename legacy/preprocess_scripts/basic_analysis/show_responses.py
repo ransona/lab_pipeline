@@ -1,12 +1,12 @@
 import sys
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from PyQt5.QtWidgets import (QApplication, QWidget, QComboBox, QVBoxLayout, QHBoxLayout, QGridLayout, 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from PyQt6.QtWidgets import (QApplication, QWidget, QComboBox, QVBoxLayout, QHBoxLayout, QGridLayout, 
                              QPushButton, QLabel, QLineEdit, QSizePolicy, QScrollArea, QTableWidget, 
                              QVBoxLayout, QTableWidgetItem, QCheckBox)
 import tkinter as tk
 from tkinter import messagebox
-from PyQt5.QtCore import Qt
+from PyQt6.QtCore import Qt
 
 import cv2
 import organise_paths
@@ -70,10 +70,10 @@ class MyWindow(QWidget):
         self.stim_combo.currentIndexChanged.connect(self.stim_combo_selection_changed)
         self.load_button.clicked.connect(self.load_file)
         self.cond_lbl = QLabel('Stimulus conditions to analyse (comma seperated and 1 based, for example 1,2,4,7)')
-        self.cond_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cond_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cond_txt = QLineEdit('1')  
         self.cells2anal_lbl = QLabel('Cells to analyse')
-        self.cells2anal_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cells2anal_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.prev_cell_button = QPushButton('<')
         self.prev_cell_button.clicked.connect(self.prev_cell)
@@ -725,7 +725,7 @@ def main():
     app = QApplication(sys.argv)
     window = MyWindow()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == '__main__':

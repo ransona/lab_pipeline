@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PyQt5 TIFF Player
+PyQt6 TIFF Player
 
 Changes:
 - Preview (first 1000 frames) is ON by default.
@@ -21,9 +21,9 @@ from typing import Optional
 
 import numpy as np
 from PIL import Image, ImageSequence
-from PyQt5.QtCore import Qt, QTimer, QSize
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, QTimer, QSize
+from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtWidgets import (
     QApplication, QWidget, QGridLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QFileDialog, QCheckBox, QSpinBox, QDoubleSpinBox, QProgressDialog, QMessageBox
 )
@@ -108,7 +108,7 @@ def _gaussian_blur_stack_np(stack: np.ndarray, sigma: float) -> np.ndarray:
 class TiffPlayerQt(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("TIFF Player (PyQt5)")
+        self.setWindowTitle("TIFF Player (PyQt6)")
 
         # State
         self.running = False
@@ -138,13 +138,13 @@ class TiffPlayerQt(QWidget):
         # Left/Right image views
         self.left_label = QLabel()
         self.left_label.setObjectName("leftView")
-        self.left_label.setAlignment(Qt.AlignCenter)
+        self.left_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.left_label.setStyleSheet("QLabel#leftView { background: black; }")
 
         self.right_label = QLabel()
         self.right_label.setObjectName("rightView")
         self.right_label.setStyleSheet("QLabel#rightView { background: black; }")
-        self.right_label.setAlignment(Qt.AlignCenter)
+        self.right_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         root.addWidget(self.left_label, 0, 0)
         root.addWidget(self.right_label, 0, 1)
@@ -163,7 +163,7 @@ class TiffPlayerQt(QWidget):
 
         top.addSpacing(16)
         top.addWidget(QLabel("FPS:"))
-        self.sld_fps = QSlider(Qt.Horizontal)
+        self.sld_fps = QSlider(Qt.Orientation.Horizontal)
         self.sld_fps.setRange(1, 60)
         self.sld_fps.setValue(self.fps)
         self.sld_fps.setSingleStep(1)
@@ -255,7 +255,7 @@ class TiffPlayerQt(QWidget):
         root.addWidget(row2, 2, 0, 1, 2)
 
         # Frame scrollbar
-        self.sld_frame = QSlider(Qt.Horizontal)
+        self.sld_frame = QSlider(Qt.Orientation.Horizontal)
         self.sld_frame.setRange(0, 0)
         self.sld_frame.setEnabled(False)
         root.addWidget(self.sld_frame, 3, 0, 1, 2)
@@ -263,7 +263,7 @@ class TiffPlayerQt(QWidget):
         # Clip sliders (interactive at display time)
         clip_layout = QHBoxLayout()
         clip_layout.addWidget(QLabel("Min Clip:"))
-        self.sld_min = QSlider(Qt.Horizontal)
+        self.sld_min = QSlider(Qt.Orientation.Horizontal)
         self.sld_min.setRange(-65536, 65536)
         self.sld_min.setValue(self.min_clip)
         self.sld_min.setSingleStep(100)
@@ -274,7 +274,7 @@ class TiffPlayerQt(QWidget):
 
         clip_layout.addSpacing(12)
         clip_layout.addWidget(QLabel("Max Clip:"))
-        self.sld_max = QSlider(Qt.Horizontal)
+        self.sld_max = QSlider(Qt.Orientation.Horizontal)
         self.sld_max.setRange(-65536, 65536)
         self.sld_max.setValue(self.max_clip)
         self.sld_max.setSingleStep(100)
@@ -572,7 +572,7 @@ class TiffPlayerQt(QWidget):
             h, w, c = arr.shape
             if c == 3:
                 bytes_per_line = 3 * w
-                qimg = QImage(arr.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+                qimg = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_RGB888).copy()
                 return QPixmap.fromImage(qimg)
             elif c == 4:
                 bytes_per_line = 4 * w
@@ -595,7 +595,7 @@ class TiffPlayerQt(QWidget):
         target: QSize = label.size()
         if target.width() < 2 or target.height() < 2:
             return pix
-        return pix.scaled(target, Qt.KeepAspectRatio, transformMode=Qt.FastTransformation)
+        return pix.scaled(target, Qt.AspectRatioMode.KeepAspectRatio, transformMode=Qt.TransformationMode.FastTransformation)
 
     def _display_frame(self, frame_index: int):
         self._validate_frame_index()
@@ -677,7 +677,7 @@ def main():
     app = QApplication(sys.argv)
     w = TiffPlayerQt()
     w.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()

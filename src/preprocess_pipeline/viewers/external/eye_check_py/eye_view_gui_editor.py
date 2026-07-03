@@ -9,20 +9,20 @@ import shutil
 import cv2
 import numpy as np
 
-# PyQt5 imports
-from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtWidgets import (
+# PyQt6 imports
+from PyQt6 import QtWidgets, QtCore, QtGui
+from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QLineEdit, QSlider, QMessageBox, QProgressDialog, QShortcut,
+    QLabel, QPushButton, QLineEdit, QSlider, QMessageBox, QProgressDialog,
     QDialog, QListWidget, QComboBox, QFileDialog
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QKeySequence
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeySequence, QShortcut
 
-# Matplotlib integration in PyQt5
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+# Matplotlib integration in Qt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5 import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.widgets import SpanSelector
 
 # Import your custom module that provides file paths.
@@ -37,7 +37,7 @@ class VideoDisplayLabel(QLabel):
         self._drag_start = None
         self._drag_end = None
         self._on_roi_selected = None
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def set_roi_callback(self, callback):
         self._on_roi_selected = callback
@@ -50,7 +50,7 @@ class VideoDisplayLabel(QLabel):
         self.update()
 
     def mousePressEvent(self, event):
-        if self.selection_enabled and event.button() == Qt.LeftButton:
+        if self.selection_enabled and event.button() == Qt.MouseButton.LeftButton:
             self._drag_start = event.pos()
             self._drag_end = event.pos()
             self.update()
@@ -67,7 +67,7 @@ class VideoDisplayLabel(QLabel):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.selection_enabled and self._drag_start is not None and event.button() == Qt.LeftButton:
+        if self.selection_enabled and self._drag_start is not None and event.button() == Qt.MouseButton.LeftButton:
             self._drag_end = event.pos()
             rect = QtCore.QRect(self._drag_start, self._drag_end).normalized()
             self._drag_start = None
@@ -83,7 +83,7 @@ class VideoDisplayLabel(QLabel):
         super().paintEvent(event)
         if self.selection_enabled and self._drag_start is not None and self._drag_end is not None:
             painter = QtGui.QPainter(self)
-            pen = QtGui.QPen(QtGui.QColor(255, 255, 0), 2, Qt.SolidLine)
+            pen = QtGui.QPen(QtGui.QColor(255, 255, 0), 2, Qt.PenStyle.SolidLine)
             painter.setPen(pen)
             painter.drawRect(QtCore.QRect(self._drag_start, self._drag_end).normalized())
             painter.end()
@@ -362,7 +362,7 @@ class ClassifierBuilderWindow(QDialog):
         center_row.addWidget(self.absentList)
 
         self.previewLabel = QLabel("Example preview")
-        self.previewLabel.setAlignment(Qt.AlignCenter)
+        self.previewLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.previewLabel.setMinimumSize(320, 240)
         self.previewLabel.setStyleSheet("border: 1px solid #777;")
         center_row.addWidget(self.previewLabel)
@@ -622,7 +622,7 @@ class ClassifierBuilderWindow(QDialog):
         if pix.isNull():
             self.previewLabel.setText("Failed to load preview")
             return
-        self.previewLabel.setPixmap(pix.scaled(self.previewLabel.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.previewLabel.setPixmap(pix.scaled(self.previewLabel.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def _refresh_model_list(self):
         self.modelList.clear()
@@ -779,7 +779,7 @@ class VideoAnalysisApp(QMainWindow):
         
         # --- Video Control Buttons and Slider ---
         controlLayout = QHBoxLayout()
-        self.slider = QSlider(Qt.Horizontal)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setEnabled(False)
         self.slider.valueChanged.connect(self.updateFrame)
         self.playButton = QPushButton("Play")
@@ -882,9 +882,9 @@ class VideoAnalysisApp(QMainWindow):
         rightCol = QVBoxLayout()
 
         self.leftVideoHeader = QLabel("LEFT EYE")
-        self.leftVideoHeader.setAlignment(Qt.AlignCenter)
+        self.leftVideoHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.rightVideoHeader = QLabel("RIGHT EYE")
-        self.rightVideoHeader.setAlignment(Qt.AlignCenter)
+        self.rightVideoHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left_header_font = self.leftVideoHeader.font()
         left_header_font.setPointSize(max(1, int(round(left_header_font.pointSizeF() * 3))))
         self.leftVideoHeader.setFont(left_header_font)
@@ -894,12 +894,12 @@ class VideoAnalysisApp(QMainWindow):
 
         self.leftBlackLabel = QLabel("Black: 0")
         self.leftWhiteLabel = QLabel("White: 255")
-        self.leftBlackSlider = QSlider(Qt.Horizontal)
+        self.leftBlackSlider = QSlider(Qt.Orientation.Horizontal)
         self.leftBlackSlider.setRange(0, 254)
         self.leftBlackSlider.setValue(0)
         self.leftBlackSlider.setEnabled(False)
         self.leftBlackSlider.valueChanged.connect(self._on_video_levels_changed)
-        self.leftWhiteSlider = QSlider(Qt.Horizontal)
+        self.leftWhiteSlider = QSlider(Qt.Orientation.Horizontal)
         self.leftWhiteSlider.setRange(1, 255)
         self.leftWhiteSlider.setValue(255)
         self.leftWhiteSlider.setEnabled(False)
@@ -907,12 +907,12 @@ class VideoAnalysisApp(QMainWindow):
 
         self.rightBlackLabel = QLabel("Black: 0")
         self.rightWhiteLabel = QLabel("White: 255")
-        self.rightBlackSlider = QSlider(Qt.Horizontal)
+        self.rightBlackSlider = QSlider(Qt.Orientation.Horizontal)
         self.rightBlackSlider.setRange(0, 254)
         self.rightBlackSlider.setValue(0)
         self.rightBlackSlider.setEnabled(False)
         self.rightBlackSlider.valueChanged.connect(self._on_video_levels_changed)
-        self.rightWhiteSlider = QSlider(Qt.Horizontal)
+        self.rightWhiteSlider = QSlider(Qt.Orientation.Horizontal)
         self.rightWhiteSlider.setRange(1, 255)
         self.rightWhiteSlider.setValue(255)
         self.rightWhiteSlider.setEnabled(False)
@@ -928,18 +928,18 @@ class VideoAnalysisApp(QMainWindow):
         self.rightVideoLabel.setText("Right Eye Video")
         self.rightVideoLabel.set_roi_callback(lambda rect: self._on_manual_roi_selected('right', rect))
 
-        leftCol.addWidget(self.leftVideoHeader, alignment=Qt.AlignHCenter)
+        leftCol.addWidget(self.leftVideoHeader, alignment=Qt.AlignmentFlag.AlignHCenter)
         leftCol.addWidget(self.leftBlackLabel)
         leftCol.addWidget(self.leftBlackSlider)
         leftCol.addWidget(self.leftWhiteLabel)
         leftCol.addWidget(self.leftWhiteSlider)
-        leftCol.addWidget(self.leftVideoLabel, alignment=Qt.AlignHCenter)
-        rightCol.addWidget(self.rightVideoHeader, alignment=Qt.AlignHCenter)
+        leftCol.addWidget(self.leftVideoLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
+        rightCol.addWidget(self.rightVideoHeader, alignment=Qt.AlignmentFlag.AlignHCenter)
         rightCol.addWidget(self.rightBlackLabel)
         rightCol.addWidget(self.rightBlackSlider)
         rightCol.addWidget(self.rightWhiteLabel)
         rightCol.addWidget(self.rightWhiteSlider)
-        rightCol.addWidget(self.rightVideoLabel, alignment=Qt.AlignHCenter)
+        rightCol.addWidget(self.rightVideoLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
         videoLayout.addLayout(leftCol)
         videoLayout.addLayout(rightCol)
         mainLayout.addLayout(videoLayout)
@@ -969,9 +969,9 @@ class VideoAnalysisApp(QMainWindow):
         # Reliable key shortcuts at the Qt layer (avoid focus issues with mpl canvas)
         self.shortcut_blank_b = QShortcut(QKeySequence("B"), self)
         self.shortcut_blank_b.activated.connect(self.apply_current_selection)
-        self.shortcut_blank_enter = QShortcut(QKeySequence(Qt.Key_Return), self)
+        self.shortcut_blank_enter = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
         self.shortcut_blank_enter.activated.connect(self.apply_current_selection)
-        self.shortcut_blank_enter2 = QShortcut(QKeySequence(Qt.Key_Enter), self)
+        self.shortcut_blank_enter2 = QShortcut(QKeySequence(Qt.Key.Key_Enter), self)
         self.shortcut_blank_enter2.activated.connect(self.apply_current_selection)
 
         # (We keep mpl key hook too; harmless backup)
@@ -1405,10 +1405,10 @@ class VideoAnalysisApp(QMainWindow):
                     f"{side_name} eye auto-zoom window could not be computed.\n"
                     "Do you want to draw the zoom window manually for this eye?"
                 ),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            if choice == QMessageBox.Yes:
+            if choice == QMessageBox.StandardButton.Yes:
                 self._set_manual_zoom_side(side)
                 QMessageBox.information(
                     self,
@@ -1577,17 +1577,17 @@ class VideoAnalysisApp(QMainWindow):
         frame_left = self.playVideoFrame(position, self.video_path_left, self.left_eyedat, side="Left")
         if frame_left is not None:
             image_left = QtGui.QImage(frame_left.data, frame_left.shape[1], frame_left.shape[0],
-                                      frame_left.strides[0], QtGui.QImage.Format_RGB888)
+                                      frame_left.strides[0], QtGui.QImage.Format.Format_RGB888)
             pixmap_left = QtGui.QPixmap.fromImage(image_left)
-            self.leftVideoLabel.setPixmap(pixmap_left.scaled(self.leftVideoLabel.size(), Qt.KeepAspectRatio))
+            self.leftVideoLabel.setPixmap(pixmap_left.scaled(self.leftVideoLabel.size(), Qt.AspectRatioMode.KeepAspectRatio))
         
         # Update right video frame.
         frame_right = self.playVideoFrame(position, self.video_path_right, self.right_eyedat, side="Right")
         if frame_right is not None:
             image_right = QtGui.QImage(frame_right.data, frame_right.shape[1], frame_right.shape[0],
-                                       frame_right.strides[0], QtGui.QImage.Format_RGB888)
+                                       frame_right.strides[0], QtGui.QImage.Format.Format_RGB888)
             pixmap_right = QtGui.QPixmap.fromImage(image_right)
-            self.rightVideoLabel.setPixmap(pixmap_right.scaled(self.rightVideoLabel.size(), Qt.KeepAspectRatio))
+            self.rightVideoLabel.setPixmap(pixmap_right.scaled(self.rightVideoLabel.size(), Qt.AspectRatioMode.KeepAspectRatio))
         
         # Update vertical sliding lines on the plots.
         if self.vlines:
@@ -2117,4 +2117,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = VideoAnalysisApp()
     win.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

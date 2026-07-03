@@ -2,13 +2,13 @@ import sys
 import os
 import numpy as np
 from scipy.ndimage import median_filter
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QPushButton,
     QSlider, QFileDialog, QHBoxLayout, QLineEdit, QComboBox, QProgressBar,
     QGridLayout, QCheckBox, QSpinBox, QSizePolicy, QGroupBox
 )
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen
+from PyQt6.QtCore import Qt, QTimer
 
 
 class VideoViewer(QWidget):
@@ -160,15 +160,15 @@ class VideoViewer(QWidget):
 
         # --- image display ---
         self.label = QLabel("No video loaded")
-        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setMinimumSize(700, 650)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         viewer_layout.addWidget(self.label, 1)
 
         # --- frame slider ---
         fl2 = QHBoxLayout()
         fl2.addWidget(QLabel("Frame"))
-        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider = QSlider(Qt.Orientation.Horizontal)
         self.frame_slider.setEnabled(False)
         self.frame_slider.valueChanged.connect(self.on_slider)
         fl2.addWidget(self.frame_slider)
@@ -189,7 +189,7 @@ class VideoViewer(QWidget):
         al.addWidget(self.autoscale_cb, 0, 0, 1, 2)
 
         al.addWidget(QLabel("Min"), 1, 0)
-        self.min_slider = QSlider(Qt.Horizontal)
+        self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.min_slider.setRange(-32768, 32767)
         self.min_slider.setValue(0)
         self.min_slider.valueChanged.connect(self.on_intensity_slider_changed)
@@ -199,7 +199,7 @@ class VideoViewer(QWidget):
         al.addWidget(self.min_value_label, 1, 2)
 
         al.addWidget(QLabel("Max"), 2, 0)
-        self.max_slider = QSlider(Qt.Horizontal)
+        self.max_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider.setRange(-32768, 32767)
         self.max_slider.setValue(2000)
         self.max_slider.valueChanged.connect(self.on_intensity_slider_changed)
@@ -595,7 +595,7 @@ class VideoViewer(QWidget):
         self.draw_minimap(painter, viewport)
         painter.end()
         self.label.setPixmap(pix.scaled(self.label.width(), self.label.height(),
-                                        Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                                        Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def update_display(self):
         self.show_frame(use_mean=self.showing_mean)
@@ -652,4 +652,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     viewer = VideoViewer()
     viewer.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

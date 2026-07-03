@@ -6,18 +6,18 @@ import time
 import cv2
 import numpy as np
 
-from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtWidgets import (
+from PyQt6 import QtWidgets, QtCore, QtGui
+from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QSlider, QMessageBox, QSizePolicy,
     QCheckBox, QRadioButton, QButtonGroup, QProgressBar, QDoubleSpinBox,
     QInputDialog, QDialog, QDialogButtonBox,
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5 import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.widgets import SpanSelector, Slider
 from scipy import signal
 from scipy.interpolate import interp1d
@@ -271,7 +271,7 @@ class VideoDisplayLabel(QLabel):
         self.on_double_click = on_double_click
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton and callable(self.on_double_click):
+        if event.button() == Qt.MouseButton.LeftButton and callable(self.on_double_click):
             self.on_double_click(self.eye_key)
             event.accept()
             return
@@ -281,13 +281,13 @@ class VideoDisplayLabel(QLabel):
 class CropSelectLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._origin = None
-        self._rubber_band = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Rectangle, self)
+        self._rubber_band = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Shape.Rectangle, self)
         self._selection = QtCore.QRect()
 
     def mousePressEvent(self, event):
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
         self._origin = event.pos()
         self._selection = QtCore.QRect(self._origin, QtCore.QSize())
@@ -303,7 +303,7 @@ class CropSelectLabel(QLabel):
         event.accept()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._origin is not None:
+        if event.button() == Qt.MouseButton.LeftButton and self._origin is not None:
             self._selection = QtCore.QRect(self._origin, event.pos()).normalized()
             self._rubber_band.setGeometry(self._selection)
             self._origin = None
@@ -322,7 +322,7 @@ class VideoCropDialog(QDialog):
         self._selected_rect = None
 
         h, w, _ = frame_rgb.shape
-        qimg = QtGui.QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QtGui.QImage.Format_RGB888)
+        qimg = QtGui.QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QtGui.QImage.Format.Format_RGB888)
         pixmap = QtGui.QPixmap.fromImage(qimg.copy())
 
         layout = QVBoxLayout(self)
@@ -334,7 +334,7 @@ class VideoCropDialog(QDialog):
         hint = QLabel("Drag a rectangle, then press OK.")
         layout.addWidget(hint)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -393,7 +393,7 @@ class ClipboardSafeLineEdit(QLineEdit):
         if clipboard is None:
             return
         try:
-            clipboard.clear(mode=QtGui.QClipboard.Selection)
+            clipboard.clear(mode=QtGui.QClipboard.Mode.Selection)
         except Exception:
             pass
 
@@ -401,8 +401,8 @@ class ClipboardSafeLineEdit(QLineEdit):
         had_selection = self.hasSelectedText()
         key = event.key()
         replacing_selection = bool(had_selection and event.text())
-        deleting = key in (Qt.Key_Backspace, Qt.Key_Delete)
-        cutting = event.matches(QtGui.QKeySequence.Cut)
+        deleting = key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
+        cutting = event.matches(QtGui.QKeySequence.StandardKey.Cut)
         super().keyPressEvent(event)
         if deleting or cutting or replacing_selection:
             self._clear_primary_selection()
@@ -733,7 +733,7 @@ class VideoAnalysisApp(QMainWindow):
 
         # --- Playback controls ---
         sliderRow = QHBoxLayout()
-        self.slider = QSlider(Qt.Horizontal)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setEnabled(False)
         self.slider.valueChanged.connect(self.updateFrame)
         sliderRow.addWidget(self.slider)
@@ -753,7 +753,7 @@ class VideoAnalysisApp(QMainWindow):
         self.frameJumpEdit.returnPressed.connect(self.jumpToTypedFrame)
         self.centerViewBtn = QPushButton("Jump to View Center")
         self.centerViewBtn.setEnabled(False)
-        self.centerViewBtn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.centerViewBtn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         playbackRow.addWidget(self.playButton)
         playbackRow.addWidget(self.stopButton)
         playbackRow.addWidget(QLabel("Current / Go to:"))
@@ -832,7 +832,7 @@ class VideoAnalysisApp(QMainWindow):
 
         specRangeRow = QHBoxLayout()
         self.specMinLabel = QLabel("Spec min pct: 5.0")
-        self.specRangeMinSlider = QSlider(Qt.Horizontal)
+        self.specRangeMinSlider = QSlider(Qt.Orientation.Horizontal)
         self.specRangeMinSlider.setRange(0, 1000)  # 0.0..100.0 percentile
         self.specRangeMinSlider.setValue(50)
         self.specRangeMinSlider.setEnabled(False)
@@ -843,7 +843,7 @@ class VideoAnalysisApp(QMainWindow):
 
         specRangeRow2 = QHBoxLayout()
         self.specMaxLabel = QLabel("Spec max pct: 95.0")
-        self.specRangeMaxSlider = QSlider(Qt.Horizontal)
+        self.specRangeMaxSlider = QSlider(Qt.Orientation.Horizontal)
         self.specRangeMaxSlider.setRange(0, 1000)  # 0.0..100.0 percentile
         self.specRangeMaxSlider.setValue(950)
         self.specRangeMaxSlider.setEnabled(False)
@@ -1006,13 +1006,13 @@ class VideoAnalysisApp(QMainWindow):
             "QPushButton { background-color: #1f9d55; color: white; font-weight: 600; padding: 8px; }"
             "QPushButton:disabled { background-color: #8abf9f; color: #f3f3f3; }"
         )
-        self.rescoreButton.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.rescoreButton.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         controlsLayout.addWidget(self.rescoreButton)
 
         # --- Matplotlib canvas ---
         self.figure = Figure(figsize=(8, 8))
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.canvas.updateGeometry()
         plotsLayout.addWidget(self.canvas)
 
@@ -1181,9 +1181,9 @@ class VideoAnalysisApp(QMainWindow):
                     self,
                     "Sleep scoring error",
                     f"Error loading {sleep_state_name}:\n{e}\n\nDo you want to rerun sleep scoring now?",
-                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
-                if reply == QMessageBox.Yes:
+                if reply == QMessageBox.StandardButton.Yes:
                     bands = self._parse_band_entries()
                     if bands is None:
                         return
@@ -1203,9 +1203,9 @@ class VideoAnalysisApp(QMainWindow):
                 self,
                 "Sleep scoring not found",
                 f"{sleep_state_name} was not found.\nDo you want to run sleep scoring now?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 bands = self._parse_band_entries()
                 if bands is None:
                     return
@@ -1227,9 +1227,9 @@ class VideoAnalysisApp(QMainWindow):
                 self,
                 "Sleep scoring file outdated",
                 f"{err_msg}\nThis experiment needs to be rescored.\nRun sleep scoring now?",
-                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 bands = self._parse_band_entries()
                 if bands is None:
                     return
@@ -1876,7 +1876,7 @@ class VideoAnalysisApp(QMainWindow):
             return
 
         dialog = VideoCropDialog(sample_frame, self)
-        if dialog.exec_() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dialog.selected_rect()
         selected = self._sanitize_crop_rect(selected, sample_frame.shape)
@@ -1997,10 +1997,10 @@ class VideoAnalysisApp(QMainWindow):
                     frame_left_c.shape[1],
                     frame_left_c.shape[0],
                     frame_left_c.strides[0],
-                    QtGui.QImage.Format_RGB888,
+                    QtGui.QImage.Format.Format_RGB888,
                 ).copy()
                 pixmap_left = QtGui.QPixmap.fromImage(image_left)
-                self.leftVideoLabel.setPixmap(pixmap_left.scaled(self.leftVideoLabel.size(), Qt.KeepAspectRatio))
+                self.leftVideoLabel.setPixmap(pixmap_left.scaled(self.leftVideoLabel.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
             frame_right = self.playVideoFrame(
                 idx_frame,
@@ -2015,10 +2015,10 @@ class VideoAnalysisApp(QMainWindow):
                     frame_right_c.shape[1],
                     frame_right_c.shape[0],
                     frame_right_c.strides[0],
-                    QtGui.QImage.Format_RGB888,
+                    QtGui.QImage.Format.Format_RGB888,
                 ).copy()
                 pixmap_right = QtGui.QPixmap.fromImage(image_right)
-                self.rightVideoLabel.setPixmap(pixmap_right.scaled(self.rightVideoLabel.size(), Qt.KeepAspectRatio))
+                self.rightVideoLabel.setPixmap(pixmap_right.scaled(self.rightVideoLabel.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
             video_end = time.perf_counter()
             timings.append(("video_render", video_end - last))
@@ -2962,7 +2962,7 @@ class VideoAnalysisApp(QMainWindow):
             self.state_buttons.append(btn)
 
             shortcut_key = str(idx)
-            shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcut_key), self)
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(shortcut_key), self)
             shortcut.activated.connect(lambda sid=state_id: self.assign_state_key(sid))
             self.state_shortcuts.append(shortcut)
             self.state_shortcut_map[shortcut_key] = state_id
@@ -3696,8 +3696,8 @@ if __name__ == "__main__":
     # Prefer software GL on X11 to avoid noisy GLX FBConfig/XVisual fallback warnings.
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QT_XCB_GL_INTEGRATION", "none")
-    QtCore.QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
+    QtCore.QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
     app = QApplication(sys.argv)
     win = VideoAnalysisApp()
     win.showMaximized()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

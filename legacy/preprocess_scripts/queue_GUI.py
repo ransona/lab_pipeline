@@ -1,6 +1,6 @@
 import os
 import pickle
-from PyQt5 import QtWidgets, QtGui, QtCore
+from PyQt6 import QtWidgets, QtGui, QtCore
 
 class PickleEditorApp(QtWidgets.QWidget):
     def __init__(self):
@@ -47,10 +47,10 @@ class PickleEditorApp(QtWidgets.QWidget):
         
         if previous and self.originalContent != self.editor.toPlainText():
             reply = QtWidgets.QMessageBox.question(self, 'Save Changes?',
-                "Do you want to save changes to the file?", QtWidgets.QMessageBox.Yes |
-                QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+                "Do you want to save changes to the file?", QtWidgets.QMessageBox.StandardButton.Yes |
+                QtWidgets.QMessageBox.StandardButton.No, QtWidgets.QMessageBox.StandardButton.No)
 
-            if reply == QtWidgets.QMessageBox.Yes:
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
                 self.saveChanges()
 
         file_path = os.path.join('.', current.text())
@@ -72,7 +72,7 @@ class PickleEditorApp(QtWidgets.QWidget):
 def main():
     app = QtWidgets.QApplication([])
     ex = PickleEditorApp()
-    app.exec_()
+    app.exec()
 
 if __name__ == '__main__':
     main()
