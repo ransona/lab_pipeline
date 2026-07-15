@@ -15,7 +15,7 @@ DEFAULT_RAW_ROOT = r"F:\Local_Repository"
 DEFAULT_PROCESSED_ROOT = r"F:\Local_Repository_Processed"
 DEFAULT_NAS_ROOT = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 DEFAULT_S2P_CONFIG_ROOT = r"F:\s2p_ops"
-DEFAULT_SUITE2P_ENV = "suite2p_1.1.0"
+DEFAULT_SUITE2P_ENV = "suite2p_lab"
 
 
 def _conda_executable() -> str:

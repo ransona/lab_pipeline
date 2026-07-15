@@ -19,7 +19,7 @@ step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Re
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
 
 # Use the Suite2p 1.1 environment for this compatibility branch.
-step1_config["suite2p_env"] = "suite2p_1.1.0"
+step1_config["suite2p_env"] = "suite2p_lab"
 
 # Use one Suite2p config for every detected mesoscope P*/R* work unit.
 step1_config["suite2p_config"] = {

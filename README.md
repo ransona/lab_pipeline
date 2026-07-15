@@ -626,7 +626,7 @@ step1_config["local_raw_repository_root"] = r"D:\data\Repository"
 step1_config["local_processed_repository_root"] = r"F:\Local_Repository_Processed"
 step1_config["local_nas_repository_root"] = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 step1_config["suite2p_config_root"] = r"F:\s2p_ops"
-step1_config["suite2p_env"] = "suite2p_1.1.0"
+step1_config["suite2p_env"] = "suite2p_lab"
 
 # Use one Suite2p config for every mesoscope path/ROI work unit.
 step1_config["suite2p_config"] = {
@@ -684,7 +684,7 @@ conda activate lab_pipeline
 python D:\code\lab_pipeline\configs\local\config_run_step1_meso.py
 ```
 
-The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. `step1_config["suite2p_env"]` is required; in the Suite2p 1.1 compatibility branch, set it to `"suite2p_1.1.0"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
+The Step 1 runner will call the configured local Suite2p conda environment for Suite2p work. `step1_config["suite2p_env"]` is required; for local processing, set it to `"suite2p_lab"`. Keep `rundlc=False` and `runfitpupil=False` unless those local environments and data paths are also configured.
 
 After Step 1 finishes, create a local Step 2 config:
 
