@@ -16,6 +16,32 @@ SPINES_GUI_ARTIFACT_PATTERNS = [
 ]
 SPLIT_STATUS_LOG_NAME = "split_status.log"
 
+REG_OUTPUTS_FRAME_KEYS = {
+    "badframes",
+    "badframes0",
+    "yoff",
+    "xoff",
+    "corrXY",
+    "yoff1",
+    "xoff1",
+    "corrXY1",
+    "tPC",
+}
+
+REG_OUTPUTS_METADATA_KEYS = {
+    "yrange",
+    "xrange",
+    "refImg",
+    "rmin",
+    "rmax",
+    "bidiphase",
+    "blocks",
+    "regPC",
+    "regDX",
+    "zpos_registration",
+    "cmax_registration",
+}
+
 
 def load_npy(path, **kwargs):
     return suite2p_npy.load_npy_compat(path, **kwargs)
@@ -147,6 +173,9 @@ def split_combined_channel(userID, split_root, channel_root):
         suite2p_flavor = suite2p_npy.classify_suite2p_npy(os.path.join(plane_dir, "ops.npy"), plane_ops)
         plane_db = load_optional_plane_dict(plane_dir, "db.npy")
         plane_settings = load_optional_plane_dict(plane_dir, "settings.npy")
+        plane_reg_outputs = load_optional_plane_dict(plane_dir, "reg_outputs.npy")
+        if not plane_reg_outputs:
+            plane_reg_outputs = plane_ops
         frames_per_folder = get_frames_per_folder(plane_ops, plane_dir, len(exp_ids))
         F = load_npy(os.path.join(plane_dir, "F.npy"))
         Fneu = load_npy(os.path.join(plane_dir, "Fneu.npy"))
@@ -219,6 +248,17 @@ def split_combined_channel(userID, split_root, channel_root):
                 split_ops,
                 suite2p_flavor=suite2p_flavor,
             )
+            split_reg_outputs = rewrite_reg_outputs_for_split(
+                plane_reg_outputs,
+                exp_start_frame=exp_start_frame,
+                frames_in_exp=frames_in_exp,
+            )
+            if split_reg_outputs:
+                suite2p_npy.save_object_npy(
+                    os.path.join(dest_plane_dir, "reg_outputs.npy"),
+                    split_reg_outputs,
+                    suite2p_flavor=suite2p_flavor,
+                )
             if plane_db:
                 split_db = rewrite_ops_for_split(
                     plane_ops=plane_db,
@@ -390,6 +430,30 @@ def rewrite_ops_for_split(plane_ops, exp_dir_raw, dest_channel_root, dest_plane_
             del split_ops[key]
 
     return split_ops
+
+
+def rewrite_reg_outputs_for_split(reg_outputs, exp_start_frame, frames_in_exp):
+    split_outputs = {}
+    start = int(exp_start_frame)
+    stop = start + int(frames_in_exp)
+
+    for key in REG_OUTPUTS_METADATA_KEYS:
+        if key in reg_outputs:
+            split_outputs[key] = reg_outputs[key]
+
+    for key in REG_OUTPUTS_FRAME_KEYS:
+        if key not in reg_outputs:
+            continue
+        value = reg_outputs[key]
+        try:
+            if len(value) >= stop:
+                split_outputs[key] = value[start:stop]
+            else:
+                split_outputs[key] = value
+        except TypeError:
+            split_outputs[key] = value
+
+    return split_outputs
 
 
 def set_permissions(path):

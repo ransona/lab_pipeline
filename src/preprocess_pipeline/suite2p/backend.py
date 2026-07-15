@@ -212,6 +212,47 @@ def registration_wrapper_compat(binary, ops: dict) -> dict:
     )
 
 
+def add_registration_metrics_compat(binary, ops: dict, registration_outputs: dict) -> dict:
+    """Add Suite2p GUI registration metrics to manual registration outputs when requested."""
+    if not is_suite2p_1x():
+        return registration_outputs
+    if {"tPC", "regPC", "regDX"}.issubset(registration_outputs):
+        return registration_outputs
+
+    _, settings = split_suite2p_1x_config(ops)
+    registration_settings = settings.get("registration", {})
+    do_regmetrics = registration_settings.get(
+        "do_regmetrics",
+        settings.get("run", {}).get("do_regmetrics", True),
+    )
+    n_frames = int(binary.shape[0])
+    if not do_regmetrics or n_frames < 1500:
+        return registration_outputs
+
+    yrange = registration_outputs.get("yrange")
+    xrange = registration_outputs.get("xrange")
+    device = torch_device_for_1x(settings)
+    from suite2p import registration as suite2p_registration
+
+    logging.getLogger("suite2p").info(
+        "----------- Starting registration metrics calculation (%s frames, device=%s)",
+        n_frames,
+        device,
+    )
+    tPC, regPC, regDX = suite2p_registration.get_pc_metrics(
+        binary,
+        yrange=yrange,
+        xrange=xrange,
+        settings=registration_settings,
+        device=device,
+    )
+    outputs = dict(registration_outputs)
+    outputs["tPC"] = tPC
+    outputs["regPC"] = regPC
+    outputs["regDX"] = regDX
+    return outputs
+
+
 def merge_registration_outputs(ops: dict, registration_outputs: dict) -> dict:
     merged = dict(ops)
     if not is_suite2p_1x() and hasattr(suite2p_register, "save_registration_outputs_to_ops"):

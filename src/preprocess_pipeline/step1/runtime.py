@@ -2,6 +2,7 @@ import os
 import pickle
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -118,10 +119,25 @@ def _all_exp_ids(exp_id):
     return exp_id.split(',') if ',' in exp_id else [exp_id]
 
 
+def _copy_selected_scanfield_roi(user_id, exp_id, exp_dir_processed):
+    roi_filename = f'{exp_id}_selectedScanfield.roi'
+    source_path = paths.raw_file_path(user_id, exp_id, roi_filename)
+    if not os.path.isfile(source_path):
+        return
+
+    destination_path = os.path.join(exp_dir_processed, roi_filename)
+    if os.path.abspath(source_path) == os.path.abspath(destination_path):
+        return
+
+    shutil.copy2(source_path, destination_path)
+    print(f'Copied selected ScanImage ROI file to processed folder: {destination_path}')
+
+
 def _write_pipeline_config_for_experiments(user_id, exp_ids, queued_command):
     for current_exp_id in exp_ids:
         _, exp_dir_processed = _find_exp_paths(user_id, current_exp_id)
         os.makedirs(exp_dir_processed, exist_ok=True)
+        _copy_selected_scanfield_roi(user_id, current_exp_id, exp_dir_processed)
         config_path = os.path.join(exp_dir_processed, 'pipeline_config.pickle')
         with open(config_path, 'wb') as f:
             pickle.dump(queued_command, f)

@@ -51,6 +51,29 @@ CHAN2_RUNTIME_KEYS = [
     "meanImg_chan2_corrected",
 ]
 
+REGISTRATION_RUNTIME_KEYS = {
+    "badframes",
+    "badframes0",
+    "yrange",
+    "xrange",
+    "refImg",
+    "rmin",
+    "rmax",
+    "bidiphase",
+    "yoff",
+    "xoff",
+    "corrXY",
+    "yoff1",
+    "xoff1",
+    "corrXY1",
+    "blocks",
+    "tPC",
+    "regPC",
+    "regDX",
+    "zpos_registration",
+    "cmax_registration",
+}
+
 VALID_CHAN2_DETECTION_MODES = {"off", "intensity", "cellpose"}
 
 
@@ -619,7 +642,6 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
         "nframes",
         "frames_per_folder",
         "frames_per_file",
-        "badframes",
         "reg_file",
         "reg_file_chan2",
         "raw_file",
@@ -635,26 +657,33 @@ def copy_ops_for_extraction(registration_ops, extraction_ops):
         "meanImg_chan2_corrected",
         "max_proj",
         "Vcorr",
-        "yoff",
-        "xoff",
-        "corrXY",
-        "yoff1",
-        "xoff1",
-        "corrXY1",
-        "zpos_registration",
-        "cmax_registration",
-        "badframes",
-        "yrange",
-        "xrange",
-        "rmin",
-        "rmax",
-    }
+    } | REGISTRATION_RUNTIME_KEYS
 
     for key, value in extraction_ops.items():
         if key not in protected_runtime_keys:
             ops[key] = value
 
     return ops
+
+
+def restore_registration_runtime_keys(ops, registration_ops):
+    """Keep registration diagnostics after Suite2p extraction-only runs rewrite ops.npy."""
+    for key in REGISTRATION_RUNTIME_KEYS:
+        if key in registration_ops and key not in ops:
+            ops[key] = registration_ops[key]
+    return ops
+
+
+def registration_outputs_from_ops(ops):
+    """Build the reg_outputs.npy payload from registration keys preserved in ops.npy."""
+    return {key: ops[key] for key in REGISTRATION_RUNTIME_KEYS if key in ops}
+
+
+def save_registration_outputs_for_plane(plane_dir, ops):
+    """Keep reg_outputs.npy consistent with ops.npy for Suite2p GUI consumers."""
+    reg_outputs = registration_outputs_from_ops(ops)
+    if reg_outputs:
+        suite2p_npy.save_object_npy(os.path.join(plane_dir, "reg_outputs.npy"), reg_outputs)
 
 
 def write_empty_detection_outputs(plane_save_dir, plane_ops):
@@ -899,6 +928,11 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
                     combined_binary,
                     ops=reg_ops,
                 )
+                registration_outputs = suite2p_backend.add_registration_metrics_compat(
+                    combined_binary,
+                    reg_ops,
+                    registration_outputs,
+                )
 
             reg_ops = suite2p_backend.merge_registration_outputs(reg_ops, registration_outputs)
             yoff, xoff, _corrXY = reg_ops["yoff"], reg_ops["xoff"], reg_ops["corrXY"]
@@ -918,6 +952,7 @@ def run_shared_summed_channel_registration(all_tif_paths, output_path, registrat
             reg_ops["register_with_summed_channel"] = True
             reg_ops["registration_channel_combination"] = "average"
             reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
+            save_registration_outputs_for_plane(plane_dir, reg_ops)
             suite2p_npy.save_object_npy(plane_ops_path, reg_ops)
         finally:
             if scratch_is_temp:
@@ -1006,6 +1041,7 @@ def run_extraction_stage(
             write_empty_detection_outputs(plane_save_dir, plane_ops)
             continue
 
+        plane_ops = restore_registration_runtime_keys(plane_ops, registration_ops)
         plane_ops["nchannels"] = 1
         plane_ops["functional_chan"] = 1
         plane_ops["nplanes"] = int(nplanes)
@@ -1030,6 +1066,7 @@ def run_extraction_stage(
                 extra_path = os.path.join(plane_save_dir, filename)
                 if os.path.exists(extra_path):
                     os.remove(extra_path)
+        save_registration_outputs_for_plane(plane_save_dir, plane_ops)
         suite2p_npy.save_object_npy(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(extraction_config) and suite2p_detection_enabled(extraction_config):
@@ -1147,6 +1184,11 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
                     combined_binary,
                     ops=reg_ops,
                 )
+                registration_outputs = suite2p_backend.add_registration_metrics_compat(
+                    combined_binary,
+                    reg_ops,
+                    registration_outputs,
+                )
 
             reg_ops = suite2p_backend.merge_registration_outputs(reg_ops, registration_outputs)
             yoff, xoff = reg_ops["yoff"], reg_ops["xoff"]
@@ -1167,6 +1209,7 @@ def run_final_summed_channel_registration(canonical_root, final_config_path, fun
             reg_ops["final_register_with_summed_channel"] = True
             reg_ops["registration_channel_combination"] = "average"
             reg_ops["combined_registration_tmp_root"] = str(Path(scratch_dir).parent)
+            save_registration_outputs_for_plane(canonical_plane_dir, reg_ops)
             suite2p_npy.save_object_npy(plane_ops_path, reg_ops)
         finally:
             if scratch_is_temp:
@@ -1282,6 +1325,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
             write_empty_detection_outputs(plane_save_dir, plane_ops)
             continue
 
+        plane_ops = restore_registration_runtime_keys(plane_ops, registration_ops)
         plane_ops["nchannels"] = 1
         plane_ops["functional_chan"] = 1
         plane_ops["align_by_chan"] = 1
@@ -1301,6 +1345,7 @@ def run_final_suite2p_stage(canonical_root, save_root, final_config_path, nplane
             extra_path = os.path.join(plane_save_dir, filename)
             if os.path.exists(extra_path):
                 os.remove(extra_path)
+        save_registration_outputs_for_plane(plane_save_dir, plane_ops)
         suite2p_npy.save_object_npy(plane_ops["ops_path"], plane_ops)
 
     if len(canonical_plane_dirs) > 1 and suite2p_combined_enabled(final_config) and suite2p_detection_enabled(final_config):
@@ -1377,6 +1422,7 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_
             else:
                 root_ops["nchannels"] = 1
                 strip_chan2_runtime_fields(root_ops)
+            save_registration_outputs_for_plane(canonical_plane_dir, root_ops)
             suite2p_npy.save_object_npy(root_ops_path, root_ops)
 
         ch2_ops_path = os.path.join(ch2_plane_dir, "ops.npy")
@@ -1395,6 +1441,7 @@ def finalize_dual_channel_binary_layout(canonical_root, ch2_root, nplanes, root_
             ]:
                 if key in ch2_ops:
                     del ch2_ops[key]
+            save_registration_outputs_for_plane(ch2_plane_dir, ch2_ops)
             suite2p_npy.save_object_npy(ch2_ops_path, ch2_ops)
 
     update_combined_ops(canonical_root, nplanes)
