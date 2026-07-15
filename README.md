@@ -20,6 +20,14 @@ conda env create -f environment-lab-pipeline.yml
 conda env update -n lab_pipeline -f environment-lab-pipeline.yml --prune
 ```
 
+On Linux only, if Qt reports a missing `xcb-cursor0`/`libxcb-cursor0`
+dependency when launching GUIs, install the platform package separately, for
+example:
+
+```bash
+conda install -n lab_pipeline -c conda-forge xcb-util-cursor
+```
+
 Create or update the minimal NumPy 1 helper env. This is needed for old Suite2p v0.x data because those `ops.npy`, `stat.npy`, and related object `.npy` files were written with NumPy 1-era pickle module paths:
 
 ```bash
