@@ -15,7 +15,7 @@ dependencies:
   - tqdm
   - pytorch
   - torchvision
-  - xcb-util-cursor
+  - xcb-util-cursor  # [linux]
   - pip
   - pip:
       - -e .
