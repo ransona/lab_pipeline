@@ -92,6 +92,7 @@ def _make_node(
     has_override: bool,
     metrics_lookup: Dict[MetricsKey, object],
     kill_lookup: Dict[ScopeKey, object],
+    imaging_flags,
 ) -> DataNode:
     metric_key: MetricsKey = (scope, user or "", animal_id, exp_id)
     kill_key: ScopeKey = (scope, animal_id, exp_id)
@@ -103,6 +104,7 @@ def _make_node(
         kill_row["status"] in ("pending", "blocked")
         or (scope == "raw" and kill_row["status"] == "deleted")
     )
+    imaging_marked = (scope, user or "", animal_id, exp_id or "") in imaging_flags
     return DataNode(
         scope=scope,
         animal_id=animal_id,
@@ -114,6 +116,7 @@ def _make_node(
         size_bytes=size_bytes,
         last_access_ts=last_access_ts,
         marked_for_deletion=marked,
+        marked_for_imaging_deletion=imaging_marked,
     )
 
 
@@ -174,6 +177,7 @@ def scan_scope(
     metrics_lookup = datastore.load_metrics()
     overrides = datastore.load_overrides()
     kill_lookup = datastore.load_kill_flags()
+    imaging_flags = datastore.load_imaging_flags()
     excluded = set(load_exclude_dirs(paths))
 
     nodes: List[DataNode] = []
@@ -225,6 +229,7 @@ def scan_scope(
                 has_override=has_override,
                 metrics_lookup=metrics_lookup,
                 kill_lookup=kill_lookup,
+                imaging_flags=imaging_flags,
             )
             nodes.append(animal_node)
 
@@ -255,6 +260,7 @@ def scan_scope(
                     has_override=exp_override,
                     metrics_lookup=metrics_lookup,
                     kill_lookup=kill_lookup,
+                    imaging_flags=imaging_flags,
                 )
                 nodes.append(exp_node)
     return nodes

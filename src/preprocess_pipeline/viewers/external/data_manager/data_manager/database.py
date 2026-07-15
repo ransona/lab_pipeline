@@ -84,6 +84,21 @@ class DataStore:
                 );
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS imaging_deletions (
+                    path TEXT PRIMARY KEY,
+                    target_type TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    user_id TEXT NOT NULL DEFAULT '',
+                    animal_id TEXT NOT NULL,
+                    exp_id TEXT NOT NULL,
+                    marked_by TEXT NOT NULL,
+                    marked_at INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                );
+                """
+            )
             conn.commit()
 
     def _ensure_metrics_schema(self, conn: sqlite3.Connection) -> None:
@@ -354,6 +369,79 @@ class DataStore:
                 "DELETE FROM file_deletions WHERE scope=? AND animal_id=? AND exp_id IS ?",
                 (scope, animal_id, exp_id),
             )
+            conn.commit()
+
+    # Imaging-only deletions
+    def replace_imaging_deletions(
+        self,
+        scope: str,
+        user_id: Optional[str],
+        animal_id: str,
+        exp_id: str,
+        marked_by: str,
+        targets,
+    ) -> None:
+        normalized_user = user_id or ""
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM imaging_deletions WHERE scope=? AND user_id=? AND animal_id=? AND exp_id=?",
+                (scope, normalized_user, animal_id, exp_id),
+            )
+            conn.executemany(
+                """
+                INSERT INTO imaging_deletions(
+                    path, target_type, scope, user_id, animal_id, exp_id,
+                    marked_by, marked_at, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                """,
+                [
+                    (
+                        str(path), target_type, scope, normalized_user, animal_id,
+                        exp_id, marked_by, now,
+                    )
+                    for path, target_type in targets
+                ],
+            )
+            conn.commit()
+
+    def load_imaging_deletions(self):
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT path, target_type, scope, user_id, animal_id, exp_id,
+                       marked_by, marked_at, status
+                FROM imaging_deletions
+                """
+            ).fetchall()
+            return {row["path"]: row for row in rows}
+
+    def load_imaging_flags(self):
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT scope, user_id, animal_id, exp_id
+                FROM imaging_deletions WHERE status='pending'
+                """
+            ).fetchall()
+            return {
+                (row["scope"], row["user_id"] or "", row["animal_id"], row["exp_id"])
+                for row in rows
+            }
+
+    def clear_imaging_deletions_for_exp(
+        self, scope: str, user_id: Optional[str], animal_id: str, exp_id: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM imaging_deletions WHERE scope=? AND user_id=? AND animal_id=? AND exp_id=?",
+                (scope, user_id or "", animal_id, exp_id),
+            )
+            conn.commit()
+
+    def clear_imaging_deletion(self, path: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM imaging_deletions WHERE path=?", (path,))
             conn.commit()
 
     # Deletion blocks (processed data conflicts)

@@ -64,6 +64,16 @@ def gather_files(datastore: DataStore, min_age_days: float) -> List[Tuple[str, s
     return eligible
 
 
+def gather_imaging(datastore: DataStore, min_age_days: float):
+    rows = datastore.load_imaging_deletions().values()
+    cutoff = time.time() - (min_age_days * 86400)
+    return [
+        row for row in rows
+        if row["status"] == "pending"
+        and (not row["marked_at"] or row["marked_at"] <= cutoff)
+    ]
+
+
 def size_of_path(path: Path) -> int:
     if not path.exists():
         return 0
@@ -89,8 +99,24 @@ def _rmtree_onerror(func, path, exc_info):
 
 def delete_path(path: Path) -> bool:
     if not path.exists():
+        if path.is_symlink():
+            try:
+                path.unlink()
+                log(f"Deleted symlink: {path}")
+                return True
+            except OSError:
+                log(f"ERROR deleting symlink: {path}")
+                return False
         log(f"Skip missing: {path}")
         return False
+    if path.is_symlink():
+        try:
+            path.unlink()
+            log(f"Deleted symlink: {path}")
+            return True
+        except OSError:
+            log(f"ERROR deleting symlink: {path}")
+            return False
     if path.is_dir():
         errors = []
 
@@ -145,6 +171,21 @@ def safe_delete_nas(nas_path: Path) -> None:
     return delete_path(nas_path)
 
 
+def imaging_target_is_safe(row, path: Path, paths: DataPaths) -> bool:
+    if row["scope"] == "raw":
+        roots = [paths.raw_root / row["animal_id"] / row["exp_id"]]
+    else:
+        roots = [
+            paths.home_root / row["user_id"] / "Data" / "Repository" / row["animal_id"] / row["exp_id"],
+            paths.home_root / row["user_id"] / "data" / "Repository" / row["animal_id"] / row["exp_id"],
+        ]
+    try:
+        parent = path.parent.resolve()
+        return any(parent == root.resolve() or parent.is_relative_to(root.resolve()) for root in roots)
+    except (OSError, ValueError):
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run deletion of flagged items.")
     parser.add_argument("--min-age-days", type=float, default=DEFAULT_MIN_AGE_DAYS, help="Minimum age (days) since request.")
@@ -172,6 +213,7 @@ def main() -> None:
 
     folders = gather_folders(datastore, args.min_age_days)
     files = gather_files(datastore, args.min_age_days)
+    imaging = gather_imaging(datastore, args.min_age_days)
     if args.include_deleted:
         rows = datastore.load_kill_flags().values()
         cutoff = time.time() - (args.min_age_days * 86400)
@@ -206,8 +248,13 @@ def main() -> None:
     for path_str, scope, animal, exp in files:
         p = Path(path_str)
         file_sizes.append((scope, animal, exp, p, size_of_path(p)))
+    imaging_sizes = [(row, Path(row["path"]), size_of_path(Path(row["path"]))) for row in imaging]
 
-    total_bytes = sum(s for *_rest, s in folder_sizes) + sum(s for *_rest, s in file_sizes)
+    total_bytes = (
+        sum(s for *_rest, s in folder_sizes)
+        + sum(s for *_rest, s in file_sizes)
+        + sum(size for _row, _path, size in imaging_sizes)
+    )
 
     log(f"Folders eligible: {len(folder_sizes)}")
     for scope, animal, exp, p, sz in folder_sizes:
@@ -215,6 +262,12 @@ def main() -> None:
     log(f"Files eligible: {len(file_sizes)}")
     for scope, animal, exp, p, sz in file_sizes:
         log(f"{scope} {animal}/{exp or ''} -> {p} [{human_size(sz)}]")
+    log(f"Imaging targets eligible: {len(imaging_sizes)}")
+    for row, path, size in imaging_sizes:
+        log(
+            f"imaging {row['scope']} {row['animal_id']}/{row['exp_id']} "
+            f"({row['target_type']}) -> {path} [{human_size(size)}]"
+        )
     log(f"Total to delete: {human_size(total_bytes)}")
 
     if not args.auto:
@@ -255,6 +308,21 @@ def main() -> None:
                 safe_delete_nas(nas_path)
         if delete_path(p):
             datastore.clear_file_deletion(str(p))
+
+    # Delete imaging-only targets. Missing targets count as already satisfied.
+    for row, path, _size in imaging_sizes:
+        if not imaging_target_is_safe(row, path, paths):
+            log(f"ERROR unsafe imaging target outside experiment: {path}")
+            continue
+        if row["scope"] == "raw":
+            nas_path = map_raw_to_nas(path, paths.raw_root)
+            if nas_path.exists():
+                safe_delete_nas(nas_path)
+        if not path.exists() and not path.is_symlink():
+            log(f"Imaging target already missing: {path}")
+            datastore.clear_imaging_deletion(str(path))
+        elif delete_path(path):
+            datastore.clear_imaging_deletion(str(path))
 
     # Cleanup empty raw animal folders
     for animal in sorted(raw_animals):

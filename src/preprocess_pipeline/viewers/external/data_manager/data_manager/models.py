@@ -17,6 +17,7 @@ class DataNode:
     size_bytes: Optional[int] = None
     last_access_ts: Optional[int] = None
     marked_for_deletion: bool = False
+    marked_for_imaging_deletion: bool = False
 
     @property
     def key(self) -> str:

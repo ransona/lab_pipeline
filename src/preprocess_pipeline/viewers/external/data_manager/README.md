@@ -55,6 +55,7 @@ the same time. Tables are created automatically:
 - `metrics`: cached folder size and latest file access time, keyed by scope,
   processed user, animal, and expID.
 - `file_deletions`: file-level deletion requests, currently used for raw TIFFs.
+- `imaging_deletions`: grouped imaging-only file and directory targets.
 
 ## Discovery and ownership
 
@@ -111,6 +112,17 @@ Common actions:
 - `Show orphans`: find processed experiments or animals whose raw experiment is
   absent or already marked for deletion.
 - `Show usage`: summarize cached raw and processed usage by owner.
+
+Pressing Space in either data tree toggles imaging-only deletion for selected
+experiments. Raw imaging cleanup tags all `.tif` and `.tiff` files recursively.
+Processed cleanup tags directories named `suite2p`, `suite2p_combined`, `ch2`,
+`P0`, `P1`, or `P2`, plus `recordings/s2p_*.pickle` and
+`cut/s2p_*.pickle`. Selecting an animal applies the action to its visible
+experiments after confirmation. Imaging-only rows are struck through and shown
+with `(imaging)`; full experiment deletion continues to use the existing mark.
+
+The non-modal `Debug` window reports deletion tagging while it is open. Its
+output automatically scrolls, and `Delete output` clears the displayed text.
 
 Normal GUI use does not delete data from disk. It only updates SQLite and writes
 per-user action logs.

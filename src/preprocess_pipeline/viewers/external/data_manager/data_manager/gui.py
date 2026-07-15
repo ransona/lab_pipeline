@@ -14,6 +14,7 @@ from typing import Dict, Iterable, List, Optional
 
 from .config import DataPaths, load_user_map
 from .database import DataStore
+from .imaging_cleanup import discover_imaging_targets
 from .models import DataNode
 from .scanner import (
     detect_current_user,
@@ -74,6 +75,8 @@ class DataManagerApp:
         self.show_unknown_var = tk.BooleanVar(value=False)
         self.progress_window: Optional[tk.Toplevel] = None
         self.show_only_marked_var = tk.BooleanVar(value=False)
+        self.debug_window: Optional[tk.Toplevel] = None
+        self.debug_text: Optional[tk.Text] = None
 
         self._build_ui()
         self.refresh_all()
@@ -116,6 +119,9 @@ class DataManagerApp:
             side=tk.LEFT, padx=5
         )
         ttk.Button(top_frame, text="Show orphans", command=self.show_orphans).pack(
+            side=tk.LEFT, padx=5
+        )
+        ttk.Button(top_frame, text="Debug", command=self.open_debug_window).pack(
             side=tk.LEFT, padx=5
         )
         if self.current_user == "adamranson":
@@ -204,6 +210,7 @@ class DataManagerApp:
         tree.pack(fill=tk.BOTH, expand=True)
         tree.bind("<<TreeviewSelect>>", self._on_select)
         tree.bind("<Button-3>", lambda e, t=tree: self._on_right_click(t, e))
+        tree.bind("<space>", lambda _e, t=tree: self.toggle_imaging_deletion(t))
         # Derive a strike-through font for marked items
         base_font = tkfont.nametofont("TkDefaultFont").copy()
         base_font.configure(overstrike=True)
@@ -311,7 +318,12 @@ class DataManagerApp:
                         grouped_filtered.setdefault(n.animal_id, []).append(n)
                     for items in grouped_filtered.values():
                         animal_node = next((i for i in items if i.exp_id is None), None)
-                        marked_exps = [i for i in items if i.exp_id and i.marked_for_deletion]
+                        marked_exps = [
+                            i for i in items
+                            if i.exp_id and (
+                                i.marked_for_deletion or i.marked_for_imaging_deletion
+                            )
+                        ]
                         if marked_exps:
                             if animal_node:
                                 marked.append(animal_node)
@@ -331,7 +343,12 @@ class DataManagerApp:
             marked = []
             for items in grouped.values():
                 animal_node = next((i for i in items if i.exp_id is None), None)
-                marked_exps = [i for i in items if i.exp_id and i.marked_for_deletion]
+                marked_exps = [
+                    i for i in items
+                    if i.exp_id and (
+                        i.marked_for_deletion or i.marked_for_imaging_deletion
+                    )
+                ]
                 if marked_exps:
                     if animal_node:
                         marked.append(animal_node)
@@ -397,6 +414,8 @@ class DataManagerApp:
                     if show_all and exp_node.user
                     else exp_node.display_name
                 )
+                if exp_node.marked_for_imaging_deletion and not exp_node.marked_for_deletion:
+                    label += " (imaging)"
                 tree.insert(
                     a_item,
                     tk.END,
@@ -406,9 +425,13 @@ class DataManagerApp:
                         format_size(exp_node.size_bytes),
                         format_time(exp_node.last_access_ts),
                         exp_node.owner or animal_node.owner or "",
-                        "yes" if exp_node.marked_for_deletion else "",
+                        "yes" if exp_node.marked_for_deletion else (
+                            "imaging" if exp_node.marked_for_imaging_deletion else ""
+                        ),
                     ),
-                    tags=(exp_node.key, "marked_tag") if exp_node.marked_for_deletion else (exp_node.key,),
+                    tags=(exp_node.key, "marked_tag")
+                    if exp_node.marked_for_deletion or exp_node.marked_for_imaging_deletion
+                    else (exp_node.key,),
                 )
 
         self._apply_size_colors(tree, nodes)
@@ -477,6 +500,7 @@ class DataManagerApp:
             f"Size: {format_size(node.size_bytes)}",
             f"Last access: {format_time(node.last_access_ts)}",
             f"Marked for deletion: {'yes' if node.marked_for_deletion else 'no'}",
+            f"Imaging deletion: {'yes' if node.marked_for_imaging_deletion else 'no'}",
         ]
         self.detail_label.config(text=" | ".join(info))
         self.owner_value.set(node.owner or "")
@@ -517,6 +541,72 @@ class DataManagerApp:
         # otherwise: if any unmarked -> mark, else unmark
         mark_state = not all(n.marked_for_deletion for n in nodes)
         self._mark_nodes(nodes, mark_state)
+
+    def toggle_imaging_deletion(self, tree: ttk.Treeview):
+        self.active_tree = tree
+        selected = self._selected_nodes(active_only=True)
+        if not selected:
+            return "break"
+
+        animal_nodes = [node for node in selected if node.exp_id is None]
+        targets: List[DataNode] = []
+        seen = set()
+        for node in selected:
+            candidates = (
+                self._visible_exp_targets_for_animal(node)
+                if node.exp_id is None
+                else [node]
+            )
+            for candidate in candidates:
+                if candidate.key not in seen:
+                    seen.add(candidate.key)
+                    targets.append(candidate)
+        if not targets:
+            return "break"
+
+        if animal_nodes:
+            animal_names = ", ".join(sorted({node.animal_id for node in animal_nodes}))
+            if not messagebox.askyesno(
+                "Confirm imaging deletion",
+                f"Toggle imaging deletion for {len(targets)} experiments under {animal_names}?",
+                parent=self.root,
+            ):
+                return "break"
+
+        mark_state = not all(node.marked_for_imaging_deletion for node in targets)
+        actor = self._acting_user()
+        for node in targets:
+            if node.marked_for_deletion and mark_state:
+                self._debug(f"SKIP IMAGING (full deletion already tagged): {node.path}")
+                continue
+            if mark_state:
+                discovered = discover_imaging_targets(node.scope, node.path)
+                if not discovered:
+                    self._debug(f"NO IMAGING TARGETS {node.scope}: {node.path}")
+                    continue
+                self.datastore.replace_imaging_deletions(
+                    node.scope,
+                    node.user,
+                    node.animal_id,
+                    node.exp_id,
+                    actor,
+                    discovered,
+                )
+                node.marked_for_imaging_deletion = True
+                self._log_action(f"MARK_IMAGING {node.scope} {node.animal_id}/{node.exp_id}")
+                self._debug(f"TAG IMAGING {node.scope}: {node.path}")
+                for path, target_type in discovered:
+                    self._debug(f"  TAG {target_type}: {path}")
+            else:
+                self.datastore.clear_imaging_deletions_for_exp(
+                    node.scope, node.user, node.animal_id, node.exp_id
+                )
+                node.marked_for_imaging_deletion = False
+                self._log_action(f"UNMARK_IMAGING {node.scope} {node.animal_id}/{node.exp_id}")
+                self._debug(f"UNTAG IMAGING {node.scope}: {node.path}")
+            self._refresh_node_in_tree(node)
+        self._on_select()
+        return "break"
 
     def _targets_for_node(self, node: DataNode) -> List[DataNode]:
         if node.exp_id is None:
@@ -604,6 +694,10 @@ class DataManagerApp:
                         self.datastore.resolve_block(n.scope, n.animal_id, n.exp_id, actor)
                         blockers = [b for b in blockers if b != actor]
 
+                self.datastore.clear_imaging_deletions_for_exp(
+                    n.scope, n.user, n.animal_id, n.exp_id
+                )
+                n.marked_for_imaging_deletion = False
                 status = "blocked" if blockers else "pending"
                 self.datastore.set_kill_flag(
                     n.scope, n.animal_id, n.exp_id, marked_by=actor
@@ -626,6 +720,7 @@ class DataManagerApp:
                     )
                 n.marked_for_deletion = True
                 self._log_action(f"MARK {n.scope} {n.animal_id}/{n.exp_id or ''}")
+                self._debug(f"TAG FULL {n.scope}: {n.path}")
             self._refresh_node_in_tree(n)
             self.action_progress.set((idx / total) * 100)
             self.root.update_idletasks()
@@ -692,18 +787,28 @@ class DataManagerApp:
             if parent and parent.owner:
                 owner_value = parent.owner
         tree.set(node.key, "owner", owner_value)
-        tree.set(node.key, "marked", "yes" if node.marked_for_deletion else "")
+        tree.set(
+            node.key,
+            "marked",
+            "yes" if node.marked_for_deletion else (
+                "imaging" if node.marked_for_imaging_deletion else ""
+            ),
+        )
         # Update color
         tree.tag_configure(node.key, background="")
         scoped_nodes = [n for n in self.nodes_by_key.values() if n.scope == node.scope]
         self._apply_size_colors(tree, scoped_nodes)
         # strike-through toggling
         tags = list(tree.item(node.key, "tags"))
-        if node.marked_for_deletion and "marked_tag" not in tags:
+        marked = node.marked_for_deletion or node.marked_for_imaging_deletion
+        if marked and "marked_tag" not in tags:
             tags.append("marked_tag")
-        elif not node.marked_for_deletion and "marked_tag" in tags:
+        elif not marked and "marked_tag" in tags:
             tags.remove("marked_tag")
-        tree.item(node.key, tags=tuple(tags))
+        label = node.display_name
+        if node.marked_for_imaging_deletion and not node.marked_for_deletion:
+            label += " (imaging)"
+        tree.item(node.key, text=label, tags=tuple(tags))
         # Display blocked status in marked column if relevant
         key = (node.scope, node.animal_id, node.exp_id)
         blocks = [
@@ -809,6 +914,39 @@ class DataManagerApp:
                 handle.write(line + "\n")
         except OSError:
             pass
+
+    def open_debug_window(self) -> None:
+        if self.debug_window and self.debug_window.winfo_exists():
+            self.debug_window.lift()
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Data Manager debug")
+        win.geometry("900x420")
+        self.debug_window = win
+        text = tk.Text(win, wrap="none")
+        text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.debug_text = text
+
+        def clear_output() -> None:
+            text.delete("1.0", tk.END)
+
+        ttk.Button(win, text="Delete output", command=clear_output).pack(pady=(0, 8))
+
+        def close_debug() -> None:
+            self.debug_text = None
+            self.debug_window = None
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", close_debug)
+        self._debug("Debug output opened")
+
+    def _debug(self, message: str) -> None:
+        if not self.debug_text or not self.debug_window or not self.debug_window.winfo_exists():
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.debug_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.debug_text.see(tk.END)
+        self.debug_text.update_idletasks()
 
     def _prompt_conflict_choice(self, animal_id: str, exp_id: str, actor: str) -> tuple:
         """
@@ -1007,9 +1145,11 @@ class DataManagerApp:
             tree.column(col, width=width, anchor="w")
         tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        ttk.Label(win, text="File-level deletions").pack(anchor="w", padx=10, pady=(4, 0))
-        file_tree = ttk.Treeview(win, columns=("path", "scope", "exp", "marked_by", "age"), show="headings")
-        for col, width in [("path", 420), ("scope", 70), ("exp", 180), ("marked_by", 100), ("age", 60)]:
+        ttk.Label(win, text="File and imaging-only deletions").pack(anchor="w", padx=10, pady=(4, 0))
+        file_tree = ttk.Treeview(
+            win, columns=("path", "mode", "scope", "exp", "marked_by", "age"), show="headings"
+        )
+        for col, width in [("path", 390), ("mode", 90), ("scope", 70), ("exp", 180), ("marked_by", 100), ("age", 60)]:
             file_tree.heading(col, text=col.title())
             file_tree.column(col, width=width, anchor="w")
         file_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
@@ -1055,6 +1195,7 @@ class DataManagerApp:
             metrics = self.datastore.load_metrics()
             kill_rows = self.datastore.load_kill_flags().values()
             file_rows = self.datastore.load_file_deletions().values()
+            imaging_rows = self.datastore.load_imaging_deletions().values()
 
             grouped: Dict[str, List[Dict]] = {}
             total_bytes = 0
@@ -1098,14 +1239,19 @@ class DataManagerApp:
                             ),
                         )
 
-            if not file_rows:
-                file_tree.insert("", tk.END, values=("none", "", "", "", ""))
-            else:
-                for row in file_rows:
+            visible_target_rows = []
+            for mode, rows in (("file", file_rows), ("imaging", imaging_rows)):
+                for row in rows:
                     if hide_deleted_var.get() and row["status"] == "deleted":
                         continue
                     if filter_user != "all" and row["marked_by"] != filter_user:
                         continue
+                    visible_target_rows.append((mode, row))
+
+            if not visible_target_rows:
+                file_tree.insert("", tk.END, values=("none", "", "", "", "", ""))
+            else:
+                for mode, row in visible_target_rows:
                     owner = owner_for_file(row)
                     age = ""
                     if row["marked_at"]:
@@ -1119,6 +1265,7 @@ class DataManagerApp:
                         tk.END,
                         values=(
                             row["path"],
+                            mode,
                             row["scope"],
                             f"{row['animal_id']}/{row['exp_id'] or ''}",
                             row["marked_by"],
@@ -1475,8 +1622,11 @@ class DataManagerApp:
                 conn.execute("DELETE FROM kill_list")
                 conn.execute("DELETE FROM deletion_blocks")
                 conn.execute("DELETE FROM file_deletions")
+                conn.execute("DELETE FROM imaging_deletions")
                 conn.commit()
-            messagebox.showinfo("Cleared", "Kill list and deletion blocks cleared.")
+            messagebox.showinfo(
+                "Cleared", "Kill list, deletion blocks, and imaging requests cleared."
+            )
             self.refresh_all()
 
         ttk.Button(win, text="Clear kill list", command=clear_kill).pack(pady=10)
@@ -1531,6 +1681,7 @@ class DataManagerApp:
                         self.datastore.set_file_deletion(
                             str(tif_path), "raw", animal, exp, marked_by=actor, status="pending"
                         )
+                        self._debug(f"TAG FILE raw: {tif_path}")
                     tree.item(key, tags=("marked_tag",))
                     self._log_action(f"MARK_TIFS raw {animal}/{exp}")
                 else:
