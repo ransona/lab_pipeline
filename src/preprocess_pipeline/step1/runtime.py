@@ -143,6 +143,16 @@ def _write_pipeline_config_for_experiments(user_id, exp_ids, queued_command):
             pickle.dump(queued_command, f)
 
 
+def _local_repository_context_for_queued_command(queued_command):
+    config = queued_command.get('config', {}) if isinstance(queued_command, dict) else {}
+    return paths.local_repository_context(
+        local_repository_root=config.get('local_repository_root'),
+        local_raw_repository_root=config.get('local_raw_repository_root'),
+        local_processed_repository_root=config.get('local_processed_repository_root'),
+        local_nas_repository_root=config.get('local_nas_repository_root'),
+    )
+
+
 def _work_unit_mode(work_unit_id):
     return 'standard' if work_unit_id == 'root' else 'meso'
 
@@ -450,29 +460,30 @@ def run_preprocess_step1_universal(
 
     if queued_command is None:
         queued_command = _load_queued_command(jobID, queue_paths=[queue_path])
-    exp_ids = _all_exp_ids(expID)
-    _write_pipeline_config_for_experiments(userID, exp_ids, queued_command)
-    first_exp_raw, first_exp_processed = _find_exp_paths(userID, exp_ids[0])
-    os.makedirs(first_exp_processed, exist_ok=True)
+    with _local_repository_context_for_queued_command(queued_command):
+        exp_ids = _all_exp_ids(expID)
+        _write_pipeline_config_for_experiments(userID, exp_ids, queued_command)
+        first_exp_raw, first_exp_processed = _find_exp_paths(userID, exp_ids[0])
+        os.makedirs(first_exp_processed, exist_ok=True)
 
-    topology = queued_command['config'].get('topology')
-    if topology is None:
-        topology = _discover_topology(first_exp_raw)
+        topology = queued_command['config'].get('topology')
+        if topology is None:
+            topology = _discover_topology(first_exp_raw)
 
-    if runs2p:
-        _run_suite2p_plan(jobID, userID, expID, queued_command, queue_path=queue_path)
+        if runs2p:
+            _run_suite2p_plan(jobID, userID, expID, queued_command, queue_path=queue_path)
 
-    if rundlc:
-        print('** Running DLC launcher...')
-        _run_dlc(jobID, userID, expID, topology, queue_path=queue_path)
+        if rundlc:
+            print('** Running DLC launcher...')
+            _run_dlc(jobID, userID, expID, topology, queue_path=queue_path)
 
-    if runfitpupil:
-        print('** Running pupil fit launcher...')
-        _run_fit_pupil(jobID, userID, expID, queue_path=queue_path)
+        if runfitpupil:
+            print('** Running pupil fit launcher...')
+            _run_fit_pupil(jobID, userID, expID, queue_path=queue_path)
 
-    if queued_command['config'].get('runhabituate', False):
-        print('** Running habituation setup processing...')
-        habituate.preprocess_habituate_run(userID, expID)
+        if queued_command['config'].get('runhabituate', False):
+            print('** Running habituation setup processing...')
+            habituate.preprocess_habituate_run(userID, expID)
 
 
 def main():
