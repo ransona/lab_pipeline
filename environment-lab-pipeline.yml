@@ -15,11 +15,10 @@ dependencies:
   - tqdm
   - pytorch
   - torchvision
+  - pyqt>=6,<7
   - pip
   - pip:
       - -e .
-      - PyQt6==6.11.0
-      - PyQt6-Qt6==6.11.0
       - opencv-python-headless==4.13.0.92
       - suite2p==1.1.0
       - harp-python==0.4.1
