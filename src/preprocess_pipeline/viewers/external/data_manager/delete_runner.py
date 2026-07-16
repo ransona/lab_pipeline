@@ -74,6 +74,16 @@ def gather_imaging(datastore: DataStore, min_age_days: float):
     ]
 
 
+def gather_animals(datastore: DataStore, min_age_days: float):
+    rows = datastore.load_animal_deletions().values()
+    cutoff = time.time() - (min_age_days * 86400)
+    return [
+        row for row in rows
+        if row["status"] == "pending"
+        and (not row["marked_at"] or row["marked_at"] <= cutoff)
+    ]
+
+
 def size_of_path(path: Path) -> int:
     if not path.exists():
         return 0
@@ -186,6 +196,73 @@ def imaging_target_is_safe(row, path: Path, paths: DataPaths) -> bool:
         return False
 
 
+def raw_animal_is_cleanup_ready(animal_path: Path) -> bool:
+    try:
+        entries = list(animal_path.iterdir())
+    except OSError:
+        return False
+    removable_housekeeping = {"animal_log.txt", ".DS_Store"}
+    return not entries or all(
+        entry.is_file() and entry.name in removable_housekeeping for entry in entries
+    )
+
+
+def cleanup_raw_animal_folders(raw_root: Path) -> int:
+    removed = 0
+    protected_names = {"refz", "roi_data", "widefield", "habituation"}
+    try:
+        animal_paths = sorted(path for path in raw_root.iterdir() if path.is_dir())
+    except OSError:
+        log(f"ERROR listing raw animal folders: {raw_root}")
+        return removed
+    for animal_path in animal_paths:
+        if animal_path.name.lower() in protected_names or any(
+            char.isspace() for char in animal_path.name
+        ):
+            continue
+        if not raw_animal_is_cleanup_ready(animal_path):
+            continue
+        if delete_path(animal_path):
+            removed += 1
+            log(f"Removed empty/log-only animal folder: {animal_path}")
+    return removed
+
+
+def raw_animal_conflicting_users(row, paths: DataPaths) -> List[str]:
+    conflicts = []
+    try:
+        users = [path for path in paths.home_root.iterdir() if path.is_dir()]
+    except OSError:
+        return ["<unable to scan /home>"]
+    for user_path in users:
+        if user_path.name == row["marked_by"]:
+            continue
+        candidates = [
+            user_path / "Data" / "Repository" / row["animal_id"],
+            user_path / "data" / "Repository" / row["animal_id"],
+        ]
+        if any(candidate.exists() for candidate in candidates):
+            conflicts.append(user_path.name)
+    return sorted(set(conflicts))
+
+
+def whole_animal_target_is_safe(row, path: Path, paths: DataPaths) -> bool:
+    if path.name != row["animal_id"]:
+        return False
+    if row["scope"] == "raw":
+        allowed_parents = [paths.raw_root]
+    else:
+        allowed_parents = [
+            paths.home_root / row["user_id"] / "Data" / "Repository",
+            paths.home_root / row["user_id"] / "data" / "Repository",
+        ]
+    try:
+        parent = path.parent.resolve()
+        return any(parent == allowed.resolve() for allowed in allowed_parents)
+    except (OSError, ValueError):
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run deletion of flagged items.")
     parser.add_argument("--min-age-days", type=float, default=DEFAULT_MIN_AGE_DAYS, help="Minimum age (days) since request.")
@@ -214,6 +291,7 @@ def main() -> None:
     folders = gather_folders(datastore, args.min_age_days)
     files = gather_files(datastore, args.min_age_days)
     imaging = gather_imaging(datastore, args.min_age_days)
+    animals = gather_animals(datastore, args.min_age_days)
     if args.include_deleted:
         rows = datastore.load_kill_flags().values()
         cutoff = time.time() - (args.min_age_days * 86400)
@@ -236,6 +314,16 @@ def main() -> None:
         # fall back to first candidate even if missing
         return candidates[0]
 
+    def resolve_processed_animal_path(user: str, animal: str) -> Path:
+        candidates = [
+            paths.home_root / user / "Data" / "Repository" / animal,
+            paths.home_root / user / "data" / "Repository" / animal,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
     folder_sizes = []
     for scope, animal, exp, marked_by in folders:
         if scope == "raw":
@@ -249,11 +337,19 @@ def main() -> None:
         p = Path(path_str)
         file_sizes.append((scope, animal, exp, p, size_of_path(p)))
     imaging_sizes = [(row, Path(row["path"]), size_of_path(Path(row["path"]))) for row in imaging]
+    animal_sizes = []
+    for row in animals:
+        if row["scope"] == "raw":
+            path = paths.raw_root / row["animal_id"]
+        else:
+            path = resolve_processed_animal_path(row["user_id"], row["animal_id"])
+        animal_sizes.append((row, path, size_of_path(path)))
 
     total_bytes = (
         sum(s for *_rest, s in folder_sizes)
         + sum(s for *_rest, s in file_sizes)
         + sum(size for _row, _path, size in imaging_sizes)
+        + sum(size for _row, _path, size in animal_sizes)
     )
 
     log(f"Folders eligible: {len(folder_sizes)}")
@@ -267,6 +363,12 @@ def main() -> None:
         log(
             f"imaging {row['scope']} {row['animal_id']}/{row['exp_id']} "
             f"({row['target_type']}) -> {path} [{human_size(size)}]"
+        )
+    log(f"Whole animals eligible: {len(animal_sizes)}")
+    for row, path, size in animal_sizes:
+        log(
+            f"whole-animal {row['scope']} {row['animal_id']} -> "
+            f"{path} [{human_size(size)}]"
         )
     log(f"Total to delete: {human_size(total_bytes)}")
 
@@ -285,11 +387,36 @@ def main() -> None:
             sys.exit(0)
 
     # Delete folders
-    raw_animals = set()
     processed_animals = set()
+
+    # Delete whole animals after rechecking raw cross-user conflicts.
+    for row, path, _size in animal_sizes:
+        if not whole_animal_target_is_safe(row, path, paths):
+            log(f"ERROR unsafe whole-animal target: {path}")
+            continue
+        if row["scope"] == "raw":
+            conflicts = raw_animal_conflicting_users(row, paths)
+            if conflicts:
+                log(
+                    f"BLOCK whole-animal raw {row['animal_id']}; processed data owned by: "
+                    + ", ".join(conflicts)
+                )
+                continue
+            nas_path = map_raw_to_nas(path, paths.raw_root)
+            if nas_path.exists():
+                safe_delete_nas(nas_path)
+        if not path.exists():
+            log(f"Whole-animal target already missing: {path}")
+            datastore.set_animal_deletion_status(
+                row["scope"], row["user_id"], row["animal_id"], "deleted"
+            )
+        elif delete_path(path):
+            datastore.set_animal_deletion_status(
+                row["scope"], row["user_id"], row["animal_id"], "deleted"
+            )
+
     for scope, animal, exp, p, _sz in folder_sizes:
         if scope == "raw":
-            raw_animals.add(animal)
             nas_path = map_raw_to_nas(p, paths.raw_root)
             if nas_path.exists():
                 safe_delete_nas(nas_path)
@@ -324,15 +451,9 @@ def main() -> None:
         elif delete_path(path):
             datastore.clear_imaging_deletion(str(path))
 
-    # Cleanup empty raw animal folders
-    for animal in sorted(raw_animals):
-        animal_path = paths.raw_root / animal
-        try:
-            if animal_path.exists() and animal_path.is_dir() and not any(animal_path.iterdir()):
-                delete_path(animal_path)
-                log(f"Removed empty animal folder: {animal_path}")
-        except OSError:
-            log(f"ERROR checking animal folder: {animal_path}")
+    # Cleanup all empty or log-only raw animal folders on every run.
+    removed_raw_animals = cleanup_raw_animal_folders(paths.raw_root)
+    log(f"Raw animal folders cleaned: {removed_raw_animals}")
 
     # Cleanup empty processed animal folders
     for user, animal in sorted(processed_animals):
