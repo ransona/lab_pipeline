@@ -130,6 +130,28 @@ output automatically scrolls, and `Delete output` clears the displayed text.
 Normal GUI use does not delete data from disk. It only updates SQLite and writes
 per-user action logs.
 
+### Simple deletion steps
+
+1. Start Data Manager and select the user whose raw or processed data you want
+   to manage.
+2. To remove one experiment, select its row in the raw or processed tree and
+   click `Mark for deletion` or right-click it.
+3. To remove a complete animal, select the animal row, click
+   `Mark for deletion` or right-click it, then confirm the whole-animal warning.
+4. For raw requests, open `Conflicts` and resolve any processed-data conflicts.
+   Blocked requests are not deleted.
+5. Open `View delete list` and check every pending path before continuing.
+6. Run the deletion processor from a terminal:
+
+   ```bash
+   cd /home/<username>/code/lab_pipeline/src/preprocess_pipeline/viewers/external/data_manager
+   sudo /home/<username>/miniconda3/envs/lab_pipeline/bin/python delete_runner.py
+   ```
+
+7. Read the displayed paths and sizes, then answer `y` only when they are
+   correct. The same procedure handles both raw and processed requests.
+8. Return to Data Manager and click `Refresh` to update the trees.
+
 ## Deletion request states
 
 Folder-level deletion requests live in `kill_list`:
