@@ -93,6 +93,7 @@ def _make_node(
     metrics_lookup: Dict[MetricsKey, object],
     kill_lookup: Dict[ScopeKey, object],
     imaging_flags,
+    animal_flags,
 ) -> DataNode:
     metric_key: MetricsKey = (scope, user or "", animal_id, exp_id)
     kill_key: ScopeKey = (scope, animal_id, exp_id)
@@ -105,6 +106,7 @@ def _make_node(
         or (scope == "raw" and kill_row["status"] == "deleted")
     )
     imaging_marked = (scope, user or "", animal_id, exp_id or "") in imaging_flags
+    animal_marked = exp_id is None and (scope, user or "", animal_id) in animal_flags
     return DataNode(
         scope=scope,
         animal_id=animal_id,
@@ -117,6 +119,7 @@ def _make_node(
         last_access_ts=last_access_ts,
         marked_for_deletion=marked,
         marked_for_imaging_deletion=imaging_marked,
+        marked_for_animal_deletion=animal_marked,
     )
 
 
@@ -178,6 +181,10 @@ def scan_scope(
     overrides = datastore.load_overrides()
     kill_lookup = datastore.load_kill_flags()
     imaging_flags = datastore.load_imaging_flags()
+    animal_flags = {
+        key for key, row in datastore.load_animal_deletions().items()
+        if row["status"] == "pending"
+    }
     excluded = set(load_exclude_dirs(paths))
 
     nodes: List[DataNode] = []
@@ -230,6 +237,7 @@ def scan_scope(
                 metrics_lookup=metrics_lookup,
                 kill_lookup=kill_lookup,
                 imaging_flags=imaging_flags,
+                animal_flags=animal_flags,
             )
             nodes.append(animal_node)
 
@@ -261,6 +269,7 @@ def scan_scope(
                     metrics_lookup=metrics_lookup,
                     kill_lookup=kill_lookup,
                     imaging_flags=imaging_flags,
+                    animal_flags=animal_flags,
                 )
                 nodes.append(exp_node)
     return nodes

@@ -56,6 +56,7 @@ the same time. Tables are created automatically:
   processed user, animal, and expID.
 - `file_deletions`: file-level deletion requests, currently used for raw TIFFs.
 - `imaging_deletions`: grouped imaging-only file and directory targets.
+- `animal_deletions`: explicit recursive whole-animal folder requests.
 
 ## Discovery and ownership
 
@@ -101,8 +102,10 @@ Common actions:
 
 - `Refresh`: rescan directory structure and reload SQLite state.
 - `Mark for deletion` or right-click: toggle deletion marking for selected
-  experiments. Selecting an animal applies the action to its visible experiment
-  children.
+  experiments. Selecting an animal requests recursive deletion of the complete
+  animal folder after confirmation. Raw whole-animal requests are rejected when
+  another user has processed data for that animal, and the runner checks again
+  immediately before deletion.
 - `View delete list`: inspect pending, blocked, deleted, and file-level deletion
   rows grouped by owner.
 - `Conflicts`: resolve raw deletion conflicts where processed data exists.
@@ -199,6 +202,7 @@ Important behavior:
 - Processed deletion paths are resolved from the `marked_by` user under
   `/home/<user>/Data/Repository` or `/home/<user>/data/Repository`.
 - Successful folder deletions are marked `deleted` in `kill_list`.
+- Successful whole-animal deletions are marked `deleted` in `animal_deletions`.
 - Successful file deletions are removed from `file_deletions`.
 - Empty raw and processed animal directories are removed after child deletions.
 

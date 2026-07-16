@@ -99,6 +99,19 @@ class DataStore:
                 );
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS animal_deletions (
+                    scope TEXT NOT NULL,
+                    user_id TEXT NOT NULL DEFAULT '',
+                    animal_id TEXT NOT NULL,
+                    marked_by TEXT NOT NULL,
+                    marked_at INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    PRIMARY KEY (scope, user_id, animal_id)
+                );
+                """
+            )
             conn.commit()
 
     def _ensure_metrics_schema(self, conn: sqlite3.Connection) -> None:
@@ -442,6 +455,94 @@ class DataStore:
     def clear_imaging_deletion(self, path: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM imaging_deletions WHERE path=?", (path,))
+            conn.commit()
+
+    # Whole-animal deletions
+    def set_animal_deletion(
+        self,
+        scope: str,
+        user_id: Optional[str],
+        animal_id: str,
+        marked_by: str,
+    ) -> None:
+        normalized_user = user_id or ""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO animal_deletions(
+                    scope, user_id, animal_id, marked_by, marked_at, status
+                ) VALUES (?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT(scope, user_id, animal_id)
+                DO UPDATE SET marked_by=excluded.marked_by,
+                              marked_at=excluded.marked_at,
+                              status='pending'
+                """,
+                (scope, normalized_user, animal_id, marked_by, int(time.time())),
+            )
+            conn.commit()
+
+    def load_animal_deletions(self):
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT scope, user_id, animal_id, marked_by, marked_at, status
+                FROM animal_deletions
+                """
+            ).fetchall()
+            return {
+                (row["scope"], row["user_id"] or "", row["animal_id"]): row
+                for row in rows
+            }
+
+    def clear_animal_deletion(
+        self, scope: str, user_id: Optional[str], animal_id: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM animal_deletions WHERE scope=? AND user_id=? AND animal_id=?",
+                (scope, user_id or "", animal_id),
+            )
+            conn.commit()
+
+    def set_animal_deletion_status(
+        self, scope: str, user_id: Optional[str], animal_id: str, status: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE animal_deletions SET status=?
+                WHERE scope=? AND user_id=? AND animal_id=?
+                """,
+                (status, scope, user_id or "", animal_id),
+            )
+            conn.commit()
+
+    def clear_child_deletions_for_animal(
+        self, scope: str, user_id: Optional[str], animal_id: str
+    ) -> None:
+        with self._connect() as conn:
+            if scope == "processed":
+                conn.execute(
+                    "DELETE FROM kill_list WHERE scope=? AND animal_id=? AND marked_by=?",
+                    (scope, animal_id, user_id or ""),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM kill_list WHERE scope=? AND animal_id=?",
+                    (scope, animal_id),
+                )
+                conn.execute(
+                    "DELETE FROM deletion_blocks WHERE scope=? AND animal_id=?",
+                    (scope, animal_id),
+                )
+            conn.execute(
+                "DELETE FROM file_deletions WHERE scope=? AND animal_id=?",
+                (scope, animal_id),
+            )
+            conn.execute(
+                "DELETE FROM imaging_deletions WHERE scope=? AND user_id=? AND animal_id=?",
+                (scope, user_id or "", animal_id),
+            )
             conn.commit()
 
     # Deletion blocks (processed data conflicts)

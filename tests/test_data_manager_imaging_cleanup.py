@@ -64,6 +64,31 @@ class ImagingCleanupStoreTests(unittest.TestCase):
             store.clear_imaging_deletions_for_exp("raw", None, "ANIMAL", "EXP")
             self.assertFalse(store.load_imaging_deletions())
 
+    def test_whole_animal_request_replaces_child_requests(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = DataStore(Path(temp_dir) / "manager.db")
+            store.set_kill_flag("raw", "ANIMAL", "EXP", "tester")
+            store.replace_imaging_deletions(
+                "raw",
+                None,
+                "ANIMAL",
+                "EXP",
+                "tester",
+                [(Path(temp_dir) / "one.tif", "file")],
+            )
+
+            store.clear_child_deletions_for_animal("raw", None, "ANIMAL")
+            store.set_animal_deletion("raw", None, "ANIMAL", "tester")
+
+            self.assertFalse(store.load_kill_flags())
+            self.assertFalse(store.load_imaging_deletions())
+            row = store.load_animal_deletions()[("raw", "", "ANIMAL")]
+            self.assertEqual(row["status"], "pending")
+
+            store.set_animal_deletion_status("raw", None, "ANIMAL", "deleted")
+            row = store.load_animal_deletions()[("raw", "", "ANIMAL")]
+            self.assertEqual(row["status"], "deleted")
+
 
 if __name__ == "__main__":
     unittest.main()
