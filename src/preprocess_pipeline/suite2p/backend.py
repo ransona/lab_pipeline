@@ -1,7 +1,9 @@
+import inspect
 import logging
 import os
 import re
 import sys
+from importlib import metadata as importlib_metadata
 from typing import Optional
 
 import numpy as np
@@ -46,12 +48,37 @@ def ensure_suite2p_console_logging() -> None:
     s2p_logger.addHandler(handler)
 
 
+def _version_major(version_text: str) -> Optional[int]:
+    match = re.match(r"^\s*(\d+)(?:\.|$)", str(version_text))
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 def suite2p_version() -> str:
-    return str(getattr(suite2p, "version", getattr(suite2p, "__version__", "unknown")))
+    for attr in ("version", "__version__"):
+        value = getattr(suite2p, attr, None)
+        if value is None or callable(value):
+            continue
+        version_text = str(value).strip()
+        if _version_major(version_text) is not None:
+            return version_text
+    try:
+        return importlib_metadata.version("suite2p")
+    except importlib_metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def suite2p_has_settings_api() -> bool:
+    try:
+        signature = inspect.signature(suite2p.run_s2p)
+    except (TypeError, ValueError):
+        return False
+    return "settings" in signature.parameters
 
 
 def is_suite2p_1x() -> bool:
-    return suite2p_version().split(".", 1)[0] == "1"
+    return _version_major(suite2p_version()) == 1 or suite2p_has_settings_api()
 
 
 REQUIRED_1X_SETTINGS_SECTIONS = (
