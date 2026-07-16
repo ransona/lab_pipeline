@@ -5,6 +5,7 @@ Option Explicit
 
 Dim fso, shell, launcherDir, repoRoot, appPath, userProfile
 Dim pythonw, candidates, candidate, command, pythonDir, oldPath, activateBat, pythonExe
+Dim qtPluginRoot, qtPlatformRoot
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
@@ -45,8 +46,17 @@ End If
 pythonDir = fso.GetParentFolderName(pythonw)
 oldPath = shell.ExpandEnvironmentStrings("%PATH%")
 shell.Environment("PROCESS")("PATH") = pythonDir & ";" & pythonDir & "\Library\bin;" & pythonDir & "\Scripts;" & oldPath
-shell.Environment("PROCESS")("QT_PLUGIN_PATH") = pythonDir & "\Library\lib\qt6\plugins"
-shell.Environment("PROCESS")("QT_QPA_PLATFORM_PLUGIN_PATH") = pythonDir & "\Library\lib\qt6\plugins\platforms"
+qtPluginRoot = pythonDir & "\Lib\site-packages\PyQt6\Qt6\plugins"
+If Not fso.FolderExists(qtPluginRoot) Then
+    qtPluginRoot = pythonDir & "\Library\lib\qt6\plugins"
+End If
+If fso.FolderExists(qtPluginRoot) Then
+    shell.Environment("PROCESS")("QT_PLUGIN_PATH") = qtPluginRoot
+    qtPlatformRoot = qtPluginRoot & "\platforms"
+    If fso.FolderExists(qtPlatformRoot) Then
+        shell.Environment("PROCESS")("QT_QPA_PLATFORM_PLUGIN_PATH") = qtPlatformRoot
+    End If
+End If
 
 activateBat = fso.BuildPath(fso.GetParentFolderName(fso.GetParentFolderName(pythonDir)), "Scripts\activate.bat")
 pythonExe = fso.BuildPath(pythonDir, "python.exe")

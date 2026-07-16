@@ -9,6 +9,8 @@ for %%I in ("%LAUNCHER_DIR%..") do set "REPO_ROOT=%%~fI"
 set "APP_PATH=%REPO_ROOT%\apps\local_run.py"
 set "PYTHON_EXE="
 set "ACTIVATE_BAT="
+set "QT_PLUGIN_ROOT="
+set "QT_PLATFORM_ROOT="
 
 rem Edit this path if your conda installation is elsewhere.
 if exist "%USERPROFILE%\miniconda3\envs\lab_pipeline\python.exe" set "PYTHON_EXE=%USERPROFILE%\miniconda3\envs\lab_pipeline\python.exe"
@@ -25,8 +27,15 @@ if not defined PYTHON_EXE (
 
 for %%I in ("%PYTHON_EXE%") do set "PYTHON_DIR=%%~dpI"
 set "PATH=%PYTHON_DIR%;%PYTHON_DIR%Library\bin;%PYTHON_DIR%Scripts;%PATH%"
-set "QT_PLUGIN_PATH=%PYTHON_DIR%Library\lib\qt6\plugins"
-set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYTHON_DIR%Library\lib\qt6\plugins\platforms"
+if exist "%PYTHON_DIR%Lib\site-packages\PyQt6\Qt6\plugins" (
+    set "QT_PLUGIN_ROOT=%PYTHON_DIR%Lib\site-packages\PyQt6\Qt6\plugins"
+) else if exist "%PYTHON_DIR%Library\lib\qt6\plugins" (
+    set "QT_PLUGIN_ROOT=%PYTHON_DIR%Library\lib\qt6\plugins"
+)
+if defined QT_PLUGIN_ROOT (
+    set "QT_PLUGIN_PATH=%QT_PLUGIN_ROOT%"
+    if exist "%QT_PLUGIN_ROOT%\platforms" set "QT_QPA_PLATFORM_PLUGIN_PATH=%QT_PLUGIN_ROOT%\platforms"
+)
 if exist "%PYTHON_DIR%..\..\Scripts\activate.bat" set "ACTIVATE_BAT=%PYTHON_DIR%..\..\Scripts\activate.bat"
 
 if not exist "%APP_PATH%" (
