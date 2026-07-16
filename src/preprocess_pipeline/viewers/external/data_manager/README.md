@@ -152,6 +152,33 @@ per-user action logs.
    correct. The same procedure handles both raw and processed requests.
 8. Return to Data Manager and click `Refresh` to update the trees.
 
+### Remove only imaging data
+
+1. Select one or more experiment rows in either tree and press Space.
+2. To apply imaging-only cleanup to every visible experiment for an animal,
+   select the animal row, press Space, and confirm the prompt.
+3. A raw imaging request includes all `.tif` and `.tiff` files below the
+   selected experiment, but leaves the experiment folder and other raw files.
+4. A processed imaging request includes `suite2p`, `suite2p_combined`, `ch2`,
+   `P0`, `P1`, and `P2` directories, plus `recordings/s2p_*.pickle` and
+   `cut/s2p_*.pickle` files. Other processed outputs remain in place.
+5. Imaging-only requests are crossed out and labelled `(imaging)`. Press Space
+   again to unmark them.
+6. Review the targets in `View delete list`, then run `delete_runner.py` using
+   the same terminal command shown above.
+
+### Watch tagging in the Debug window
+
+1. Click `Debug` before marking or unmarking deletion requests.
+2. Leave the non-modal Debug window open while using the main Data Manager
+   window.
+3. Full experiments, whole animals, imaging targets, and individual files are
+   appended to the multiline output as they are tagged. The view scrolls to the
+   newest entry automatically.
+4. Debug messages are shown only while the Debug window is open. Click
+   `Delete output` to clear the displayed messages without changing any
+   deletion requests.
+
 ## Deletion request states
 
 Folder-level deletion requests live in `kill_list`:
