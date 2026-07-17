@@ -1376,8 +1376,20 @@ class StandardConfigWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self._config_files: list[str] = []
         self._config_dir: Optional[Path] = None
+        self.nchannels = 1
         layout = QtWidgets.QFormLayout(self)
-        self.same_for_both = QtWidgets.QCheckBox("Use same config for both channels")
+        self.process_ch1 = QtWidgets.QCheckBox("Process channel 1")
+        self.process_ch1.setChecked(True)
+        self.process_ch2 = QtWidgets.QCheckBox("Process channel 2")
+        self.process_ch2.setChecked(True)
+        channel_choices = QtWidgets.QWidget()
+        channel_choices_layout = QtWidgets.QHBoxLayout(channel_choices)
+        channel_choices_layout.setContentsMargins(0, 0, 0, 0)
+        channel_choices_layout.addWidget(self.process_ch1)
+        channel_choices_layout.addWidget(self.process_ch2)
+        channel_choices_layout.addStretch(1)
+        self.channel_choices = channel_choices
+        self.same_for_both = QtWidgets.QCheckBox("Use channel 1 config for channel 2")
         self.same_for_both.setChecked(True)
         self.register_with_summed_channel = QtWidgets.QCheckBox("Register with averaged channels")
         self.register_with_summed_channel.setChecked(False)
@@ -1391,8 +1403,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         self.ch2_func_combo = QtWidgets.QComboBox()
         self.ch2_func_combo.addItems(["1", "2", "3", "4"])
         self.ch2_func_combo.setCurrentText("2")
-        ch1_row = QtWidgets.QWidget()
-        ch1_layout = QtWidgets.QVBoxLayout(ch1_row)
+        self.ch1_row = QtWidgets.QWidget()
+        ch1_layout = QtWidgets.QVBoxLayout(self.ch1_row)
         ch1_layout.setContentsMargins(0, 0, 0, 0)
         ch1_layout.addWidget(QtWidgets.QLabel("Channel 1 config"))
         ch1_layout.addWidget(self.ch1_combo)
@@ -1413,11 +1425,14 @@ class StandardConfigWidget(QtWidgets.QWidget):
         ch2_controls.addWidget(self.ch2_func_combo)
         ch2_controls.addStretch(1)
         ch2_layout.addLayout(ch2_controls)
+        layout.addRow(self.channel_choices)
         layout.addRow(self.same_for_both)
         layout.addRow(self.register_with_summed_channel)
-        layout.addRow(ch1_row)
+        layout.addRow(self.ch1_row)
         layout.addRow(self.ch2_row)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.process_ch1.toggled.connect(self._sync_channel_mode)
+        self.process_ch2.toggled.connect(self._sync_channel_mode)
         self.ch1_combo.configChanged.connect(self.configChanged.emit)
         self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
@@ -1433,21 +1448,34 @@ class StandardConfigWidget(QtWidgets.QWidget):
             combo.set_value(current)
 
     def set_channel_count(self, nchannels: int):
+        self.nchannels = int(nchannels)
         dual = nchannels >= 2
+        self.channel_choices.setVisible(dual)
         self.same_for_both.setVisible(dual)
         self.register_with_summed_channel.setVisible(dual)
         self.register_with_summed_channel.setEnabled(dual)
         if not dual:
+            self.process_ch1.setChecked(True)
+            self.process_ch2.setChecked(False)
             self.same_for_both.setChecked(True)
             self.register_with_summed_channel.setChecked(False)
             self.ch1_chan2_detection_combo.setCurrentText("off")
-        self.ch2_row.setVisible(dual)
+        elif not self.process_ch1.isChecked() and not self.process_ch2.isChecked():
+            self.process_ch1.setChecked(True)
         self.ch1_chan2_detection_combo.setEnabled(dual)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
-        use_same = self.same_for_both.isChecked()
-        self.ch2_combo.setEnabled(not use_same and self.ch2_combo.isVisible())
+        dual = self.nchannels >= 2
+        process_ch1 = self.process_ch1.isChecked() or not dual
+        process_ch2 = self.process_ch2.isChecked() and dual
+        both = process_ch1 and process_ch2
+        self.ch1_row.setVisible(process_ch1)
+        self.ch2_row.setVisible(process_ch2)
+        self.same_for_both.setVisible(dual and both)
+        self.same_for_both.setEnabled(both)
+        use_same = both and self.same_for_both.isChecked()
+        self.ch2_combo.setEnabled(process_ch2 and not use_same)
 
     def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
         return {
@@ -1457,28 +1485,34 @@ class StandardConfigWidget(QtWidgets.QWidget):
         }
 
     def config_value(self, nchannels: int):
-        ch1 = self.ch1_combo.value()
-        if not ch1:
-            raise ValueError("Channel 1 Suite2p config is required.")
-        ch1_entry = self._config_entry(
-            ch1,
-            int(self.ch1_func_combo.currentText()),
-            self.ch1_chan2_detection_combo.currentText(),
-        )
         if nchannels < 2:
-            return ch1_entry
-        ch2_functional_chan = int(self.ch2_func_combo.currentText())
-        if self.same_for_both.isChecked():
-            return [
-                ch1_entry,
-                self._config_entry(ch1, ch2_functional_chan),
-            ]
-        ch2 = self.ch2_combo.value()
-        if not ch2:
-            raise ValueError("Channel 2 Suite2p config is required for dual-channel runs.")
-        return [ch1_entry, self._config_entry(ch2, ch2_functional_chan)]
+            selected_channels = (True, False)
+        else:
+            selected_channels = (self.process_ch1.isChecked(), self.process_ch2.isChecked())
+        if not any(selected_channels):
+            raise ValueError("Select at least one channel to process.")
+
+        entries = []
+        ch1 = self.ch1_combo.value()
+        if selected_channels[0]:
+            if not ch1:
+                raise ValueError("Channel 1 Suite2p config is required.")
+            entries.append(self._config_entry(
+                ch1,
+                int(self.ch1_func_combo.currentText()),
+                self.ch1_chan2_detection_combo.currentText(),
+            ))
+        if selected_channels[1]:
+            use_ch1 = selected_channels[0] and self.same_for_both.isChecked()
+            ch2 = ch1 if use_ch1 else self.ch2_combo.value()
+            if not ch2:
+                raise ValueError("Channel 2 Suite2p config is required.")
+            entries.append(self._config_entry(ch2, int(self.ch2_func_combo.currentText())))
+        return entries if len(entries) > 1 else entries[0]
 
     def apply_preset(self, preset: dict, nchannels: int):
+        self.process_ch1.setChecked(preset.get("process_ch1", True))
+        self.process_ch2.setChecked(preset.get("process_ch2", True))
         self.same_for_both.setChecked(preset.get("same_for_both", True))
         self.register_with_summed_channel.setChecked(preset.get("register_with_summed_channel", False))
         self.ch1_combo.set_value(preset.get("ch1", ""))
@@ -1490,6 +1524,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
 
     def preset_state(self) -> dict:
         return {
+            "process_ch1": self.process_ch1.isChecked(),
+            "process_ch2": self.process_ch2.isChecked(),
             "same_for_both": self.same_for_both.isChecked(),
             "register_with_summed_channel": self.register_with_summed_channel.isChecked(),
             "ch1": self.ch1_combo.value(),
@@ -1524,6 +1560,15 @@ class PathConfigRow(QtWidgets.QWidget):
         font.setBold(True)
         title.setFont(font)
         layout.addWidget(title)
+        self.process_ch1 = QtWidgets.QCheckBox("Process channel 1")
+        self.process_ch1.setChecked(True)
+        self.process_ch2 = QtWidgets.QCheckBox("Process channel 2")
+        self.process_ch2.setChecked(True)
+        channel_choices = QtWidgets.QHBoxLayout()
+        channel_choices.addWidget(self.process_ch1)
+        channel_choices.addWidget(self.process_ch2)
+        channel_choices.addStretch(1)
+        layout.addLayout(channel_choices)
         self.ch1_combo = Suite2pConfigSelector()
         self.ch1_combo.set_config_dir(config_dir)
         self.ch1_combo.addItems(config_files)
@@ -1531,16 +1576,19 @@ class PathConfigRow(QtWidgets.QWidget):
         self.ch1_func_combo.addItems(["1", "2", "3", "4"])
         self.ch1_chan2_detection_combo = QtWidgets.QComboBox()
         self.ch1_chan2_detection_combo.addItems(["off", "intensity", "cellpose"])
-        layout.addWidget(QtWidgets.QLabel("Channel 1 config"))
+        self.ch1_label = QtWidgets.QLabel("Channel 1 config")
+        layout.addWidget(self.ch1_label)
         layout.addWidget(self.ch1_combo)
-        ch1_controls = QtWidgets.QHBoxLayout()
+        self.ch1_controls_widget = QtWidgets.QWidget()
+        ch1_controls = QtWidgets.QHBoxLayout(self.ch1_controls_widget)
+        ch1_controls.setContentsMargins(0, 0, 0, 0)
         ch1_controls.addWidget(QtWidgets.QLabel("Functional ch"))
         ch1_controls.addWidget(self.ch1_func_combo)
         ch1_controls.addWidget(QtWidgets.QLabel("Chan2 detection"))
         ch1_controls.addWidget(self.ch1_chan2_detection_combo)
         ch1_controls.addStretch(1)
-        layout.addLayout(ch1_controls)
-        self.same_for_both = QtWidgets.QCheckBox("Same for ch2")
+        layout.addWidget(self.ch1_controls_widget)
+        self.same_for_both = QtWidgets.QCheckBox("Use channel 1 config for channel 2")
         self.same_for_both.setChecked(True)
         layout.addWidget(self.same_for_both)
         self.ch2_combo = Suite2pConfigSelector()
@@ -1552,24 +1600,40 @@ class PathConfigRow(QtWidgets.QWidget):
         self.ch2_label = QtWidgets.QLabel("Channel 2 config")
         layout.addWidget(self.ch2_label)
         layout.addWidget(self.ch2_combo)
-        ch2_controls = QtWidgets.QHBoxLayout()
+        self.ch2_controls_widget = QtWidgets.QWidget()
+        ch2_controls = QtWidgets.QHBoxLayout(self.ch2_controls_widget)
+        ch2_controls.setContentsMargins(0, 0, 0, 0)
         self.ch2_func_label = QtWidgets.QLabel("Functional ch")
         ch2_controls.addWidget(self.ch2_func_label)
         ch2_controls.addWidget(self.ch2_func_combo)
         ch2_controls.addStretch(1)
-        layout.addLayout(ch2_controls)
+        layout.addWidget(self.ch2_controls_widget)
+        self.process_ch1.setVisible(nchannels >= 2)
+        self.process_ch2.setVisible(nchannels >= 2)
         self.ch2_combo.setVisible(nchannels >= 2)
         self.ch2_label.setVisible(nchannels >= 2)
         self.ch2_func_label.setVisible(nchannels >= 2)
         self.ch2_func_combo.setVisible(nchannels >= 2)
         self.same_for_both.setVisible(nchannels >= 2)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
+        self.process_ch1.toggled.connect(self._sync_channel_mode)
+        self.process_ch2.toggled.connect(self._sync_channel_mode)
         self.ch1_combo.configChanged.connect(self.configChanged.emit)
         self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
 
     def _sync_channel_mode(self):
-        self.ch2_combo.setEnabled(not self.same_for_both.isChecked() and self.ch2_combo.isVisible())
+        dual = self.nchannels >= 2
+        process_ch1 = self.process_ch1.isChecked() or not dual
+        process_ch2 = self.process_ch2.isChecked() and dual
+        both = process_ch1 and process_ch2
+        for widget in (self.ch1_label, self.ch1_combo, self.ch1_controls_widget):
+            widget.setVisible(process_ch1)
+        for widget in (self.ch2_label, self.ch2_combo, self.ch2_controls_widget):
+            widget.setVisible(process_ch2)
+        self.same_for_both.setVisible(dual and both)
+        self.same_for_both.setEnabled(both)
+        self.ch2_combo.setEnabled(process_ch2 and not (both and self.same_for_both.isChecked()))
 
     def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
         return {
@@ -1579,39 +1643,52 @@ class PathConfigRow(QtWidgets.QWidget):
         }
 
     def config_value(self):
-        ch1 = self.ch1_combo.value()
-        if not ch1:
-            raise ValueError(f"{self.path_name}: channel 1 config is required.")
-        ch1_entry = self._config_entry(
-            ch1,
-            int(self.ch1_func_combo.currentText()),
-            self.ch1_chan2_detection_combo.currentText(),
-        )
         if self.nchannels < 2:
-            return ch1_entry
-        ch2_functional_chan = int(self.ch2_func_combo.currentText())
-        if self.same_for_both.isChecked():
-            return [ch1_entry, self._config_entry(ch1, ch2_functional_chan)]
-        ch2 = self.ch2_combo.value()
-        if not ch2:
-            raise ValueError(f"{self.path_name}: channel 2 config is required.")
-        return [ch1_entry, self._config_entry(ch2, ch2_functional_chan)]
+            selected_channels = (True, False)
+        else:
+            selected_channels = (self.process_ch1.isChecked(), self.process_ch2.isChecked())
+        if not any(selected_channels):
+            raise ValueError(f"{self.path_name}: select at least one channel to process.")
+
+        entries = []
+        ch1 = self.ch1_combo.value()
+        if selected_channels[0]:
+            if not ch1:
+                raise ValueError(f"{self.path_name}: channel 1 config is required.")
+            entries.append(self._config_entry(
+                ch1,
+                int(self.ch1_func_combo.currentText()),
+                self.ch1_chan2_detection_combo.currentText(),
+            ))
+        if selected_channels[1]:
+            use_ch1 = selected_channels[0] and self.same_for_both.isChecked()
+            ch2 = ch1 if use_ch1 else self.ch2_combo.value()
+            if not ch2:
+                raise ValueError(f"{self.path_name}: channel 2 config is required.")
+            entries.append(self._config_entry(ch2, int(self.ch2_func_combo.currentText())))
+        return entries if len(entries) > 1 else entries[0]
 
     def apply_value(self, value):
         if isinstance(value, dict):
             same_for_both = value.get("same_for_both", True)
             if "config" in value or "path" in value:
+                process_ch1 = True
+                process_ch2 = False
                 ch1 = value.get("config") or value.get("path") or ""
                 ch2 = ch1
                 ch1_functional_chan = value.get("functional_chan", 1)
                 ch2_functional_chan = 2
                 ch1_chan2_detection = value.get("chan2_detection", "off")
             else:
+                process_ch1 = value.get("process_ch1", True)
+                process_ch2 = value.get("process_ch2", True)
                 ch1 = value.get("ch1", "") or ""
                 ch2 = value.get("ch2", ch1) or ch1
                 ch1_functional_chan = value.get("ch1_functional_chan", 1)
                 ch2_functional_chan = value.get("ch2_functional_chan", 2)
                 ch1_chan2_detection = value.get("ch1_chan2_detection", "off")
+            self.process_ch1.setChecked(bool(process_ch1))
+            self.process_ch2.setChecked(bool(process_ch2))
             self.same_for_both.setChecked(bool(same_for_both))
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
@@ -1621,6 +1698,8 @@ class PathConfigRow(QtWidgets.QWidget):
             self._sync_channel_mode()
             return
         if isinstance(value, (list, tuple)):
+            self.process_ch1.setChecked(True)
+            self.process_ch2.setChecked(len(value) > 1)
             first = value[0] if value else ""
             second = value[1] if len(value) > 1 else first
             ch1 = first.get("config", first.get("path", "")) if isinstance(first, dict) else first
@@ -1636,6 +1715,8 @@ class PathConfigRow(QtWidgets.QWidget):
             self.ch1_chan2_detection_combo.setCurrentText(str(ch1_chan2_detection))
             self._sync_channel_mode()
         else:
+            self.process_ch1.setChecked(True)
+            self.process_ch2.setChecked(False)
             self.same_for_both.setChecked(True)
             self.ch1_combo.set_value(value or "")
             self.ch2_combo.set_value(value or "")
@@ -1646,6 +1727,8 @@ class PathConfigRow(QtWidgets.QWidget):
 
     def preset_state(self):
         return {
+            "process_ch1": self.process_ch1.isChecked(),
+            "process_ch2": self.process_ch2.isChecked(),
             "same_for_both": self.same_for_both.isChecked(),
             "ch1": self.ch1_combo.value(),
             "ch2": self.ch2_combo.value(),
@@ -1775,8 +1858,18 @@ class Step1Tab(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
 
         toolbar = QtWidgets.QHBoxLayout()
-        self.clear_button = QtWidgets.QPushButton("Clear")
+        self.clear_button = QtWidgets.QPushButton("Clear config")
         self.submit_button = QtWidgets.QPushButton("Submit Step 1 Job")
+        self.clear_button.setStyleSheet(
+            "QPushButton { background-color: #f8d7da; color: #842029; "
+            "border: 1px solid #f1aeb5; border-radius: 4px; padding: 5px 10px; }"
+            "QPushButton:hover { background-color: #f1aeb5; }"
+        )
+        self.submit_button.setStyleSheet(
+            "QPushButton { background-color: #d1e7dd; color: #0f5132; "
+            "border: 1px solid #a3cfbb; border-radius: 4px; padding: 5px 10px; }"
+            "QPushButton:hover { background-color: #a3cfbb; }"
+        )
         toolbar.addStretch(1)
         toolbar.addWidget(self.clear_button)
         toolbar.addWidget(self.submit_button)
