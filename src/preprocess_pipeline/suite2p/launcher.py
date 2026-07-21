@@ -674,6 +674,23 @@ def restore_registration_runtime_keys(ops, registration_ops):
     return ops
 
 
+def restore_chan2_viewing_metadata(ops, registration_ops, chan2_detection, paired_channel_available):
+    """Restore channel-2 mean images after detection without re-enabling classification.
+
+    Suite2p 1.x uses the presence of ``meanImg_chan2`` in registration outputs
+    as the trigger for channel-2/red-cell detection.  The field must therefore
+    be absent while detection runs when channel-2 classification is disabled.
+    It is safe and useful to put the image back into the final ``ops.npy`` for
+    GUI viewing, provided it remains absent from ``reg_outputs.npy``.
+    """
+    if normalize_chan2_detection_mode(chan2_detection) != "off" or not paired_channel_available:
+        return ops
+    for key in ("meanImg_chan2", "meanImg_chan2_corrected"):
+        if key in registration_ops:
+            ops[key] = registration_ops[key]
+    return ops
+
+
 def registration_outputs_from_ops(ops):
     """Build the reg_outputs.npy payload from registration keys preserved in ops.npy."""
     return {key: ops[key] for key in REGISTRATION_RUNTIME_KEYS if key in ops}
@@ -1038,6 +1055,12 @@ def run_extraction_stage(
             if not (is_no_usable_roi_exception(exc) or is_suite2p_mask_footprint_exception(exc)):
                 raise
             print(f"No usable ROIs detected for {plane_save_dir}; writing empty placeholder outputs.")
+            restore_chan2_viewing_metadata(
+                plane_ops,
+                registration_ops,
+                chan2_detection,
+                paired_channel_available,
+            )
             write_empty_detection_outputs(plane_save_dir, plane_ops)
             continue
 
@@ -1066,6 +1089,12 @@ def run_extraction_stage(
                 extra_path = os.path.join(plane_save_dir, filename)
                 if os.path.exists(extra_path):
                     os.remove(extra_path)
+        restore_chan2_viewing_metadata(
+            plane_ops,
+            registration_ops,
+            chan2_detection,
+            paired_channel_available,
+        )
         save_registration_outputs_for_plane(plane_save_dir, plane_ops)
         suite2p_npy.save_object_npy(plane_ops["ops_path"], plane_ops)
 
