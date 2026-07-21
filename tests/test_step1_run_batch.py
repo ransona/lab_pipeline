@@ -5,6 +5,19 @@ from preprocess_pipeline.step1 import run_batch
 
 
 class Step1RunBatchFilenameTests(unittest.TestCase):
+    def test_binary_removal_choices_are_preserved_in_normalized_config(self):
+        normalized = run_batch._normalize_config_entry(
+            {
+                "config": "settings.npy",
+                "functional_chan": 1,
+                "remove_ch1_bins": False,
+                "remove_ch2_bins": True,
+            }
+        )
+
+        self.assertFalse(normalized["remove_ch1_bins"])
+        self.assertTrue(normalized["remove_ch2_bins"])
+
     def test_combined_s2p_filename_cannot_collide_with_first_experiment_job(self):
         now = datetime(2026, 6, 26, 21, 55, 55)
         combined = run_batch._combined_s2p_command_filename(

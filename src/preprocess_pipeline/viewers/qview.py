@@ -1382,11 +1382,17 @@ class StandardConfigWidget(QtWidgets.QWidget):
         self.process_ch1.setChecked(True)
         self.process_ch2 = QtWidgets.QCheckBox("Process channel 2")
         self.process_ch2.setChecked(True)
+        self.remove_ch1_bins = QtWidgets.QCheckBox("Remove ch1 bins after processing")
+        self.remove_ch1_bins.setChecked(False)
+        self.remove_ch2_bins = QtWidgets.QCheckBox("Remove ch2 bins after processing")
+        self.remove_ch2_bins.setChecked(False)
         channel_choices = QtWidgets.QWidget()
         channel_choices_layout = QtWidgets.QHBoxLayout(channel_choices)
         channel_choices_layout.setContentsMargins(0, 0, 0, 0)
         channel_choices_layout.addWidget(self.process_ch1)
+        channel_choices_layout.addWidget(self.remove_ch1_bins)
         channel_choices_layout.addWidget(self.process_ch2)
+        channel_choices_layout.addWidget(self.remove_ch2_bins)
         channel_choices_layout.addStretch(1)
         self.channel_choices = channel_choices
         self.same_for_both = QtWidgets.QCheckBox("Use channel 1 config for channel 2")
@@ -1431,8 +1437,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         layout.addRow(self.ch1_row)
         layout.addRow(self.ch2_row)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
-        self.process_ch1.toggled.connect(self._sync_channel_mode)
-        self.process_ch2.toggled.connect(self._sync_channel_mode)
+        self.process_ch1.toggled.connect(self._process_ch1_toggled)
+        self.process_ch2.toggled.connect(self._process_ch2_toggled)
         self.ch1_combo.configChanged.connect(self.configChanged.emit)
         self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
@@ -1477,12 +1483,24 @@ class StandardConfigWidget(QtWidgets.QWidget):
         use_same = both and self.same_for_both.isChecked()
         self.ch2_combo.setEnabled(process_ch2 and not use_same)
 
+    def _process_ch1_toggled(self, checked: bool):
+        self.remove_ch1_bins.setChecked(not checked)
+        self._sync_channel_mode()
+
+    def _process_ch2_toggled(self, checked: bool):
+        self.remove_ch2_bins.setChecked(not checked)
+        self._sync_channel_mode()
+
     def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
-        return {
+        entry = {
             "config": config_name,
             "functional_chan": int(functional_chan),
             "chan2_detection": chan2_detection,
         }
+        if self.nchannels >= 2:
+            entry["remove_ch1_bins"] = self.remove_ch1_bins.isChecked()
+            entry["remove_ch2_bins"] = self.remove_ch2_bins.isChecked()
+        return entry
 
     def config_value(self, nchannels: int):
         if nchannels < 2:
@@ -1511,8 +1529,12 @@ class StandardConfigWidget(QtWidgets.QWidget):
         return entries if len(entries) > 1 else entries[0]
 
     def apply_preset(self, preset: dict, nchannels: int):
-        self.process_ch1.setChecked(preset.get("process_ch1", True))
-        self.process_ch2.setChecked(preset.get("process_ch2", True))
+        process_ch1 = preset.get("process_ch1", True)
+        process_ch2 = preset.get("process_ch2", True)
+        self.process_ch1.setChecked(process_ch1)
+        self.process_ch2.setChecked(process_ch2)
+        self.remove_ch1_bins.setChecked(preset.get("remove_ch1_bins", not process_ch1))
+        self.remove_ch2_bins.setChecked(preset.get("remove_ch2_bins", not process_ch2))
         self.same_for_both.setChecked(preset.get("same_for_both", True))
         self.register_with_summed_channel.setChecked(preset.get("register_with_summed_channel", False))
         self.ch1_combo.set_value(preset.get("ch1", ""))
@@ -1526,6 +1548,8 @@ class StandardConfigWidget(QtWidgets.QWidget):
         return {
             "process_ch1": self.process_ch1.isChecked(),
             "process_ch2": self.process_ch2.isChecked(),
+            "remove_ch1_bins": self.remove_ch1_bins.isChecked(),
+            "remove_ch2_bins": self.remove_ch2_bins.isChecked(),
             "same_for_both": self.same_for_both.isChecked(),
             "register_with_summed_channel": self.register_with_summed_channel.isChecked(),
             "ch1": self.ch1_combo.value(),
@@ -1564,9 +1588,15 @@ class PathConfigRow(QtWidgets.QWidget):
         self.process_ch1.setChecked(True)
         self.process_ch2 = QtWidgets.QCheckBox("Process channel 2")
         self.process_ch2.setChecked(True)
+        self.remove_ch1_bins = QtWidgets.QCheckBox("Remove ch1 bins after processing")
+        self.remove_ch1_bins.setChecked(False)
+        self.remove_ch2_bins = QtWidgets.QCheckBox("Remove ch2 bins after processing")
+        self.remove_ch2_bins.setChecked(False)
         channel_choices = QtWidgets.QHBoxLayout()
         channel_choices.addWidget(self.process_ch1)
+        channel_choices.addWidget(self.remove_ch1_bins)
         channel_choices.addWidget(self.process_ch2)
+        channel_choices.addWidget(self.remove_ch2_bins)
         channel_choices.addStretch(1)
         layout.addLayout(channel_choices)
         self.ch1_combo = Suite2pConfigSelector()
@@ -1610,14 +1640,16 @@ class PathConfigRow(QtWidgets.QWidget):
         layout.addWidget(self.ch2_controls_widget)
         self.process_ch1.setVisible(nchannels >= 2)
         self.process_ch2.setVisible(nchannels >= 2)
+        self.remove_ch1_bins.setVisible(nchannels >= 2)
+        self.remove_ch2_bins.setVisible(nchannels >= 2)
         self.ch2_combo.setVisible(nchannels >= 2)
         self.ch2_label.setVisible(nchannels >= 2)
         self.ch2_func_label.setVisible(nchannels >= 2)
         self.ch2_func_combo.setVisible(nchannels >= 2)
         self.same_for_both.setVisible(nchannels >= 2)
         self.same_for_both.toggled.connect(self._sync_channel_mode)
-        self.process_ch1.toggled.connect(self._sync_channel_mode)
-        self.process_ch2.toggled.connect(self._sync_channel_mode)
+        self.process_ch1.toggled.connect(self._process_ch1_toggled)
+        self.process_ch2.toggled.connect(self._process_ch2_toggled)
         self.ch1_combo.configChanged.connect(self.configChanged.emit)
         self.ch2_combo.configChanged.connect(self.configChanged.emit)
         self._sync_channel_mode()
@@ -1635,12 +1667,24 @@ class PathConfigRow(QtWidgets.QWidget):
         self.same_for_both.setEnabled(both)
         self.ch2_combo.setEnabled(process_ch2 and not (both and self.same_for_both.isChecked()))
 
+    def _process_ch1_toggled(self, checked: bool):
+        self.remove_ch1_bins.setChecked(not checked)
+        self._sync_channel_mode()
+
+    def _process_ch2_toggled(self, checked: bool):
+        self.remove_ch2_bins.setChecked(not checked)
+        self._sync_channel_mode()
+
     def _config_entry(self, config_name: str, functional_chan: int, chan2_detection: str = "off") -> dict:
-        return {
+        entry = {
             "config": config_name,
             "functional_chan": int(functional_chan),
             "chan2_detection": chan2_detection,
         }
+        if self.nchannels >= 2:
+            entry["remove_ch1_bins"] = self.remove_ch1_bins.isChecked()
+            entry["remove_ch2_bins"] = self.remove_ch2_bins.isChecked()
+        return entry
 
     def config_value(self):
         if self.nchannels < 2:
@@ -1674,6 +1718,8 @@ class PathConfigRow(QtWidgets.QWidget):
             if "config" in value or "path" in value:
                 process_ch1 = True
                 process_ch2 = False
+                remove_ch1_bins = value.get("remove_ch1_bins", False)
+                remove_ch2_bins = value.get("remove_ch2_bins", True)
                 ch1 = value.get("config") or value.get("path") or ""
                 ch2 = ch1
                 ch1_functional_chan = value.get("functional_chan", 1)
@@ -1682,6 +1728,8 @@ class PathConfigRow(QtWidgets.QWidget):
             else:
                 process_ch1 = value.get("process_ch1", True)
                 process_ch2 = value.get("process_ch2", True)
+                remove_ch1_bins = value.get("remove_ch1_bins", not process_ch1)
+                remove_ch2_bins = value.get("remove_ch2_bins", not process_ch2)
                 ch1 = value.get("ch1", "") or ""
                 ch2 = value.get("ch2", ch1) or ch1
                 ch1_functional_chan = value.get("ch1_functional_chan", 1)
@@ -1689,6 +1737,8 @@ class PathConfigRow(QtWidgets.QWidget):
                 ch1_chan2_detection = value.get("ch1_chan2_detection", "off")
             self.process_ch1.setChecked(bool(process_ch1))
             self.process_ch2.setChecked(bool(process_ch2))
+            self.remove_ch1_bins.setChecked(bool(remove_ch1_bins))
+            self.remove_ch2_bins.setChecked(bool(remove_ch2_bins))
             self.same_for_both.setChecked(bool(same_for_both))
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
@@ -1707,6 +1757,11 @@ class PathConfigRow(QtWidgets.QWidget):
             ch1_functional_chan = first.get("functional_chan", 1) if isinstance(first, dict) else 1
             ch2_functional_chan = second.get("functional_chan", 2) if isinstance(second, dict) else 2
             ch1_chan2_detection = first.get("chan2_detection", "off") if isinstance(first, dict) else "off"
+            metadata = first if isinstance(first, dict) else {}
+            self.remove_ch1_bins.setChecked(metadata.get("remove_ch1_bins", False))
+            self.remove_ch2_bins.setChecked(
+                metadata.get("remove_ch2_bins", len(value) <= 1)
+            )
             self.same_for_both.setChecked(ch1 == ch2)
             self.ch1_combo.set_value(ch1)
             self.ch2_combo.set_value(ch2)
@@ -1717,6 +1772,8 @@ class PathConfigRow(QtWidgets.QWidget):
         else:
             self.process_ch1.setChecked(True)
             self.process_ch2.setChecked(False)
+            self.remove_ch1_bins.setChecked(False)
+            self.remove_ch2_bins.setChecked(True)
             self.same_for_both.setChecked(True)
             self.ch1_combo.set_value(value or "")
             self.ch2_combo.set_value(value or "")
@@ -1729,6 +1786,8 @@ class PathConfigRow(QtWidgets.QWidget):
         return {
             "process_ch1": self.process_ch1.isChecked(),
             "process_ch2": self.process_ch2.isChecked(),
+            "remove_ch1_bins": self.remove_ch1_bins.isChecked(),
+            "remove_ch2_bins": self.remove_ch2_bins.isChecked(),
             "same_for_both": self.same_for_both.isChecked(),
             "ch1": self.ch1_combo.value(),
             "ch2": self.ch2_combo.value(),

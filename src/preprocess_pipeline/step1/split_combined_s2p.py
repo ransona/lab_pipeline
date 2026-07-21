@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 import shutil
 import traceback
 from datetime import datetime
@@ -235,6 +236,22 @@ def split_combined_channel(userID, split_root, channel_root):
                 Lx=int(plane_ops["Lx"]),
                 frames_to_copy=frames_in_exp,
             )
+            work_unit = split_suffix or "root"
+            remove_ch1_bins, remove_ch2_bins = requested_binary_removals(
+                exp_dir_processed2,
+                work_unit,
+            )
+            output_channel = split_output_channel(
+                exp_dir_processed2,
+                work_unit,
+                is_ch2,
+            )
+            remove_dest_bin = remove_ch2_bins if output_channel == 2 else remove_ch1_bins
+            if remove_dest_bin:
+                os.remove(dest_bin)
+                print(
+                    f"Removed requested channel {output_channel} split binary: {dest_bin}"
+                )
 
             split_ops = rewrite_ops_for_split(
                 plane_ops=plane_ops,
@@ -277,7 +294,13 @@ def split_combined_channel(userID, split_root, channel_root):
                     suite2p_flavor=suite2p_flavor,
                 )
 
-        combined_bins_to_delete.append(os.path.join(plane_dir, "data.bin"))
+        for binary_name in (
+            "data.bin",
+            "data_chan2.bin",
+            "data_raw.bin",
+            "data_raw_chan2.bin",
+        ):
+            combined_bins_to_delete.append(os.path.join(plane_dir, binary_name))
 
     for exp_id in exp_ids:
         (
@@ -522,6 +545,55 @@ def delete_combined_bins_after_success(bin_paths):
         print(f"Deleted original combined binary: {bin_path}")
     if deleted:
         print(f"Deleted {deleted} combined binary file(s), freeing {bytes_deleted} bytes.")
+
+
+def requested_binary_removals(exp_dir_processed, work_unit):
+    """Read per-work-unit binary cleanup choices saved with the Step 1 job."""
+    config_path = os.path.join(exp_dir_processed, "pipeline_config.pickle")
+    if not os.path.isfile(config_path):
+        return False, False
+    with open(config_path, "rb") as handle:
+        queued_command = pickle.load(handle)
+    plan = queued_command.get("config", {}).get("suite2p_plan", [])
+    for plan_item in plan:
+        if plan_item.get("work_unit") != work_unit:
+            continue
+        configs = plan_item.get("suite2p_configs", [])
+        return (
+            any(
+                isinstance(item, dict) and bool(item.get("remove_ch1_bins", False))
+                for item in configs
+            ),
+            any(
+                isinstance(item, dict) and bool(item.get("remove_ch2_bins", False))
+                for item in configs
+            ),
+        )
+    return False, False
+
+
+def split_output_channel(exp_dir_processed, work_unit, is_ch2_tree):
+    """Return the recorded channel represented by a split output tree."""
+    config_path = os.path.join(exp_dir_processed, "pipeline_config.pickle")
+    fallback = 2 if is_ch2_tree else 1
+    if not os.path.isfile(config_path):
+        return fallback
+    with open(config_path, "rb") as handle:
+        queued_command = pickle.load(handle)
+    plan = queued_command.get("config", {}).get("suite2p_plan", [])
+    for plan_item in plan:
+        if plan_item.get("work_unit") != work_unit:
+            continue
+        configs = plan_item.get("suite2p_configs", [])
+        config_index = 1 if is_ch2_tree else 0
+        if config_index >= len(configs):
+            return fallback
+        config_entry = configs[config_index]
+        if isinstance(config_entry, dict):
+            channel = int(config_entry.get("functional_chan", fallback))
+            return channel if channel in (1, 2) else fallback
+        return fallback
+    return fallback
 
 
 def audit_completed_split_with_combined_bins(userID, expID):

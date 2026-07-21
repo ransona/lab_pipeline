@@ -54,6 +54,8 @@ def _normalize_config_entry(config_entry, default_functional_chan=None):
             'config': config_name,
             'functional_chan': int(functional_chan),
             'chan2_detection': chan2_detection,
+            'remove_ch1_bins': bool(config_entry.get('remove_ch1_bins', False)),
+            'remove_ch2_bins': bool(config_entry.get('remove_ch2_bins', False)),
         }
     raise TypeError('suite2p config entries must be strings or dicts')
 

@@ -7,6 +7,26 @@ from preprocess_pipeline.step1 import runtime
 
 
 class Suite2pRuntimeCommandTests(unittest.TestCase):
+    def test_requested_binary_removal_is_passed_to_launcher(self):
+        command = runtime._suite2p_cmd_for_work_unit(
+            user_id="submitter",
+            exp_id="2026-01-01_01_TEST001",
+            tif_path="/data/raw/test",
+            output_path="/data/processed/test",
+            config_names=[
+                {
+                    "config": "settings.npy",
+                    "remove_ch1_bins": False,
+                    "remove_ch2_bins": True,
+                }
+            ],
+            queued_command={"config": {"suite2p_env": "suite2p_1.1.0"}},
+            work_unit_id="root",
+        )
+
+        self.assertNotIn("--remove-ch1-bins", command)
+        self.assertIn("--remove-ch2-bins", command)
+
     def test_requested_env_runs_as_listener_user(self):
         command = runtime._suite2p_cmd_for_work_unit(
             user_id="submitter",

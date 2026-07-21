@@ -519,6 +519,55 @@ def fix_binary_permissions(save_root):
                 os.chmod(path, mode | 0o020)
 
 
+def remove_requested_channel_binaries(
+    output_path,
+    functional_chans,
+    remove_ch1_bins=False,
+    remove_ch2_bins=False,
+):
+    """Remove selected recorded-channel binaries after a successful Suite2p run."""
+    requested_channels = {
+        channel
+        for channel, requested in ((1, remove_ch1_bins), (2, remove_ch2_bins))
+        if requested
+    }
+    if not requested_channels:
+        return []
+
+    primary_channel = int(functional_chans[0]) if functional_chans else 1
+    if primary_channel not in (1, 2):
+        primary_channel = 1
+    secondary_channel = int(functional_chans[1]) if len(functional_chans or []) > 1 else 2
+    if secondary_channel not in (1, 2):
+        secondary_channel = 2
+    alternate_primary_channel = 2 if primary_channel == 1 else 1
+    generic_names = {"data.bin", "data_raw.bin"}
+    alternate_names = {"data_chan2.bin", "data_raw_chan2.bin"}
+    removed = []
+
+    for dirpath, _, filenames in os.walk(output_path):
+        relative_parts = Path(dirpath).relative_to(output_path).parts
+        in_ch2_tree = "ch2" in relative_parts
+        for filename in filenames:
+            if filename in generic_names:
+                channel = secondary_channel if in_ch2_tree else primary_channel
+            elif filename in alternate_names:
+                channel = alternate_primary_channel
+            else:
+                continue
+            if channel not in requested_channels:
+                continue
+            binary_path = os.path.join(dirpath, filename)
+            os.remove(binary_path)
+            removed.append(binary_path)
+            print(f"Removed channel {channel} Suite2p binary: {binary_path}")
+
+    if requested_channels:
+        requested_text = ", ".join(f"ch{channel}" for channel in sorted(requested_channels))
+        print(f"Removed {len(removed)} requested Suite2p binary file(s) for {requested_text}")
+    return removed
+
+
 def clear_detection_outputs(save_root):
     """Remove extraction outputs while keeping canonical binaries in place."""
     suite2p_root = os.path.join(save_root, "suite2p")
@@ -1569,6 +1618,8 @@ def s2p_launcher_run(
     register_with_summed_channel=False,
     functional_chans=None,
     chan2_detection_modes=None,
+    remove_ch1_bins=False,
+    remove_ch2_bins=False,
 ):
     all_tif_paths = tif_path.split(",")
     print("tif_path = " + tif_path)
@@ -1601,6 +1652,31 @@ def s2p_launcher_run(
     print("chan2_detection = " + ",".join(chan2_detection_modes))
     cleanup_previous_suite2p_outputs(output_path)
 
+    def remove_requested_bins():
+        requested_ch1 = remove_ch1_bins
+        requested_ch2 = remove_ch2_bins
+        if len(all_tif_paths) > 1:
+            processed_channels = {int(channel) for channel in functional_chans if int(channel) in (1, 2)}
+            deferred_channels = {
+                channel
+                for channel, requested in ((1, requested_ch1), (2, requested_ch2))
+                if requested and channel in processed_channels
+            }
+            if deferred_channels:
+                deferred_text = ", ".join(f"ch{channel}" for channel in sorted(deferred_channels))
+                print(
+                    "Deferring requested binary removal for combined output "
+                    f"({deferred_text}) until the experiments are split."
+                )
+            requested_ch1 = requested_ch1 and 1 not in processed_channels
+            requested_ch2 = requested_ch2 and 2 not in processed_channels
+        remove_requested_channel_binaries(
+            output_path,
+            functional_chans,
+            remove_ch1_bins=requested_ch1,
+            remove_ch2_bins=requested_ch2,
+        )
+
     if srdtrans_config:
         run_srdtrans_suite2p(
             all_tif_paths,
@@ -1611,6 +1687,7 @@ def s2p_launcher_run(
             srdtrans_config,
             register_with_summed_channel=register_with_summed_channel,
         )
+        remove_requested_bins()
         return
 
     if len(config_paths) == 2:
@@ -1647,6 +1724,7 @@ def s2p_launcher_run(
         )
         run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
         finalize_dual_channel_binary_layout(output_path, ch2_root, nplanes, chan2_detection_modes[0])
+        remove_requested_bins()
         return
 
     primary_ops = load_ops_with_inferred_nplanes(
@@ -1671,9 +1749,11 @@ def s2p_launcher_run(
                 registration_ops=primary_ops,
             )
         run_extraction_stage(output_path, output_path, config_paths[0], nplanes, functional_chans[0], chan2_detection_modes[0])
+        remove_requested_bins()
         return
 
     run_single_config_suite2p(all_tif_paths, output_path, config_paths[0], functional_chans[0])
+    remove_requested_bins()
 
 
 def parse_csv_arg(value, cast=str):
@@ -1699,6 +1779,8 @@ def main():
         register_with_summed_channel = False
         functional_chans = None
         chan2_detection_modes = None
+        remove_ch1_bins = False
+        remove_ch2_bins = False
     else:
         userID = sys.argv[1]
         expID = sys.argv[2]
@@ -1707,6 +1789,8 @@ def main():
         register_with_summed_channel = False
         functional_chans = None
         chan2_detection_modes = None
+        remove_ch1_bins = False
+        remove_ch2_bins = False
         if len(sys.argv) >= 6:
             output_path = sys.argv[4]
             config_path = sys.argv[5]
@@ -1718,6 +1802,10 @@ def main():
         for extra_arg in extra_args:
             if extra_arg == "--register-with-summed-channel":
                 register_with_summed_channel = True
+            elif extra_arg == "--remove-ch1-bins":
+                remove_ch1_bins = True
+            elif extra_arg == "--remove-ch2-bins":
+                remove_ch2_bins = True
             elif extra_arg.startswith("--functional-chans="):
                 value = extra_arg.split("=", 1)[1]
                 functional_chans = parse_csv_arg(value, int)
@@ -1738,6 +1826,8 @@ def main():
         register_with_summed_channel=register_with_summed_channel,
         functional_chans=functional_chans,
         chan2_detection_modes=chan2_detection_modes,
+        remove_ch1_bins=remove_ch1_bins,
+        remove_ch2_bins=remove_ch2_bins,
     )
 
 

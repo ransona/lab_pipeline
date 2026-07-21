@@ -9,6 +9,55 @@ from preprocess_pipeline.suite2p import launcher
 
 
 class Channel2ViewingMetadataTests(unittest.TestCase):
+    def test_requested_channel_binaries_are_removed_across_output_trees(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir)
+            root_plane = output_root / "suite2p" / "plane0"
+            ch2_plane = output_root / "ch2" / "suite2p" / "plane0"
+            root_plane.mkdir(parents=True)
+            ch2_plane.mkdir(parents=True)
+            for path in (
+                root_plane / "data.bin",
+                root_plane / "data_raw.bin",
+                root_plane / "data_chan2.bin",
+                root_plane / "data_raw_chan2.bin",
+                ch2_plane / "data.bin",
+                ch2_plane / "data_raw.bin",
+            ):
+                path.touch()
+
+            removed = launcher.remove_requested_channel_binaries(
+                str(output_root),
+                functional_chans=[1, 2],
+                remove_ch2_bins=True,
+            )
+
+            self.assertEqual(len(removed), 4)
+            self.assertTrue((root_plane / "data.bin").exists())
+            self.assertTrue((root_plane / "data_raw.bin").exists())
+            self.assertFalse((root_plane / "data_chan2.bin").exists())
+            self.assertFalse((root_plane / "data_raw_chan2.bin").exists())
+            self.assertFalse((ch2_plane / "data.bin").exists())
+            self.assertFalse((ch2_plane / "data_raw.bin").exists())
+
+    def test_root_binary_channel_follows_single_functional_channel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plane_dir = Path(temp_dir) / "suite2p" / "plane0"
+            plane_dir.mkdir(parents=True)
+            functional_binary = plane_dir / "data.bin"
+            alternate_binary = plane_dir / "data_chan2.bin"
+            functional_binary.touch()
+            alternate_binary.touch()
+
+            launcher.remove_requested_channel_binaries(
+                temp_dir,
+                functional_chans=[2],
+                remove_ch1_bins=True,
+            )
+
+            self.assertTrue(functional_binary.exists())
+            self.assertFalse(alternate_binary.exists())
+
     def test_disabled_detection_hides_then_restores_mean_only_in_final_ops(self):
         mean_chan2 = np.arange(16, dtype=np.float32).reshape(4, 4)
         corrected = mean_chan2 + 1

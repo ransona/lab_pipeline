@@ -369,6 +369,16 @@ def _suite2p_cmd_for_work_unit(
         launcher_args.append(encode_srdtrans_config_arg(queued_command["config"]["srdtrans"]))
     if queued_command["config"].get("register_with_summed_channel", False):
         launcher_args.append("--register-with-summed-channel")
+    if any(
+        isinstance(config_entry, dict) and bool(config_entry.get("remove_ch1_bins", False))
+        for config_entry in config_names
+    ):
+        launcher_args.append("--remove-ch1-bins")
+    if any(
+        isinstance(config_entry, dict) and bool(config_entry.get("remove_ch2_bins", False))
+        for config_entry in config_names
+    ):
+        launcher_args.append("--remove-ch2-bins")
 
     if _is_local_mode_config(queued_command['config']) and os.name == 'nt':
         return [
