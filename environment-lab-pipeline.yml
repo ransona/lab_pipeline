@@ -16,7 +16,7 @@ dependencies:
   - tqdm
   - pytorch
   - torchvision
-  - pyqt>=6,<7
+  - pyqt6>=6,<7
   - pip
   - pip:
       - -e .
