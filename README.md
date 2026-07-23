@@ -20,18 +20,19 @@ conda env create -f environment-lab-pipeline.yml
 conda env update -n lab_pipeline -f environment-lab-pipeline.yml --prune
 ```
 
-The env uses Conda's PyQt/Qt packages. If a previous Windows install mixed pip
-`PyQt6`/`PyQt6-Qt6` with Conda Qt packages and `from PyQt6 import QtCore`
-fails, recreate the env rather than updating in place:
+The env uses Conda Forge's PyQt/Qt packages exclusively. If an existing install
+contains pip `PyQt6-Qt6`, or mixes `defaults` and `conda-forge` Qt packages,
+recreate the env rather than updating in place. `conda env update --prune` does
+not reliably remove pip-owned Qt runtime files:
 
 ```bash
 conda env remove -n lab_pipeline
 conda env create -f environment-lab-pipeline.yml
 ```
 
-On Linux only, if Qt reports a missing `xcb-cursor0`/`libxcb-cursor0`
-dependency when launching GUIs, install the platform package separately, for
-example:
+On Linux only, if a clean environment still reports a genuinely missing
+`xcb-cursor0`/`libxcb-cursor0` dependency when launching GUIs, install the
+platform package separately:
 
 ```bash
 conda install -n lab_pipeline -c conda-forge xcb-util-cursor
