@@ -116,6 +116,47 @@ class Step1RuntimeLocalPathTests(unittest.TestCase):
             self.assertTrue(copied.is_file())
             self.assertEqual(copied.read_text(encoding="utf-8"), "roi payload")
 
+    def test_direct_runtime_copies_selected_scanfield_for_each_scanpath(self):
+        exp_id = "2026-07-23_37_ESYB038"
+        animal_id = "ESYB038"
+        roi_name = f"{exp_id}_selectedScanfield.roi"
+
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            raw_root = root_path / "Local_Repository"
+            processed_root = root_path / "Local_Repository_Processed"
+            raw_exp = raw_root / animal_id / exp_id
+            raw_scanpath = raw_exp / "P1"
+            raw_roi = raw_scanpath / "R001"
+            raw_roi.mkdir(parents=True)
+            (raw_scanpath / roi_name).write_text("scanpath roi payload", encoding="utf-8")
+
+            queued_command = {
+                "config": {
+                    "local_raw_repository_root": str(raw_root),
+                    "local_processed_repository_root": str(processed_root),
+                    "runhabituate": False,
+                }
+            }
+
+            runtime.run_preprocess_step1_universal(
+                "local-test.pickle",
+                "scanimage",
+                exp_id,
+                False,
+                False,
+                False,
+                queued_command=queued_command,
+                queue_path=str(root_path / "_queue"),
+            )
+
+            copied = processed_root / animal_id / exp_id / "P1" / roi_name
+            self.assertTrue(copied.is_file())
+            self.assertEqual(
+                copied.read_text(encoding="utf-8"),
+                "scanpath roi payload",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

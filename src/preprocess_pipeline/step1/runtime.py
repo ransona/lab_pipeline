@@ -121,16 +121,36 @@ def _all_exp_ids(exp_id):
 
 def _copy_selected_scanfield_roi(user_id, exp_id, exp_dir_processed):
     roi_filename = f'{exp_id}_selectedScanfield.roi'
-    source_path = paths.raw_file_path(user_id, exp_id, roi_filename)
-    if not os.path.isfile(source_path):
-        return
+    relative_locations = [()]
+    relative_locations.extend((f'P{index}',) for index in range(10))
+    copied = []
 
-    destination_path = os.path.join(exp_dir_processed, roi_filename)
-    if os.path.abspath(source_path) == os.path.abspath(destination_path):
-        return
+    for relative_parts in relative_locations:
+        source_path = paths.raw_file_path(
+            user_id,
+            exp_id,
+            *relative_parts,
+            roi_filename,
+        )
+        if not os.path.isfile(source_path):
+            continue
 
-    shutil.copy2(source_path, destination_path)
-    print(f'Copied selected ScanImage ROI file to processed folder: {destination_path}')
+        destination_dir = os.path.join(exp_dir_processed, *relative_parts)
+        destination_path = os.path.join(destination_dir, roi_filename)
+        if os.path.abspath(source_path) == os.path.abspath(destination_path):
+            copied.append(destination_path)
+            continue
+
+        os.makedirs(destination_dir, exist_ok=True)
+        shutil.copy2(source_path, destination_path)
+        copied.append(destination_path)
+        print(f'Copied selected ScanImage ROI file to processed folder: {destination_path}')
+
+    if not copied:
+        print(
+            'Warning: selected ScanImage ROI file was not found at the experiment '
+            f'root or under P0-P9: {roi_filename}'
+        )
 
 
 def _write_pipeline_config_for_experiments(user_id, exp_ids, queued_command):
