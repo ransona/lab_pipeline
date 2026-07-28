@@ -523,6 +523,11 @@ Required SRDTrans fields:
 - `channels`: channels to denoise
 - `progress_interval`: optional patch-progress print interval; default is `1000`
 
+The denoising patch dimensions are always read from the selected model's
+`para.yaml`. Any legacy `patch_x` or `patch_t` values in a saved Step 1 config
+are ignored, preventing a configuration from constructing a network shape that
+does not match the trained checkpoint.
+
 Current caveat: the GUI SRDTrans JSON editor can still be left with an empty `"model": ""`. If `runsrdtrans=True`, make sure `model` is filled in before submitting the job. Otherwise Suite2p can complete the initial registration and then SRDTrans will fail with `ValueError: SRDTrans config requires model_root and model`.
 
 ## Step 2 Configs

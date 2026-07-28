@@ -49,7 +49,7 @@ DEFAULT_STEP2_SETTINGS = {
 }
 DEFAULT_SRDTRANS_STEP1_JSON = (
     '{"model_root": "/home/adamranson/data/srt_models", "model": "", '
-    '"patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", '
+    '"overlap_factor": 0.5, "gpu": "0", '
     '"channels": ["ch1"]}'
 )
 
@@ -2309,7 +2309,7 @@ class Step1Tab(QtWidgets.QWidget):
         self.srdtrans_json.setPlainText(
             payload.get(
                 "srdtrans_json",
-                '{"model_root": "/home/adamranson/data/srt_models", "model": "", "patch_x": 160, "patch_t": 160, "overlap_factor": 0.5, "gpu": "0", "channels": ["ch1"]}',
+                DEFAULT_SRDTRANS_STEP1_JSON,
             )
         )
 

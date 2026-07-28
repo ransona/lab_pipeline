@@ -63,10 +63,21 @@ def _normalize_config(config: Optional[dict]) -> dict:
     model = cfg.get("model")
     if not model_root or not model:
         raise ValueError("SRDTrans config requires model_root and model")
-    if "patch_x" not in cfg or "patch_t" not in cfg:
-        patch_x, patch_t = _load_model_patch_shape(Path(model_root), str(model))
-        cfg.setdefault("patch_x", patch_x)
-        cfg.setdefault("patch_t", patch_t)
+    patch_x, patch_t = _load_model_patch_shape(Path(model_root), str(model))
+    requested_patch_x = cfg.get("patch_x")
+    requested_patch_t = cfg.get("patch_t")
+    if (
+        requested_patch_x is not None
+        and int(requested_patch_x) != patch_x
+        or requested_patch_t is not None
+        and int(requested_patch_t) != patch_t
+    ):
+        print(
+            "Ignoring SRDTrans patch-size overrides; using the trained model's "
+            f"para.yaml values patch_x={patch_x}, patch_t={patch_t}"
+        )
+    cfg["patch_x"] = patch_x
+    cfg["patch_t"] = patch_t
     return cfg
 
 
