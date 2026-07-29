@@ -51,6 +51,40 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def _stage_binary_input(
+    source_bin: Path,
+    input_root: Path,
+    ops_path: Path,
+    binary_metadata: Optional[dict],
+) -> Path:
+    staged_bin = input_root / source_bin.name
+    _link_or_copy(source_bin, staged_bin)
+
+    if binary_metadata is not None:
+        if not isinstance(binary_metadata, dict):
+            raise TypeError("SRDTrans binary_metadata must be a dict")
+        ly = int(binary_metadata.get("Ly", 0))
+        lx = int(binary_metadata.get("Lx", 0))
+        dtype = str(binary_metadata.get("dtype", "int16"))
+        if ly <= 0 or lx <= 0:
+            raise ValueError(
+                f"Invalid SRDTrans binary metadata: Ly={ly}, Lx={lx}"
+            )
+        metadata_path = staged_bin.with_suffix(".json")
+        metadata_path.write_text(
+            json.dumps({"Ly": ly, "Lx": lx, "dtype": dtype}),
+            encoding="utf-8",
+        )
+        return staged_bin
+
+    if not ops_path.exists():
+        raise FileNotFoundError(
+            f"SRDTrans requires binary_metadata or ops.npy next to binary: {ops_path}"
+        )
+    shutil.copy2(ops_path, input_root / "ops.npy")
+    return staged_bin
+
+
 def _normalize_config(config: Optional[dict]) -> dict:
     cfg = dict(config or {})
     cfg.setdefault("env", "srdtrans")
@@ -123,8 +157,6 @@ def denoise_binary_inplace(plane_dir: str, input_filename: str, config: Optional
         raise FileNotFoundError(f"SRDTrans input binary not found: {source_bin}")
 
     ops_path = plane_path / "ops.npy"
-    if not ops_path.exists():
-        raise FileNotFoundError(f"SRDTrans requires ops.npy next to binary: {ops_path}")
 
     repo_root = Path(cfg["repo_root"])
     test_py = repo_root / "test.py"
@@ -137,10 +169,12 @@ def denoise_binary_inplace(plane_dir: str, input_filename: str, config: Optional
     input_root.mkdir(parents=True, exist_ok=True)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    staged_bin = input_root / input_filename
-    staged_ops = input_root / "ops.npy"
-    _link_or_copy(source_bin, staged_bin)
-    shutil.copy2(ops_path, staged_ops)
+    _stage_binary_input(
+        source_bin,
+        input_root,
+        ops_path,
+        cfg.get("binary_metadata"),
+    )
 
     cmd = [
         "/opt/scripts/conda-run.sh",

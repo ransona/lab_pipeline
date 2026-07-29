@@ -1177,16 +1177,30 @@ def _selected_binary_for_plane(canonical_plane_dir, source_channel, plane_save_d
 
 def _run_srdtrans_on_binary(plane_dir, input_filename, srdtrans_config):
     launcher = APP_ROOT / "srdtrans_launcher.py"
+    ops_path = os.path.join(plane_dir, "ops.npy")
+    ops = suite2p_npy.load_object_dict(ops_path)
+    binary_metadata = {
+        "Ly": int(ops["Ly"]),
+        "Lx": int(ops["Lx"]),
+        "dtype": "int16",
+    }
+    runtime_config = dict(srdtrans_config)
+    runtime_config["binary_metadata"] = binary_metadata
     cmd = [
         "/opt/scripts/conda-run.sh",
-        str(srdtrans_config.get("env", "srdtrans")),
+        str(runtime_config.get("env", "srdtrans")),
         "python",
         str(launcher),
         plane_dir,
         input_filename,
-        encode_srdtrans_config_arg(srdtrans_config),
+        encode_srdtrans_config_arg(runtime_config),
     ]
     print(f"** Running SRDTrans on {os.path.join(plane_dir, input_filename)}")
+    print(
+        "** Passing binary metadata without ops.npy: "
+        f"Ly={binary_metadata['Ly']}, Lx={binary_metadata['Lx']}, "
+        f"dtype={binary_metadata['dtype']}"
+    )
     subprocess.run(cmd, check=True)
 
 
