@@ -3189,6 +3189,17 @@ def _experiment_id_from_folder(path_text: str) -> str:
     raise ValueError(f"Selected folder does not look like an experiment folder: {path}")
 
 
+def _parse_experiment_ids(text: str) -> list[str]:
+    """Parse comma- or whitespace-separated experiment IDs, preserving order."""
+    exp_ids = []
+    seen = set()
+    for exp_id in re.split(r"[\s,]+", text.strip()):
+        if exp_id and exp_id not in seen:
+            exp_ids.append(exp_id)
+            seen.add(exp_id)
+    return exp_ids
+
+
 def _format_descriptor_payload(payload: dict) -> str:
     if payload.get("error"):
         return f"Metadata error:\n{payload['error']}"
@@ -3641,12 +3652,15 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             user_combo.setEditable(True)
             user_combo.addItems(_list_pipeline_users())
             user_combo.setCurrentText(getpass.getuser())
-            exp_edit = QtWidgets.QLineEdit()
-            exp_edit.setPlaceholderText("YYYY-MM-DD_NN_ANIMALID")
+            exp_edit = QtWidgets.QPlainTextEdit()
+            exp_edit.setPlaceholderText(
+                "Enter one or more experiment IDs separated by spaces, commas, or new lines"
+            )
+            exp_edit.setFixedHeight(exp_edit.fontMetrics().lineSpacing() * 6 + 16)
             notes_edit = QtWidgets.QPlainTextEdit()
             notes_edit.setMaximumHeight(90)
             layout.addRow("userID", user_combo)
-            layout.addRow("expID", exp_edit)
+            layout.addRow("expIDs", exp_edit)
             layout.addRow("notes", notes_edit)
             buttons = QtWidgets.QDialogButtonBox(
                 QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
@@ -3657,15 +3671,18 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
                 return
             user_id = user_combo.currentText().strip()
-            exp_id = exp_edit.text().strip()
-            if not user_id or not exp_id:
+            exp_ids = _parse_experiment_ids(exp_edit.toPlainText())
+            if not user_id or not exp_ids:
                 return
-            self.current_node_id = self.store.add_experiment(
-                self.selected_group_id(),
-                user_id,
-                exp_id,
-                notes_edit.toPlainText(),
-            )
+            group_id = self.selected_group_id()
+            notes = notes_edit.toPlainText()
+            for exp_id in exp_ids:
+                self.current_node_id = self.store.add_experiment(
+                    group_id,
+                    user_id,
+                    exp_id,
+                    notes,
+                )
             self.refresh_tree()
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Add Experiment", str(exc))
