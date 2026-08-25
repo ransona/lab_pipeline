@@ -2,11 +2,22 @@ import unittest
 from unittest import mock
 import sys
 
+import numpy as np
+
 sys.modules.setdefault("harp", mock.Mock())
 from preprocess_pipeline.behavior import preprocess_bv2
 
 
 class ConfirmationTests(unittest.TestCase):
+    def test_sample_times_has_exactly_one_timestamp_per_harp_sample(self):
+        sample_count = 1_024_553
+
+        timestamps = preprocess_bv2._sample_times(sample_count, 1000)
+
+        self.assertEqual(len(timestamps), sample_count)
+        self.assertEqual(timestamps[-1], (sample_count - 1) / 1000)
+        np.testing.assert_allclose(np.diff(timestamps[-10:]), 0.001)
+
     def test_uses_gui_confirmation_callback_when_provided(self):
         callback = mock.Mock(return_value=True)
 

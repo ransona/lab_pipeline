@@ -32,6 +32,11 @@ def _as_1d_float(array):
     return np.atleast_1d(np.squeeze(np.asarray(array, dtype=float)))
 
 
+def _sample_times(sample_count, sample_rate):
+    """Return exactly one timestamp per regularly sampled value."""
+    return np.arange(int(sample_count), dtype=float) / float(sample_rate)
+
+
 def _guess_missing_flip_times(reference_flips, target_flips):
     reference_flips = _as_1d_float(reference_flips)
     target_flips = _as_1d_float(target_flips)
@@ -701,7 +706,7 @@ def run_preprocess_bv2(
         raise Exception('Harp data file not found')
     
     harp_pd = data_read_np[:,0]
-    harp_time = np.arange(0, len(harp_pd)/1000, 1/1000)
+    harp_time = _sample_times(len(harp_pd), 1000)
 
     # /////////////// DETECTING TIMING PULSES ///////////////
 
