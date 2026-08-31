@@ -6,8 +6,7 @@ import pickle
 from datetime import datetime
 from preprocess_pipeline.shared import paths
 
-def preprocess_cam_run(userID, expID):
-    debug_mode = True
+def preprocess_cam_run(userID, expID, debug_mode=False):
     print('Starting preprocess_cam_run...')
     animalID, remote_repository_root, \
     processed_root, exp_dir_processed, \
@@ -150,7 +149,10 @@ def preprocess_cam_run(userID, expID):
             ax_corr.set_title('Distribution of correlations across offsets')
             ax_corr.legend()
             plt.tight_layout()
-            plt.show()
+            debug_figure = os.path.join(exp_dir_processed_recordings, 'eye_camera_phase_correlations.png')
+            fig_corr.savefig(debug_figure, dpi=150)
+            plt.close(fig_corr)
+            print(f'Saved eye-camera phase diagnostic to {debug_figure}')
     else:
         bestPhase = 100
         print(
