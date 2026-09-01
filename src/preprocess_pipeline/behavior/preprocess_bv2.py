@@ -811,7 +811,9 @@ def run_preprocess_bv2(
         harp_valid = True
 
     if filter_flips:
-        min_pulses_unfiltered = min(len(flip_times_bv_bv),len(flip_times_pd_tl),len(flip_times_harp))
+        min_pulses_unfiltered = min(
+            len(flip_times_bv_bv), len(flip_times_pd_tl), len(flip_times_bv_tl), len(flip_times_harp)
+        )
         raw_flip_times_pre_filter = {
             'tl_pd': _as_1d_float(flip_times_pd_tl),
             'tl_bv': _as_1d_float(flip_times_bv_tl),
@@ -830,7 +832,10 @@ def run_preprocess_bv2(
         else:
             print('All timing pulses equal ('+str(len(flip_times_pd_tl))+')')
         
-        pulse_time_diff_tl_bv_unfiltered = (flip_times_pd_tl[0:min_pulses_unfiltered]-flip_times_pd_tl[0])-(flip_times_bv_tl[0:min_pulses_unfiltered]-flip_times_bv_tl[0])
+        pulse_time_diff_tl_bv_unfiltered = (
+            (flip_times_pd_tl[:min_pulses_unfiltered] - flip_times_pd_tl[0])
+            - (flip_times_bv_tl[:min_pulses_unfiltered] - flip_times_bv_tl[0])
+        )
         # remove all pulses of < a certain width in tl/harp time
 
         # all_diff = np.diff(flip_times_pd_tl)
