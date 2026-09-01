@@ -26,16 +26,29 @@ def preprocess_cam_run(userID, expID, debug_mode=False):
     eye_meta_mat = paths.raw_file_path(userID, expID, expID + '_eyeMeta1.mat', exp_dir_raw=exp_dir_raw)
     eye_meta_pickle = paths.raw_file_path(userID, expID, expID + '_eyeMeta1.pickle', exp_dir_raw=exp_dir_raw)
     if os.path.isfile(eye_meta_mat):
-        # Load the MAT file
-        mat_contents = loadmat(eye_meta_mat)
-        eTrackData = mat_contents['eTrackData']
-        eye_frameTimes = eTrackData['frameTimes'][0][0][0] # in one row array
-        # eye_frameCount = eTrackData['frameCount'][0][0][0][0] # single number
+        try:
+            mat_contents = loadmat(eye_meta_mat)
+            eTrackData = mat_contents['eTrackData']
+            eye_frameTimes = eTrackData['frameTimes'][0][0][0]
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            print(f'Camera timestamping skipped: could not read eye metadata MAT file {eye_meta_mat}: {error}')
+            return False
     else:
-        # Load the pickle
-        pickle_contents = pickle.load(open(eye_meta_pickle, "rb"))
-        eye_frameTimes = np.array(pickle_contents['frame_times'])
+        if not os.path.isfile(eye_meta_pickle) or os.path.getsize(eye_meta_pickle) == 0:
+            print('Camera timestamping skipped: eye metadata pickle is missing or empty: ' + eye_meta_pickle)
+            return False
+        try:
+            with open(eye_meta_pickle, "rb") as handle:
+                pickle_contents = pickle.load(handle)
+            eye_frameTimes = np.array(pickle_contents['frame_times'])
+        except (EOFError, OSError, ValueError, KeyError, TypeError, pickle.UnpicklingError) as error:
+            print(f'Camera timestamping skipped: could not read eye metadata pickle {eye_meta_pickle}: {error}')
+            return False
         print('Number of frame times = ' + str(len(eye_frameTimes)))
+
+    if len(eye_frameTimes) == 0:
+        print('Camera timestamping skipped: eye metadata contains no frame times.')
+        return False
 
     # Find the index of the 'EyeCamera' channel in the Timeline data
     camIdx = np.where(np.isin(tl_chNames, 'EyeCamera'))[0][0]
@@ -199,6 +212,7 @@ def preprocess_cam_run(userID, expID, debug_mode=False):
     np.save(os.path.join(exp_dir_processed_recordings,'eye_frame_times.npy'),loggedFrameTimes)
 
     print('Done without errors')
+    return True
 
 # for debugging:
 def main():

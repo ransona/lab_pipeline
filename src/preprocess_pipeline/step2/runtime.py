@@ -20,6 +20,7 @@ from preprocess_pipeline.pupil import timestamp as preprocess_pupil_timestamp
 from preprocess_pipeline.suite2p import preprocess as preprocess_s2p
 
 def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_s2p_timestamp, run_ephys, run_dlc_timestamp, run_cuttraces, confirm_callback=None):
+    issues = []
     animalID, remote_repository_root, \
         processed_root, exp_dir_processed, \
             exp_dir_raw = paths.find_paths(userID, expID)
@@ -39,6 +40,7 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
             userID,
             expID,
             confirm_callback=confirm_callback,
+            issues=issues,
         )
         
 
@@ -61,8 +63,11 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         # Process DLC data (timestamping)
         ###########################################################
         print('** Starting dlc timestamp section...')
-        preprocess_cam.preprocess_cam_run(userID, expID)
-        preprocess_pupil_timestamp.preprocess_pupil_timestamp_run(userID, expID)
+        if preprocess_cam.preprocess_cam_run(userID, expID):
+            preprocess_pupil_timestamp.preprocess_pupil_timestamp_run(userID, expID)
+        else:
+            print('Skipping pupil timestamp processing because eye-camera timestamps are unavailable.')
+            issues.append('Eye-camera/DLC timestamping skipped because usable camera metadata was unavailable.')
 
     if run_cuttraces:
         ####################################################
@@ -70,6 +75,8 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         ####################################################
         print('** Starting trail cutting section...')
         preprocess_cut.run_preprocess_cut(userID, expID, pre_secs, post_secs)
+
+    return issues
 
 
 def main():

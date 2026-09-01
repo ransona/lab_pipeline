@@ -29,6 +29,7 @@ def run_step2_batch(step2_config, confirm_callback=None):
     run_dlc_timestamp = step2_config['run_dlc_timestamp']
     run_cuttraces = step2_config['run_cuttraces']
 
+    issue_summary = {}
     with paths.local_repository_context(
         local_repository_root=local_repository_root,
         local_raw_repository_root=local_raw_repository_root,
@@ -41,7 +42,7 @@ def run_step2_batch(step2_config, confirm_callback=None):
             animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(userID, expID)
             with open(os.path.join(exp_dir_processed,'step2_config.pickle'), 'wb') as f: pickle.dump(step2_config, f)  
             # final ops are presecs, post secs and whether to process: 1.bonvision, 2.s2p_timestamp, 3.ephys, 4.dlc_timestamp, 5.cutraces
-            runtime.run_preprocess_step2(
+            issue_summary[expID] = runtime.run_preprocess_step2(
                 userID,expID, pre_secs, post_secs, run_bonvision, run_s2p_timestamp,
                 run_ephys, run_dlc_timestamp, run_cuttraces,
                 confirm_callback=confirm_callback,
@@ -79,6 +80,17 @@ def run_step2_batch(step2_config, confirm_callback=None):
                         os.chmod(file_path, mode)
                     except:
                         x=0
+
+    print('\n========== Step 2 issue summary ==========')
+    for expID in expIDs:
+        issues = issue_summary.get(expID, [])
+        if issues:
+            print(f'{expID}:')
+            for issue in issues:
+                print(f'  - {issue}')
+        else:
+            print(f'{expID}: no handled issues reported.')
+    print('==========================================\n')
 
 
 def main():

@@ -158,6 +158,21 @@ def _is_timeline_pd_only_count_mismatch(flip_times_pd_tl, flip_times_harp, flip_
     return len(non_pd_counts) == 1 and counts['tl_pd'] != counts['bv']
 
 
+def _is_timeline_bv_initial_high_mismatch(
+    flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv,
+    timeline_bv_starts_high, bv_starts_high,
+):
+    """Recognise an unobservable initial digital rise when both streams start high."""
+    counts = _pulse_count_summary(
+        flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv,
+    )
+    return (
+        timeline_bv_starts_high and bv_starts_high
+        and counts['tl_pd'] == counts['harp'] == counts['bv']
+        and counts['tl_bv'] + 1 == counts['bv']
+    )
+
+
 def _find_excluded_flips(raw_flips, filtered_flips, atol=1e-9):
     raw_flips = _as_1d_float(raw_flips)
     filtered_flips = _as_1d_float(filtered_flips)
@@ -648,7 +663,10 @@ def run_preprocess_bv2(
     debug=False,
     debug_params=None,
     confirm_callback=None,
+    issues=None,
 ):
+    if issues is None:
+        issues = []
     print('Starting run_preprocess_bv...')
     # filter_timing_pulses = True allows removal of timing pulses with duration < min_pulse_width
     # this is used to deal with random fast alterations that bonsai still sometimes produces
@@ -773,9 +791,15 @@ def run_preprocess_bv2(
     tl_bv_low = np.percentile(tl_bv_smoothed, 1)
     tl_bv_threshold = tl_bv_low + ((tl_bv_high - tl_bv_low)/2)
     tl_bv_thresholded = np.squeeze(tl_bv_smoothed > tl_bv_threshold).astype(int)
+    timeline_bv_starts_high = bool(tl_bv_thresholded[0])
     # Detect rising edges only
     tl_bv_thresholded_diff = np.diff(tl_bv_thresholded)
     flip_times_bv_tl = np.squeeze(tl_time[np.where(tl_bv_thresholded_diff == 1)])
+    bv_starts_high = bool(Sync[0])
+    timeline_bv_initial_high_mismatch = _is_timeline_bv_initial_high_mismatch(
+        flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv,
+        timeline_bv_starts_high, bv_starts_high,
+    )
     raw_flip_times = {
         'tl_pd': _as_1d_float(flip_times_pd_tl),
         'tl_bv': _as_1d_float(flip_times_bv_tl),
@@ -846,7 +870,12 @@ def run_preprocess_bv2(
         keep_idx_tl_pd = _append_last_index(keep_idx_tl_pd, len(flip_times_pd_tl))
         keep_idx_harp = _append_last_index(keep_idx_harp, len(flip_times_harp))
         keep_idx_tl_bv = _append_last_index(keep_idx_tl_bv, len(flip_times_bv_tl))
-        flips_to_keep_bv = keep_idx_tl_bv
+        if timeline_bv_initial_high_mismatch:
+            # BV log index 0 records its initial high state. There is no TL
+            # digital rising edge for it, so map digital edge n to BV log n+1.
+            flips_to_keep_bv = np.concatenate(([0], keep_idx_tl_bv + 1))
+        else:
+            flips_to_keep_bv = keep_idx_tl_bv
 
         flip_times_pd_tl_filtered = flip_times_pd_tl[keep_idx_tl_pd]
         flip_times_harp_filtered = flip_times_harp[keep_idx_harp]
@@ -888,6 +917,13 @@ def run_preprocess_bv2(
                 # else set to not use PD and thus not use Harp for encoder
                 pd_valid = True 
                 harp_valid = False
+            elif timeline_bv_initial_high_mismatch:
+                print(
+                    'Timeline BonVision started high, so its initial BV sync rise was not observable. '
+                    'Preserved the initial BonVision log event and will use Timeline photodiode '
+                    'for BV-to-Timeline alignment.'
+                )
+                issues.append('BonVision initial-high digital-sync offset handled; photodiode alignment used.')
             elif _is_timeline_pd_only_count_mismatch(flip_times_pd_tl, flip_times_harp, flip_times_bv_tl, flip_times_bv_bv):
                 print('Number of flips detected in Timeline photodiode does not match after filtering, but BV, Timeline Bonvision, and Harp do match.')
                 print('TL PD flips = ' + str(len(flip_times_pd_tl)))
@@ -924,7 +960,7 @@ def run_preprocess_bv2(
             else:
                 print('Number of flips detected in TL, BV and Harp match:')
                 print('BV flips = ' + str(len(flip_times_bv_tl)))
-            if pd_valid:
+            if pd_valid and not timeline_bv_initial_high_mismatch:
                 # the relative times of flips should be near identical between flip_times_pd_tl and flip_times_bv_tl
                 pd_tl_v_bv_tl_jitter = np.abs((flip_times_pd_tl-flip_times_pd_tl[0]) - (flip_times_bv_tl-flip_times_bv_tl[0]))
                 if max(pd_tl_v_bv_tl_jitter) > 50:
@@ -935,6 +971,8 @@ def run_preprocess_bv2(
                     print('Jitter between TL and BV timing pulses is acceptable:')
                     print('Median jitter = ' + str(round(np.median(pd_tl_v_bv_tl_jitter)*1000))+ ' ms')
                     print('Max jitter = ' + str(round(max(pd_tl_v_bv_tl_jitter)*1000)) + ' ms')
+            elif timeline_bv_initial_high_mismatch:
+                print('Skipping PD-versus-digital jitter check because the digital stream lacks its initial high-state rise.')
         else:
             # number of flips should be the same on BV and TL
             if len(flip_times_bv_bv) != len(flip_times_bv_tl):
@@ -1284,6 +1322,8 @@ def run_preprocess_bv2(
         print('Done without errors')
     else:
         print('Debug mode enabled: no files were saved')
+
+    return issues
 
     # for debugging:
 def main():

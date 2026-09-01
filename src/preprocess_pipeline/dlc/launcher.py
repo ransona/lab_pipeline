@@ -31,10 +31,17 @@ def crop_vids(userID, expID):
         eye_video_to_crop = two_eye_video
         is_habit = False
 
+    if not os.path.isfile(eye_video_to_crop):
+        print(f'DLC skipped: required raw eye video is missing: {eye_video_to_crop}')
+        return False
+
     cap = cv2.VideoCapture(eye_video_to_crop)
     if not cap.isOpened():
-        print(f'Could not open video: {eye_video_to_crop}')
-        return
+        print(
+            'DLC skipped: required raw eye video is unreadable by OpenCV '
+            f'(for example, an incomplete MP4): {eye_video_to_crop}'
+        )
+        return False
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -97,6 +104,7 @@ def crop_vids(userID, expID):
         left_out.release()
     if right_out is not None:
         right_out.release()
+    return True
     if habit_out is not None:
         habit_out.release()
 
@@ -157,7 +165,9 @@ def dlc_launcher_run(userID, expID):
     remove_existing_outputs(exp_dir_processed)
 
     print('** Starting cropping videos...')
-    crop_vids(userID, expID)
+    if not crop_vids(userID, expID):
+        print('DLC processing skipped; no cropped videos or DLC CSV outputs were created.')
+        return False
 
     config_path = STANDARD_CONFIG_PATH
     shuffle = 5
@@ -165,6 +175,7 @@ def dlc_launcher_run(userID, expID):
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_left', shuffle)
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_right', shuffle)
     duplicate_outputs_if_needed(exp_dir_processed, expID)
+    return True
 
 
 def main():

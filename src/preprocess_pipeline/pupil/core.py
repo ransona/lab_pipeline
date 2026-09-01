@@ -51,6 +51,16 @@ def preprocess_pupil_run(userID, expID):
 
     vid_filenames = [expID + '_eye1_left.avi',
                     expID + '_eye1_right.avi']
+
+    dlc_paths = [os.path.join(exp_dir_processed, filename) for filename in dlc_filenames]
+    missing_dlc = [path for path in dlc_paths if not os.path.isfile(path)]
+    if missing_dlc:
+        print(
+            'Pupil fitting skipped: the expected DeepLabCut CSV output is unavailable. '
+            'This usually means DLC was skipped because the raw eye video could not be read.\n'
+            + '\n'.join(f'  Missing: {path}' for path in missing_dlc)
+        )
+        return False
     
      
     pupil_keypoint_angles = [0,180,90,270,315,45,135,225]
@@ -81,7 +91,7 @@ def preprocess_pupil_run(userID, expID):
 
         
         # read the csv deeplabcut output file
-        dlc_data = pd.read_csv(os.path.join(exp_dir_processed, dlc_filenames[iVid]), delimiter=',',skiprows=[0,1,2],header=None)
+        dlc_data = pd.read_csv(dlc_paths[iVid], delimiter=',',skiprows=[0,1,2],header=None)
 
         eyeX = dlc_data.iloc[:,[25,28,31,34]].values
         eyeY = dlc_data.loc[:,[26,29,32,35]].values
