@@ -11,6 +11,10 @@ from tqdm import tqdm
 from preprocess_pipeline.shared import paths, suite2p_npy
 
 
+EARLY_FRAME_TRIGGER_SECONDS = 0.5
+INITIAL_ACQUISITION_GAP_SECONDS = 0.5
+
+
 def save_plane_timing_outputs(plane_dir, frame_times, frame_start_times, output_times):
     np.save(os.path.join(plane_dir, "timeline_frame_times.npy"), np.asarray(frame_times))
     np.save(os.path.join(plane_dir, "timeline_frame_start_times.npy"), np.asarray(frame_start_times))
@@ -138,7 +142,139 @@ def append_cell_metadata(store, channel_index, key, values):
         store[channel_index].append(values)
 
 
-def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
+def find_preexisting_acquisition_trigger_pause(
+    frame_start_times,
+    timeline_start_time,
+    early_trigger_seconds=EARLY_FRAME_TRIGGER_SECONDS,
+    minimum_gap_seconds=INITIAL_ACQUISITION_GAP_SECONDS,
+):
+    """Find an initial acquisition's triggers separated by a long pause.
+
+    A Timeline can begin while ScanImage is still acquiring from a previous
+    recording.  In that case the initial trigger train is not associated with
+    the TIFF files for this experiment.  The first long trigger-free gap is a
+    conservative boundary: every trigger before it belongs to the earlier
+    acquisition, and none may be retained to improve a frame-count match.
+    """
+    frame_start_times = np.asarray(frame_start_times, dtype=float)
+    if frame_start_times.size < 2:
+        return None
+    if frame_start_times[0] - timeline_start_time >= early_trigger_seconds:
+        return None
+
+    inter_trigger_intervals = np.diff(frame_start_times)
+    gap_indices = np.flatnonzero(inter_trigger_intervals >= minimum_gap_seconds)
+    if not len(gap_indices):
+        return None
+
+    gap_index = int(gap_indices[0])
+    return {
+        "discard_count": gap_index + 1,
+        "pause_seconds": float(inter_trigger_intervals[gap_index]),
+        "last_discarded_trigger_time": float(frame_start_times[gap_index]),
+        "first_retained_trigger_time": float(frame_start_times[gap_index + 1]),
+    }
+
+
+def get_expected_suite2p_frame_count(data_paths, depth_count):
+    """Return the total TIFF-frame count represented by one Suite2p channel."""
+    frame_counts = []
+    for depth in range(depth_count):
+        f_path = os.path.join(data_paths[0], f"plane{depth}", "F.npy")
+        frame_counts.append(int(np.load(f_path, mmap_mode="r").shape[1]))
+    return sum(frame_counts), frame_counts
+
+
+def maybe_discard_preexisting_acquisition_triggers(
+    frame_start_times,
+    timeline_start_time,
+    expected_frame_count,
+    confirm_callback=None,
+    issues=None,
+):
+    """Offer an explicitly confirmed correction for pre-experiment triggers.
+
+    This deliberately never keeps a subset of triggers before the initial
+    pause.  If the post-pause trigger count and TIFF-frame count disagree, the
+    user is told exactly which data will be left unmatched before proceeding.
+    """
+    candidate = find_preexisting_acquisition_trigger_pause(
+        frame_start_times, timeline_start_time
+    )
+    if candidate is None:
+        return frame_start_times
+
+    message = (
+        "Suspicious imaging frame triggers detected\n\n"
+        f"A frame trigger occurred {frame_start_times[0] - timeline_start_time:.3f} s "
+        "after the Timeline started, followed by a "
+        f"{candidate['pause_seconds']:.3f} s period without triggers. This usually "
+        "means imaging was already running for a previous acquisition when this "
+        "experiment's Timeline began.\n\n"
+        f"The proposed correction discards all {candidate['discard_count']} triggers "
+        "before that pause and uses only triggers after it. No pre-pause trigger "
+        "will be retained to make the counts agree.\n\n"
+        "Inspect and apply this correction? Choosing No stops 2-photon timestamping "
+        "without changing any outputs."
+    )
+    if confirm_callback is None:
+        raise RuntimeError(
+            message.replace("Inspect and apply this correction? Choosing No stops 2-photon timestamping "
+                            "without changing any outputs.",
+                            "Re-run Step 2 from QView to review and explicitly confirm the correction.")
+        )
+    if not confirm_callback(message):
+        raise RuntimeError("2-photon timestamping stopped: proposed early-trigger correction was not accepted.")
+
+    corrected_frame_start_times = frame_start_times[candidate["discard_count"] :]
+    corrected_count = len(corrected_frame_start_times)
+    count_difference = corrected_count - expected_frame_count
+    matched_count = min(corrected_count, expected_frame_count)
+    if count_difference == 0:
+        count_summary = "The post-pause trigger count exactly matches the TIFF-frame count."
+    elif count_difference > 0:
+        count_summary = (
+            f"There are {count_difference} more post-pause triggers than TIFF frames. "
+            f"The final {count_difference} trigger(s) will not be used."
+        )
+    else:
+        count_summary = (
+            f"There are {-count_difference} more TIFF frames than post-pause triggers. "
+            f"The final {-count_difference} TIFF frame(s) will have no Timeline timestamp "
+            "and will not be used."
+        )
+
+    confirmation_message = (
+        "Early-trigger correction check\n\n"
+        f"TIFF frames: {expected_frame_count}\n"
+        f"Post-pause Timeline triggers: {corrected_count}\n"
+        f"Usable frame/trigger pairs: {matched_count}\n\n"
+        f"{count_summary}\n\n"
+        "Continue using only the post-pause triggers? Choosing No stops 2-photon "
+        "timestamping without changing any outputs."
+    )
+    if not confirm_callback(confirmation_message):
+        raise RuntimeError("2-photon timestamping stopped: early-trigger correction was not confirmed.")
+
+    correction_summary = (
+        f"Discarded {candidate['discard_count']} pre-pause imaging triggers after user confirmation; "
+        f"the first retained trigger is at {candidate['first_retained_trigger_time']:.3f} s "
+        f"after a {candidate['pause_seconds']:.3f} s gap. TIFF frames={expected_frame_count}, "
+        f"post-pause triggers={corrected_count}."
+    )
+    print("Warning: " + correction_summary)
+    if issues is not None:
+        issues.append(correction_summary)
+    return corrected_frame_start_times
+
+
+def run_preprocess_s2p_universal(
+    userID,
+    expID,
+    neuropil_coeff_config=np.nan,
+    confirm_callback=None,
+    issues=None,
+):
     (
         animalID,
         remote_repository_root,
@@ -223,8 +359,16 @@ def run_preprocess_s2p_universal(userID, expID, neuropil_coeff_config=np.nan):
         neural_frames_idx = np.where(np.isin(tl_ch_names, get_frame_channel_name(work_unit)))[0][0]
         neural_frames_pulses = np.squeeze((tl_daq_data[:, neural_frames_idx] > 1).astype(int))
 
-        frame_times = np.squeeze(tl_time)[np.where(np.diff(neural_frames_pulses) == 1)[0]]
-        frame_start_times = frame_times.copy()
+        frame_start_times = np.squeeze(tl_time)[np.where(np.diff(neural_frames_pulses) == 1)[0]]
+        expected_frame_count, _ = get_expected_suite2p_frame_count(data_paths, depth_count)
+        frame_start_times = maybe_discard_preexisting_acquisition_triggers(
+            frame_start_times,
+            float(np.squeeze(tl_time)[0]),
+            expected_frame_count,
+            confirm_callback=confirm_callback,
+            issues=issues,
+        )
+        frame_times = frame_start_times.copy()
         time_diffs = np.append(np.diff(frame_times), np.diff(frame_times)[-1])
         frame_times = frame_times + (time_diffs / 2)
 

@@ -49,7 +49,12 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         # Process S2P data
         ###########################################################
         print('** Starting S2P section...')
-        preprocess_s2p.run_preprocess_s2p_universal(userID, expID)
+        preprocess_s2p.run_preprocess_s2p_universal(
+            userID,
+            expID,
+            confirm_callback=confirm_callback,
+            issues=issues,
+        )
 
     if run_ephys:
         ###########################################################
