@@ -2055,7 +2055,9 @@ class Step1Tab(QtWidgets.QWidget):
         self.picker_button.clicked.connect(self.open_picker)
         self.standard_widget.configChanged.connect(self.update_suite2p_env_from_config)
         self.meso_widget.configChanged.connect(self.update_suite2p_env_from_config)
+        self.runs2p.toggled.connect(self.on_runs2p_toggled)
         self.refresh_preset_list()
+        self.on_runs2p_toggled(self.runs2p.isChecked())
         self.update_config_preview()
 
     def clear_to_defaults(self):
@@ -2084,6 +2086,17 @@ class Step1Tab(QtWidgets.QWidget):
         self.refresh_config_choices()
         self.refresh_preset_list()
         self.update_config_preview()
+
+    def on_runs2p_toggled(self, runs2p: bool):
+        """Switch the Step 1 form between imaging and non-imaging jobs."""
+        self.config_group.setEnabled(runs2p)
+        self.suite2p_env.setEnabled(runs2p)
+        self.runsrdtrans.setEnabled(runs2p)
+        if not runs2p:
+            self.runsrdtrans.setChecked(False)
+            self.detected_descriptor = None
+            self.config_stack.setCurrentWidget(self.standard_widget)
+        self.on_exp_list_changed()
 
     def _resolve_s2p_config_path(self, config_name: str) -> Optional[Path]:
         config_name = (config_name or "").strip()
@@ -2154,6 +2167,20 @@ class Step1Tab(QtWidgets.QWidget):
         if not exp_ids or not user_id:
             return
 
+        if not self.runs2p.isChecked():
+            if self.mode_combo.currentIndex() != 0:
+                self.summary_box.setPlainText(
+                    "Non-imaging jobs must use Single experiment(s) mode."
+                )
+            else:
+                self.summary_box.setPlainText(
+                    "Non-imaging job: TIFF/ScanImage metadata and Suite2p settings are not required.\n"
+                    "The queue will verify NAS data, and camera data when DLC is selected."
+                )
+            if self.pending_preset is not None:
+                self.pending_preset = None
+            return
+
         try:
             first_descriptor = describe_experiment(user_id, exp_ids[0])
             self.detected_descriptor = first_descriptor
@@ -2202,8 +2229,16 @@ class Step1Tab(QtWidgets.QWidget):
         exp_ids = self.exp_editor.values()
         if not user_id or not exp_ids:
             raise ValueError("userID and at least one expID are required.")
-        if self.detected_descriptor is None:
+        if not self.runs2p.isChecked():
+            if self.mode_combo.currentIndex() != 0:
+                raise ValueError("Non-imaging jobs cannot use Combined experiment mode.")
+            suite2p_config = None
+        elif self.detected_descriptor is None:
             raise ValueError("No experiment metadata has been detected yet.")
+        elif self.detected_descriptor.topology == "standard":
+            suite2p_config = self.standard_widget.config_value(self.detected_descriptor.nchannels)
+        else:
+            suite2p_config = self.meso_widget.config_value()
 
         if self.mode_combo.currentIndex() == 0:
             exp_value = exp_ids
@@ -2211,11 +2246,6 @@ class Step1Tab(QtWidgets.QWidget):
             if len(exp_ids) < 2:
                 raise ValueError("Combined mode requires at least two expIDs.")
             exp_value = [exp_ids]
-
-        if self.detected_descriptor.topology == "standard":
-            suite2p_config = self.standard_widget.config_value(self.detected_descriptor.nchannels)
-        else:
-            suite2p_config = self.meso_widget.config_value()
 
         config = {
             "userID": user_id,
@@ -2234,10 +2264,11 @@ class Step1Tab(QtWidgets.QWidget):
             config["register_with_summed_channel"] = True
         if self.queue_combo.currentIndex() == 1:
             config["queue"] = "debug"
-        suite2p_env = self.suite2p_env.currentText().strip()
-        if not suite2p_env:
-            raise ValueError("suite2p_env is required.")
-        config["suite2p_env"] = suite2p_env
+        if self.runs2p.isChecked():
+            suite2p_env = self.suite2p_env.currentText().strip()
+            if not suite2p_env:
+                raise ValueError("suite2p_env is required.")
+            config["suite2p_env"] = suite2p_env
         settings_text = self.settings_json.toPlainText().strip()
         if settings_text and settings_text != "{}":
             config["settings"] = json.loads(settings_text)
@@ -2313,6 +2344,10 @@ class Step1Tab(QtWidgets.QWidget):
             )
         )
 
+        if not self.runs2p.isChecked():
+            self.pending_preset = None
+            return
+
         if self.detected_descriptor is None:
             self.pending_preset = payload
             self.summary_box.setPlainText(
@@ -2328,6 +2363,8 @@ class Step1Tab(QtWidgets.QWidget):
             self.meso_widget.apply_preset(payload.get("meso", {}))
 
     def _preset_compatibility_warning(self, payload: dict) -> Optional[str]:
+        if not self.runs2p.isChecked():
+            return None
         if self.detected_descriptor is None:
             return (
                 "No experiment metadata is currently selected.\n\n"

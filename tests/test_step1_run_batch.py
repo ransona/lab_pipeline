@@ -1,10 +1,30 @@
 from datetime import datetime
 import unittest
+from unittest.mock import patch
 
 from preprocess_pipeline.step1 import run_batch
 
 
 class Step1RunBatchFilenameTests(unittest.TestCase):
+    def test_non_imaging_job_needs_no_suite2p_or_tiff_metadata(self):
+        config = {
+            "userID": "adamranson",
+            "expIDs": ["2026-09-01_02_ESRC036"],
+            "runs2p": False,
+            "rundlc": True,
+            "runfitpupil": True,
+        }
+        with (
+            patch.object(run_batch.getpass, "getuser", return_value="adamranson"),
+            patch.object(run_batch.paths, "find_paths") as find_paths,
+            patch.object(run_batch, "_resolve_queue_path", return_value="/queue"),
+            patch.object(run_batch, "_queue_single_job", return_value={"userID": "adamranson", "expID": config["expIDs"][0]}),
+            patch.object(run_batch, "_notify_queue_position"),
+        ):
+            run_batch.run_step1_batch_universal(config)
+
+        find_paths.assert_not_called()
+
     def test_binary_removal_choices_are_preserved_in_normalized_config(self):
         normalized = run_batch._normalize_config_entry(
             {

@@ -285,7 +285,7 @@ def _combined_per_experiment_command_filename(now, user_id, exp_id, jump_queue, 
 def run_step1_batch_universal(step1_config):
     user_id = step1_config['userID']
     exp_ids = step1_config['expIDs']
-    suite2p_config = step1_config['suite2p_config']
+    suite2p_config = step1_config.get('suite2p_config')
     runs2p = step1_config['runs2p']
     rundlc = step1_config['rundlc']
     runfitpupil = step1_config['runfitpupil']
@@ -297,7 +297,8 @@ def run_step1_batch_universal(step1_config):
     run_on = step1_config.get('run_on', 'server')
     queue_name = step1_config.get('queue', 'step1')
     suite2p_env = step1_config.get('suite2p_env')
-    validate_suite2p_env(suite2p_env)
+    if runs2p:
+        validate_suite2p_env(suite2p_env)
     local_repository_root = step1_config.get('local_repository_root')
     local_raw_repository_root = step1_config.get('local_raw_repository_root')
     local_processed_repository_root = step1_config.get('local_processed_repository_root')
@@ -330,11 +331,11 @@ def run_step1_batch_universal(step1_config):
         local_nas_repository_root=local_nas_repository_root,
     ):
         first_exp = exp_ids[0][0] if isinstance(exp_ids[0], list) else exp_ids[0]
-        _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
-        topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
-        suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
-        _validate_plan_configs(user_id, suite2p_plan, runs2p, config_root=suite2p_config_root)
         if runs2p:
+            _, _, _, _, first_exp_raw = paths.find_paths(user_id, first_exp)
+            topology, work_unit_ids = _discover_work_unit_ids(first_exp_raw)
+            suite2p_plan = _normalize_suite2p_plan(suite2p_config, work_unit_ids)
+            _validate_plan_configs(user_id, suite2p_plan, True, config_root=suite2p_config_root)
             config_paths = [
                 os.path.join(
                     suite2p_config_root,
@@ -348,6 +349,12 @@ def run_step1_batch_universal(step1_config):
                 suite2p_env,
                 config_paths,
             )
+        else:
+            # Non-imaging jobs must not require a ScanImage folder, TIFF metadata,
+            # or a Suite2p configuration just to run DLC/pupil processing.
+            topology = 'non-imaging'
+            suite2p_plan = []
+            suite2p_config = None
 
         common_config = {
             'runhabituate': runhabituate,

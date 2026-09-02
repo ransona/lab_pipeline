@@ -60,6 +60,55 @@ def gpu_check_is_soft_failure(gpu_error):
     )
     return any(marker in gpu_error for marker in soft_markers)
 
+
+def verify_job_input_integrity(queued_command, exp_id, debug=False):
+    """Return whether the inputs required by one queued job are ready.
+
+    NAS data are required for every modern experiment. ScanImage and camera
+    data are additional, independent requirements of Suite2p and DLC jobs.
+    """
+    _, _, _, exp_dir_processed, exp_dir_raw = paths.find_paths(
+        queued_command['userID'], exp_id
+    )
+    experiment_date = datetime.strptime(exp_id[:10], "%Y-%m-%d")
+    integrity_cutoff = datetime.strptime("2023-05-10", "%Y-%m-%d")
+    if experiment_date < integrity_cutoff:
+        print('Experiment is pre 2023-05-10; assuming all data are present and running')
+        return True
+
+    if queued_command['config'].get('runhabituate', False):
+        print(f'Habituation job detected; skipping NAS/cams integrity checks for {exp_id}')
+        return True
+
+    check_hashes = not debug
+    if debug:
+        print('Debug queue: checking file sizes only; skipping hash verification')
+
+    requirements = [('nas', 'NAS')]
+    if queued_command['config'].get('runs2p', False):
+        requirements.append(('scanimage', 'SI'))
+    if queued_command['config'].get('rundlc', False):
+        requirements.append(('cams', 'video'))
+
+    all_ready = True
+    for manifest_name, label in requirements:
+        ready, comment = file_check.verify_file_data(
+            manifest_name,
+            exp_dir_raw,
+            exp_dir_processed,
+            check_hashes=check_hashes,
+        )
+        if ready:
+            matrix_notify.main(queued_command['userID'], f'{label} data verified')
+            print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} {label} data verified')
+        else:
+            all_ready = False
+            matrix_notify.main(
+                queued_command['userID'],
+                f'Awaiting {label} data integrity verification: {comment}',
+            )
+    return all_ready
+
 class JobScheduler:
     def __init__(self):
         self.last_30_jobs = []  # Rolling list of last 30 jobs, (runtime, user)
@@ -199,8 +248,6 @@ def main(debug=False, queue_path=None):
                             queued_command = pickle.load(file)
 
                     # if the experiment was done before integrity check was implemented then don't do check
-                        target_date_str = '2023-05-10' # define cutoff
-                        date_format = "%Y-%m-%d"
                         if type(queued_command['expID']) == str:
                         # make copy which is a list of 1 item
                             allExps = list([queued_command['expID']])
@@ -208,75 +255,15 @@ def main(debug=False, queue_path=None):
                         # then it is a sequence of experiments
                             allExps = queued_command['expID']
 
-                    # cycle through all experiments checking integrity - only run if all files of all experiments are there
+                    # All experiments in a combined job must have their required
+                    # inputs ready. Do not let one successful check overwrite a
+                    # failure from another experiment or data type.
                         for nextExpID in allExps:
-                            animalID, remote_repository_root, processed_root, exp_dir_processed, exp_dir_raw = paths.find_paths(queued_command['userID'], nextExpID)
-                            date_str = nextExpID[:10] # get experiment date
-
-                            file_date = datetime.strptime(date_str, date_format)
-                            target_date = datetime.strptime(target_date_str, date_format)
-
-                        exp_has_integrity_check = file_date >= target_date
-
-                        if exp_has_integrity_check:
-                            if queued_command['config'].get('runhabituate', False):
-                                print(
-                                    'Habituation job detected; skipping NAS/cams integrity checks '
-                                    f'for {nextExpID}'
-                                )
-                                continue
-                            check_hashes = not debug
-                            if debug:
-                                print('Debug queue: checking file sizes only; skipping hash verification')
-                            # you always need to have your nas data verified (contains experiment log, timeline, bonvision etc)
-                            ready,comment = file_check.verify_file_data(
-                                'nas',
-                                exp_dir_raw,
-                                exp_dir_processed,
-                                check_hashes=check_hashes,
-                            )
-                            matrix_notify.main(queued_command['userID'],'----------')
-
-                            if not ready:
+                            matrix_notify.main(queued_command['userID'], '----------')
+                            if not verify_job_input_integrity(
+                                queued_command, nextExpID, debug=debug
+                            ):
                                 files_ready = False
-                                matrix_notify.main(queued_command['userID'],'Awaiting NAS data integrity verification: ' + comment)
-                            else:          
-                                matrix_notify.main(queued_command['userID'],'NAS data verified')
-                                print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} NAS data verified')
-
-                            if queued_command['config']['runs2p']:
-                            # if you want to do suite2p you need to have your scanimage data verified
-                                ready,comment = file_check.verify_file_data(
-                                    'scanimage',
-                                    exp_dir_raw,
-                                    exp_dir_processed,
-                                    check_hashes=check_hashes,
-                                )
-                                if not ready:
-                                    files_ready = False
-                                    matrix_notify.main(queued_command['userID'],'Awaiting SI data integrity verification: ' + comment) 
-                                else:          
-                                    matrix_notify.main(queued_command['userID'],'SI data verified')
-                                    print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} SI data verified')
-
-                                if queued_command['config']['rundlc']:
-                                # if you want to do dlc you need to have your video data verified
-                                    ready,comment = file_check.verify_file_data(
-                                        'cams',
-                                        exp_dir_raw,
-                                        exp_dir_processed,
-                                        check_hashes=check_hashes,
-                                    )
-                                    if not ready:
-                                        files_ready = False
-                                        matrix_notify.main(queued_command['userID'],'Awaiting video data integrity verification: ' + comment)          
-                                    else:          
-                                        matrix_notify.main(queued_command['userID'],'video data verified')
-                                        print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Vid data verified')
-                            else:
-                            # pre integrity check so just assume all files are there and run it
-                                print('Experiment is pre 2023-05-10 so no file integrity data so assuming all data present and running')
-                                files_ready = True
 
                         if files_ready:
                         # then run that job
