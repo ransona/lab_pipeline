@@ -12,6 +12,15 @@ git clone git@github.com:ransona/lab_pipeline.git ~/code/lab_pipeline
 cd ~/code/lab_pipeline
 ```
 
+If Conda is not installed, install Miniforge first, restart the shell, and
+then continue with the environment commands below:
+
+```bash
+curl -L -o Miniforge3-Linux-x86_64.sh \
+  https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh
+```
+
 Create or update the main pipeline env:
 
 ```bash
@@ -77,10 +86,11 @@ GUI apps:
 | App | Purpose | Linux command | Windows launcher |
 | --- | --- | --- | --- |
 | `qview.py` | Queue GUI for Step 1/Step 2 job setup, queue inspection, logs, and split tools | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/qview.py` | `windows_launchers/run_queue_gui.bat` |
-| `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
+| `local_run.py` | Local Windows processing GUI for mesoscope split, local Step 1, and local Step 2 | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/local_run.py` | `windows_launchers/run_local_gui.vbs` or `windows_launchers/run_local_gui.bat` |
 | `imaging_view.py` | Combined raw TIFF and Suite2p `data.bin` viewer | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/imaging_view.py` | `windows_launchers/run_imaging_view.bat` |
 | `data_manager.py` | Data Manager GUI for browsing/scanning repository data and deletion workflow support | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/data_manager.py` | `windows_launchers/run_data_manager.bat` |
 | `eye_check.py` | Integrated eye tracking QC GUI | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/eye_check.py` | `windows_launchers/run_eye_check.bat` |
+| `sleep_state_gui.py` | Sleep-state scoring and manual review GUI | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/sleep_state_gui.py` | `windows_launchers/run_sleep_state_gui.bat` |
 | `s2p_bin_view.py` | Standalone Suite2p binary viewer, retained for direct use; normally use `imaging_view.py` instead | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/s2p_bin_view.py` | none |
 
 Pipeline and subsystem apps:
@@ -93,7 +103,7 @@ Pipeline and subsystem apps:
 | `run_step2.py` | Run Step 2 jobs from a config | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/run_step2.py` |
 | `preprocess_step1.py` | Execute one queued Step 1 runtime job directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step1.py` |
 | `preprocess_step2.py` | Execute Step 2 runtime directly | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/preprocess_step2.py` |
-| `s2p_launcher.py` | Suite2p launcher for one work unit | `/opt/scripts/conda-run.sh suite2p python /home/[username]/code/lab_pipeline/apps/s2p_launcher.py` |
+| `s2p_launcher.py` | Suite2p launcher for one work unit | Run in the Suite2p environment selected by the Step 1 job (`suite2p` or `suite2p_1.1.0`) |
 | `dlc_launcher.py` | DeepLabCut launcher | `/opt/scripts/conda-run.sh DLC_05_02_2026 python /home/[username]/code/lab_pipeline/apps/dlc_launcher.py` |
 | `srdtrans_launcher.py` | SRDTrans denoising launcher | `/opt/scripts/conda-run.sh srdtrans python /home/[username]/code/lab_pipeline/apps/srdtrans_launcher.py` |
 | `split_combined_s2p.py` | Split combined Suite2p output back into source experiments | `/opt/scripts/conda-run.sh lab_pipeline python /home/[username]/code/lab_pipeline/apps/split_combined_s2p.py` |
@@ -236,7 +246,7 @@ The same local roots can also be set through environment variables:
 
 ## How To Use It
 
-The usual workflow is:
+The usual imaging workflow is:
 
 1. Open the queue GUI.
 2. Build or load a Step 1 config.
@@ -280,8 +290,8 @@ From the GUI:
 
 1. Open the `Step 1` tab.
 2. Add one or more `expIDs`, or click `Picker` to insert saved experiments/groups.
-3. Wait for the experiment summary to appear.
-4. Pick the correct Suite2p config form for the detected topology.
+3. For imaging, wait for the experiment summary to appear and pick the correct Suite2p config form for the detected topology.
+4. For non-imaging work, untick `runs2p`; no TIFF discovery or Suite2p config is then required.
 5. Leave the queue selector on `Normal` or switch it to `Debug`.
 6. Click `Submit Step 1 Job`.
 
@@ -306,9 +316,48 @@ If you need the listener manually, the new queue listener can be run with:
 
 The debug queue uses `/data/common/queues/debug/`. The normal queue uses `/data/common/queues/step1/`.
 
+### Non-imaging and sleep-state experiments
+
+The pipeline can prepare experiments that have no ScanImage TIFF files. This
+is useful for habituation/sleep recordings containing Timeline EEG/EMG,
+wheel, and optionally eye-camera data.
+
+In the `Step 1` tab:
+
+1. Add the experiment ID and untick `runs2p`.
+2. Enable `rundlc` only if you want to run DLC on the eye video, and enable
+   `runfitpupil` only if you also want pupil fitting.
+3. Use **Single experiment(s)** mode; combining experiments is an imaging
+   Suite2p workflow and is unavailable for non-imaging jobs.
+4. Submit to the normal queue.
+
+For modern experiments, the queue independently verifies the required raw
+data before it starts: NAS data for every job, ScanImage data only when
+`runs2p=True`, and camera data whenever `rundlc=True`. The debug queue checks
+the same manifests by file size only; the normal queue also checks hashes.
+
+After Step 1, run Step 2 directly with the following settings for sleep
+classification:
+
+```python
+step2_config["run_bonvision"] = True       # creates wheel data
+step2_config["run_s2p_timestamp"] = False  # no imaging
+step2_config["run_ephys"] = True           # writes recordings/ephys.npy (EEG/EMG)
+step2_config["run_dlc_timestamp"] = False  # set True only when DLC output is wanted
+step2_config["run_cuttraces"] = False      # sleep scoring uses continuous recordings
+```
+
+Then open `sleep_state_gui.py`, select the experiment, and choose **Run Sleep
+Scoring**. The scorer uses `recordings/ephys.npy` and
+`recordings/wheel.pickle`; it can also derive face-motion data from available
+eye video. Sleep results are written to `sleep_score/sleep_state.pickle` in
+the processed experiment folder.
+
 ## GUIs
 
-The main GUI entry points are `qview.py`, `imaging_view.py`, and `eye_check.py`. See `Apps And Launchers` at the top of this README for Linux commands and Windows `.bat` launchers.
+The main GUI entry points are `qview.py`, `imaging_view.py`, `eye_check.py`,
+and `sleep_state_gui.py`. See `Apps And Launchers` at the top of this README
+for Linux commands and Windows `.bat` launchers.
 
 The qView `Tools` tab launches the canonical Imaging Viewer, Eye Check, Data
 Manager, Experiment Composer, and Sleep State applications as independent
@@ -332,7 +381,7 @@ Step 1 config files define:
 
 - `userID`
 - `expIDs`
-- `suite2p_config`
+- optional `suite2p_config` (required only when `runs2p=True`)
 - `runs2p`
 - `rundlc`
 - `runfitpupil`
@@ -340,10 +389,17 @@ Step 1 config files define:
 - optional `srdtrans`
 - optional `queue`
 - optional `jump_queue`
-- `suite2p_env`
+- optional `suite2p_env` (required only when `runs2p=True`)
 - optional `settings`
 
-The universal Step 1 submitter supports these `suite2p_config` shapes. `suite2p_env` is required and is currently one of `suite2p` or `suite2p_1.1.0`. Native Suite2p 1.x settings files must be run with `suite2p_1.1.0`; the submitter and runtime reject them if `suite2p_env` is `suite2p`. `nplanes` and `nchannels` are always inferred from the raw ScanImage metadata. `functional_chan` is an analysis choice and should be supplied here, not saved inside the reusable Suite2p settings file.
+The universal Step 1 submitter supports the following `suite2p_config` shapes
+when `runs2p=True`. In that case, `suite2p_env` is required and is currently
+one of `suite2p` or `suite2p_1.1.0`. Native Suite2p 1.x settings files must be
+run with `suite2p_1.1.0`; the submitter and runtime reject them if
+`suite2p_env` is `suite2p`. `nplanes` and `nchannels` are inferred from raw
+ScanImage metadata. `functional_chan` is an analysis choice and should be
+supplied here, not saved inside the reusable Suite2p settings file. For
+non-imaging jobs, omit both `suite2p_config` and `suite2p_env`.
 
 ### 1. One reusable Suite2p settings file
 

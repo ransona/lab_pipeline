@@ -1,0 +1,413 @@
+# Lab Pipeline: developer logic and non-obvious constraints
+
+This is a context note for people (and coding agents) modifying this repository.
+It records decisions that can look unnecessarily complicated when viewed only in
+one function. Do not simplify one of these mechanisms without checking the
+reason it exists and the callers/output formats it protects.
+
+This is not a user guide. Start with `README.md` for installation and normal
+operation. This file explains *why* some code intentionally behaves in ways
+that may initially look surprising.
+
+## 1. Repository, process and environment boundaries
+
+### The pipeline has deliberately separate execution environments
+
+- `lab_pipeline` is the main environment. It runs the queue listeners, Qt
+  GUIs, Step 2, splitting, general Python code, and most Step 1 orchestration.
+  It uses NumPy 2.x.
+- Suite2p is launched as a subprocess in the configured `suite2p_env` (for
+  example `suite2p_lab` locally). Do not import Suite2p into the main pipeline
+  process merely because it appears convenient: Suite2p has independent,
+  version-specific dependencies and output compatibility constraints.
+- DLC and SRDTrans also use their own configured environments.
+- `numpy1.x` is intentionally a minimal helper environment, not a second
+  general pipeline environment. It exists solely to load/save NumPy-1-era
+  object `.npy` files safely.
+
+The listener's Unix account is the account that runs jobs. The submitting
+queue-GUI user supplies configuration and chooses a Suite2p environment; they
+do **not** become the Unix user for the job. This avoids files being owned by a
+mixture of users and avoids requiring privilege switching.
+
+Do not re-introduce references to the historic `sci` environment for normal
+pipeline work. The active repository is intended to run from `lab_pipeline`.
+The historical environment may still exist on particular machines, but is not
+the deployment target.
+
+### The custom Suite2p GUI is a different repository
+
+Rapid ROI features live in the custom fork, normally
+`/home/adamranson/code/suite2p_1`, whose remote is `ransona/suite2p`. They are
+not vendored under this repository. Changes to that GUI need committing and
+pushing in the Suite2p repository separately.
+
+### Environment existence is the important validation criterion
+
+The queue validates the requested Suite2p environment only for jobs that have
+`runs2p=True`. Do not hard-code a specific old environment name such as
+`suite2p_1.1.0`; installations differ. If an explicitly requested conda
+environment exists, it is a valid candidate. Package/import failures should be
+reported by the subprocess with its log, not guessed by the queue manager.
+
+## 2. NumPy object-file compatibility is a data-format problem
+
+Suite2p `ops.npy`, `stat.npy`, `db.npy`, settings files, and some registration
+outputs are NumPy object arrays backed by Python pickles. NumPy 2 can often
+read old files with compatibility aliases, but a file written under NumPy 2 is
+not necessarily readable in a NumPy 1 Suite2p environment.
+
+Therefore:
+
+1. Never use raw `np.load(..., allow_pickle=True)` / `np.save` directly for a
+   Suite2p object file in pipeline code.
+2. Use `preprocess_pipeline.shared.suite2p_npy` instead.
+3. It inspects the pickle references to classify the file and uses the
+   `numpy1.x` worker when an old-format file must be rewritten.
+4. Preserve the format of the file being edited. An old Suite2p input should
+   remain consumable by old Suite2p after the pipeline has edited it.
+
+This applies especially to combined registration, splitting combined outputs,
+config validation, SRDTrans config/model helpers, Suite2p launch preparation,
+and any GUI that edits `ops.npy`. A superficially harmless save can otherwise
+make a previously working old Suite2p output unloadable.
+
+The JSON request sent to the NumPy-1 worker must be JSON serializable. Convert
+values such as `datetime` deliberately rather than attempting to serialise
+arbitrary objects blindly.
+
+## 3. Step 1 queue semantics
+
+### A job's components are independent
+
+`runs2p`, `rundlc`, `runfitpupil`, and `runsrdtrans` are not synonyms. In
+particular, a DLC-only job is legitimate and must not be rejected merely
+because no TIFF or Suite2p configuration is present. Conversely, SRDTrans
+requires Suite2p output and therefore requires `runs2p=True`.
+
+Queue readiness checks are conditional:
+
+- every queued job needs the experiment/NAS data it claims to process;
+- ScanImage/TIFF requirements apply only when `runs2p=True`;
+- camera integrity requirements apply whenever `rundlc=True`, including a
+  DLC-only job;
+- Suite2p config and Suite2p environment are required only for Suite2p jobs.
+
+Do not move camera verification back inside a `runs2p` branch. That previously
+allowed DLC-only jobs to start without validating their camera inputs.
+
+### Combined jobs are intentionally split into several commands
+
+Combined Suite2p registration is one job spanning experiments, but per-
+experiment DLC/pupil work remains separate. Job filenames contain
+`_combined_s2p_` for the combined Suite2p command and `dlc` for per-experiment
+DLC commands so that queue inspection and debugging do not confuse them.
+
+Do not infer whether a job runs Suite2p from a filename. The command/config
+flags are authoritative. Filenames are human-facing diagnostics.
+
+### Queue state is filesystem-backed and operationally important
+
+The normal and debug queues are distinct. Moving commands to a `paused`
+subfolder prevents dispatch without deleting a recoverable job. Listener
+restart is needed after changing the listener executable/environment, but not
+after ordinary source edits if the listener starts a new Python process for
+each job; restarting is nevertheless useful after operational changes.
+
+The systemd service launcher must activate `lab_pipeline`, not `sci`.
+
+## 4. Step 1 imaging topology and output rules
+
+### Channels are not automatically equivalent functional channels
+
+A two-channel recording may use only one channel for functional ROI detection.
+The Step 1 GUI exposes independent functional-channel choices only when two
+channels are detected. The selected channel determines the functional Suite2p
+tree; the other channel may still be needed during registration as channel-2
+data.
+
+Do not assume that the presence of `data_ch2.bin` means channel 2 was selected
+for functional extraction. Likewise, do not remove `meanImg_chan2` merely
+because functional ROI extraction was not run on channel 2: Suite2p GUI red
+channel viewing can rely on that summary image and the registration output.
+
+Binary deletion is separate from functional-channel choice. Defaults favour
+deleting a channel's binaries when it is not used for functional extraction,
+but the implementation must locate all relevant binaries across standard,
+multi-plane, multi-ROI, and channel-specific output trees before deleting.
+Never delete a binary that the selected functional channel or later
+registration/inspection still needs.
+
+### Combined Suite2p outputs must split faithfully
+
+Combined processing can alter or generate `ops`, database/settings and
+registration files before splitting outputs back to experiments. All such
+writes must go through `suite2p_npy`, retaining the input NumPy flavour. The
+splitter also carries `iscell`/ROI classification forward in the same format
+as uncut data; otherwise manually rejected ROIs can reappear after cutting.
+
+### The ScanImage selected-scanfield ROI is deliberately copied at startup
+
+`<expID>_selectedScanfield.roi` belongs in the processed experiment directory,
+including in local processing. Downstream tools expect it there. Copy it during
+Step 1 startup, before work diverges into standard/mesoscope or local/server
+paths. Do not assume that TIFF splitting alone will copy it: it lives beside
+the raw ScanImage metadata rather than inside Suite2p output.
+
+ScanImage mesoscope layout uses P1/P2 scanpaths and R### ROI directories.
+The pipeline supports the topology it explicitly discovers; avoid silently
+assuming a flat `suite2p/planeN` tree in code that may also receive mesoscope
+data.
+
+## 5. Local processing is not just a server job on another path
+
+The local runner uses split raw/processed roots: raw data may be local TIFFs
+while Timeline and other metadata can be resolved from NAS. Use the canonical
+path resolver/local repository context rather than constructing paths by hand.
+
+Local processing needs the selected-scanfield ROI copied to the local processed
+root as described above. It also needs an explicitly configured local Suite2p
+environment (`suite2p_lab` is the documented default), rather than relying on
+the server environment naming convention.
+
+Windows launchers and Linux GUI launchers are deliberately different:
+
+- remote Windows launchers SSH to the server and infer the remote user;
+- local Windows launchers locate a local conda environment and run locally;
+- GUI Qt packages must come from one provider stack. Mixing pip PyQt6 with
+  conda Qt/PySide runtimes produces DLL/QtCore failures that launcher flags
+  cannot reliably repair.
+
+Linux Qt/xcb failures are system-library issues (`xcb-util-cursor`/cursor
+library), not a reason to change application logic. Keep the dependency in the
+environment/install instructions where platform availability permits.
+
+## 6. Step 2 is an interactive scientific-quality-control stage
+
+Step 2 is commonly launched inside QView's worker thread. Any new
+GUI-driven situation that needs a human decision must use `confirm_callback`,
+which QView turns into a thread-safe message box. Do not add a new `input()` or
+`plt.show()` path to GUI execution: these block or fail from a GUI worker
+thread. Some historic command-line BonVision paths retain terminal prompts;
+do not copy that pattern into a GUI-worker feature.
+
+`runtime.run_preprocess_step2` gathers warnings into an `issues` list. Preserve
+this route when adding recoverable warnings so QView can give a concise
+per-experiment summary after a batch rather than forcing users to search long
+logs.
+
+### BonVision/Timeline/Harp pulse checks
+
+Photodiode, Timeline BonVision digital, BonVision and Harp pulse trains can
+fail in different ways. Counts must be compared before doing vector arithmetic
+such as jitter subtraction; otherwise unequal arrays raise a broadcasting
+exception that hides the useful diagnosis.
+
+There is a guarded fallback when Timeline photodiode counts disagree but the
+other synchronisation streams agree: explain the evidence, ask the user, and
+then use the Timeline BonVision digital signal for the BV-to-Timeline mapping
+as in the no-valid-PD path. Do not silently switch alignment source. If the
+remaining streams do not establish a trustworthy match, fail with an explicit
+"Pulse count mismatch" rather than inventing an alignment.
+
+Wheel timestamps and wheel positions must have equal lengths before using
+`interp1d`. Historical Timeline irregularities can produce a mismatch; trim or
+otherwise reconcile paired samples deliberately and log the action, never let
+SciPy's generic error be the first diagnosis.
+
+### Camera/DLC timestamps and pupil processing
+
+Camera timing metadata may be absent, empty, or corrupt (including a zero-byte
+pickle). The pipeline should report an informative skip for unavailable camera
+timing rather than continuing into pupil CSV parsing and failing later with an
+unrelated `FileNotFoundError`/`EOFError`.
+
+Diagnostic plots from camera phase analysis must not call interactive Matplotlib
+show functions inside the Step 2 worker. Save/show diagnostics only through a
+safe, explicit workflow.
+
+## 7. Imaging frame triggers need conservative treatment
+
+Timeline may begin while ScanImage is still acquiring from a **previous**
+recording. This looks like frame triggers immediately (<0.5 s) after Timeline
+start, followed by a long (>=0.5 s) pause, then the current recording's regular
+trigger train. If those initial triggers are treated as current triggers, real
+TIFF frames are assigned the wrong Timeline times.
+
+`suite2p.preprocess` detects this signature and, in QView, asks twice:
+
+1. whether to consider the proposed correction;
+2. after comparing post-pause trigger count with TIFF frame count, whether to
+   continue with that explicitly described mismatch.
+
+The non-obvious but essential rule is: **discard every trigger before the first
+qualifying pause. Never retain a convenient subset of pre-pause triggers to
+make the frame counts agree.** Those triggers belong to a different
+acquisition. For example, retaining 11 old triggers to cover 11 TIFF frames is
+arithmetically tempting but scientifically wrong.
+
+If the post-pause count is short, the unmatched TIFF frames have no reliable
+Timeline timestamps. The user must see that fact and explicitly choose whether
+to continue with only the available frame/trigger pairs. In non-interactive
+execution the code fails safely instead of guessing a correction.
+
+Apply this correction before depth/plane demultiplexing. The full raw trigger
+stream must retain its phase; deleting an arbitrary number after plane splitting
+can put all plane timestamps out of phase.
+
+Do not interpret a modest TIFF/trigger count mismatch alone as proof of missing
+hardware triggers. Several otherwise normal experiments have small count
+differences while their retained inter-trigger intervals are perfectly regular.
+
+## 8. Suite2p postprocessing and empty output cases
+
+The pipeline honours `iscell.npy` when building calcium outputs. It should not
+silently resurrect rejected Suite2p ROIs after cutting/splitting. If no valid
+cells remain, store correctly shaped empty outputs and spatial metadata rather
+than crashing on reductions over empty arrays.
+
+Suite2p detection itself can return no ROIs. That does not mean registration
+or the experiment is unusable. Preserve enough output to open/inspect the
+experiment in Suite2p, and make subsequent code tolerate zero valid cells.
+
+This differs from the Suite2p **GUI loader**, which historically assumes
+`stat[0]` exists and cannot load a `stat.npy` containing zero ROI entries. The
+custom Rapid ROI editor therefore blocks saving an all-zero ROI result; users
+must add at least one replacement ROI before saving a clean slate.
+
+## 9. Rapid ROI GUI provenance caveat
+
+The Rapid ROI GUI's `rapid_rois.json` is metadata for the custom Suite2p fork,
+not a general Suite2p standard. It records only what the Rapid editor knows.
+Older automatic ROIs and older Manual ROI-editor entries do not have reliable
+per-ROI provenance in Suite2p's native output.
+
+The clean-slate control intentionally removes **all ROIs that existed when the
+Rapid ROI window opened**, including prior Rapid ROI entries, and preserves only
+ROIs added during the currently open session. This is necessary because stale
+`rapid_rois.json` metadata can otherwise make automatic ROIs appear manual and
+survive unexpectedly.
+
+The Rapid editor writes `stat.npy`, `iscell.npy`, `F.npy`, `Fneu.npy`,
+`spks.npy`, and channel-2 counterparts together. Do not update just `stat.npy`:
+the ROI axis must stay aligned across every trace/label file. The original
+`stat.npy` is backed up as `stat_orig.npy` before a save, but that backup is
+overwritten on the next save and is not a version-control system.
+
+## 10. SRDTrans model configuration
+
+SRDTrans patch dimensions should be inferred from the trained model whenever
+possible. A manually copied patch size can disagree with checkpoint geometry
+and fail only after an expensive launch. The GUI defaults should leave patch
+size unspecified so the launcher reads model metadata; allow explicit values
+only as an intentional override.
+
+## 11. Avoid accidental data mutation during investigation
+
+When diagnosing an experiment, inspect raw Timeline/TIFF/Suite2p files
+read-only first. Do not rerun Suite2p, write `ops.npy`, alter `iscell.npy`, or
+delete binaries merely to answer a question. Suite2p GUI edits and Rapid ROI
+saves are genuine writes and can overwrite backups/metadata.
+
+For data paths, use `preprocess_pipeline.shared.paths.find_paths` or its local
+repository context. Raw data, processed data, and NAS fallbacks intentionally
+do not always live under one root.
+
+## 12. Keep tests and documentation aligned with deployment
+
+The documented test command uses `unittest`; do not assume `pytest` is
+installed in the production `lab_pipeline` environment. New behaviour should
+have a focused test where practical and at minimum be compile-checked in the
+target environment.
+
+When changing environments, queue requirements, local GUI setup, or launcher
+names, update `README.md` and the Windows launcher files in the same change.
+They are part of the operational interface, not ancillary examples.
+
+## 13. Further hidden invariants worth preserving
+
+### Suite2p version compatibility is also an API problem
+
+`suite2p.backend` is an adapter, not redundant indirection. Suite2p 1.x uses
+nested settings/database arguments and different function signatures, while
+older Suite2p accepts flat ops/database inputs. Keep calls to Suite2p run,
+plane execution, registration and binary construction behind the compatibility
+functions.
+
+When extracting a non-canonical plane/channel, `db.npy` and `settings.npy`
+must be written beside **that plane's** outputs, rather than beside the
+canonical registration plane. Otherwise later Suite2p reloads or combined
+processing use wrong metadata. The Suite2p logger filter similarly looks like
+optional noise reduction, but it intentionally removes extremely frequent
+candidate-score progress messages so queue/QView logs remain usable while
+retaining meaningful detection diagnostics and errors.
+
+### Treat a Suite2p plane as a coupled output, not independent files
+
+`stat.npy`, `iscell.npy`, `F.npy`, `Fneu.npy`, `spks.npy`, `F_chan2.npy`,
+`Fneu_chan2.npy`, and `redcell.npy` share the ROI-row axis. Any ROI deletion,
+addition, or reordering must be applied identically to every present companion
+file. `ops.npy` carries registration/channel metadata consumed by the Suite2p
+GUI. Updating only `stat.npy` is data corruption even if it initially opens.
+
+`snr` is not guaranteed in legacy/manual `stat.npy` entries. GUI compatibility
+code can derive it on load. Do not reject an otherwise valid manual ROI because
+an optional display statistic is absent.
+
+### GUI coordinate and interaction conventions are deliberately explicit
+
+Rapid ROI masks use row-major NumPy coordinates (`y`, then `x`), whereas
+PyQtGraph uses (`x`, then `y`) and image pixel centres are offset by 0.5.
+The GUI's conversions must remain consistent between clicking, candidates,
+outlines and saved masks. Square-image testing can conceal a coordinate bug;
+non-square/resized views previously exposed wrong-location clicks.
+
+Rapid ROI save creates `stat_orig.npy` as a short-term recovery copy, but it
+is overwritten by the next save. It is not a durable backup/version history.
+
+### Frame timing deliberately has two meanings
+
+`timeline_frame_start_times.npy` contains the measured trigger/rising-edge
+time. `timeline_frame_times.npy` is shifted to an approximate frame midpoint
+for conventional trace alignment. Rolling-scan/tokenised timing uses start
+time plus a ROI's vertical fraction of frame duration, while ordinary trace
+resampling uses midpoint time. Do not merge these arrays.
+
+Likewise, retain the established Timeline edge-index convention unless a full
+timing audit proves it wrong. An apparently harmless one-sample index shift
+would shift every timestamp. Validate/correct the global trigger stream before
+round-robin plane demultiplexing; removal after splitting changes plane phase.
+Per-plane counts may differ by one if acquisition ends partway through a cycle.
+
+The Step 2 common output timebase comes from the first work unit. Later
+mesoscope work units are resampled to it, with a warning if their natural
+timebase differs. This is required for concatenated outputs to have one shared
+time axis.
+
+### Camera timing protocol is date-sensitive
+
+Eye-camera Timeline edges mark a 100-frame alternating signal, not individual
+camera frames. Older experiments infer the phase from interval-jitter matching
+between Timeline and video timestamps. Newer experiments follow a protocol
+with the first expected edge at frame 100. Do not replace this with one simple
+edge-index mapping for all dates: it silently shifts older recordings.
+
+### More operational traps
+
+- Persistent queue command files can outlive a deploy. Preserve established
+  fields and normalise historical naming carefully; runtime configuration, not
+  a human-facing filename, is authoritative.
+- `nplanes=0` is an intentional request to infer plane count from ScanImage
+  metadata. Do not treat it as a literal zero-plane recording or overwrite it
+  before topology discovery; an explicit positive value is a user override.
+- Step 1 writes pipeline configuration to each experiment before work starts,
+  including jobs that later skip a component. This records intended provenance.
+- For no-imaging work, `runs2p=False` is intentional: the queue must not wait
+  for TIFFs/Suite2p config and non-imaging Step 2 work remains possible.
+- Do not make QView globally single-instance. It may launch multiple external
+  tools; only guard individual operations that genuinely cannot coexist.
+- Red-channel GUI failures can reflect a missing/invalid channel-2 summary
+  image or incompatible image shape, not simply whether `data_ch2.bin` exists.
+- The production environment documents `unittest`; do not assume `pytest` is
+  installed. Compile-check focused changes in the target environment at a
+  minimum.
