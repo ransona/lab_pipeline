@@ -860,6 +860,11 @@ class QueueTab(QtWidgets.QWidget):
             controls.addWidget(button)
         self.current_job_title = QtWidgets.QLabel("Current Job:")
         self.current_job_label = QtWidgets.QLabel("No job running")
+        current_job_font = self.current_job_label.font()
+        current_job_font.setPointSizeF(current_job_font.pointSizeF() * 2)
+        self.current_job_title.setFont(current_job_font)
+        self.current_job_label.setFont(current_job_font)
+        self.current_job_label.setStyleSheet("color: #168c2c;")
         self.current_job_label.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -1251,7 +1256,8 @@ class QueueTab(QtWidgets.QWidget):
                 break
 
         if job_name and (self.current_queue_directory / job_name).is_file():
-            self.current_job_label.setText(job_name)
+            display_name = job_name.removesuffix(".pickle")
+            self.current_job_label.setText(display_name)
             self.current_job_label.setToolTip(job_name)
         else:
             self.current_job_label.setText("No job running")
