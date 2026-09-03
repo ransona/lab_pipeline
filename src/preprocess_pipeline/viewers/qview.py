@@ -837,6 +837,9 @@ class QueueTab(QtWidgets.QWidget):
         self.current_queue_directory = NORMAL_QUEUE_DIRECTORY
         self.current_log_size = 0
         self.selected_job_name: Optional[str] = None
+        # Non-modal completed/failed job windows must be retained by the queue
+        # tab. Otherwise Python can collect a dialog immediately after `show()`.
+        self._open_job_log_windows: list[QtWidgets.QDialog] = []
         self._build_ui()
         self._connect_timers()
         self.on_queue_source_changed()
@@ -855,6 +858,14 @@ class QueueTab(QtWidgets.QWidget):
         for button in (self.start_queue_button, self.stop_queue_button, self.restart_queue_button):
             button.setVisible(self.username == "adamranson")
             controls.addWidget(button)
+        self.current_job_title = QtWidgets.QLabel("Current Job:")
+        self.current_job_label = QtWidgets.QLabel("No job running")
+        self.current_job_label.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.current_job_label.setMinimumWidth(320)
+        controls.addWidget(self.current_job_title)
+        controls.addWidget(self.current_job_label, 1)
         controls.addStretch(1)
         self.remove_button = QtWidgets.QPushButton("Remove Selected Job")
         controls.addWidget(self.remove_button)
@@ -1017,6 +1028,7 @@ class QueueTab(QtWidgets.QWidget):
     def _connect_timers(self):
         self.queue_timer = QtCore.QTimer(self)
         self.queue_timer.timeout.connect(self.refresh_queue_list)
+        self.queue_timer.timeout.connect(self.refresh_current_job)
         self.queue_timer.timeout.connect(self.refresh_completed_failed_jobs)
         self.queue_timer.start(QUEUE_REFRESH_MS)
 
@@ -1040,6 +1052,7 @@ class QueueTab(QtWidgets.QWidget):
         self.log_list.clear()
         self.load_initial_log_lines()
         self.refresh_queue_list()
+        self.refresh_current_job()
         self.refresh_prioritised_jobs()
         self.refresh_user_totals()
         self.refresh_completed_failed_jobs()
@@ -1151,8 +1164,11 @@ class QueueTab(QtWidgets.QWidget):
 
     def _show_job_config_dialog(self, job_name: str, queued_command: dict):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle(f"Job Config: {job_name}")
+        dialog.setWindowTitle(f"Job Log: {job_name}")
         dialog.resize(1000, 850)
+        dialog.setModal(False)
+        dialog.setWindowModality(QtCore.Qt.WindowModality.NonModal)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         layout = QtWidgets.QVBoxLayout(dialog)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, dialog)
@@ -1201,11 +1217,45 @@ class QueueTab(QtWidgets.QWidget):
         buttons.rejected.connect(dialog.reject)
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
-        dialog.exec()
+
+        def forget_window(*_args):
+            timer.stop()
+            try:
+                self._open_job_log_windows.remove(dialog)
+            except ValueError:
+                pass
+
+        dialog.finished.connect(forget_window)
+        self._open_job_log_windows.append(dialog)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _job_feedback_log_path(self, job_name: str) -> Path:
         log_name = job_name[:-7] + ".txt" if job_name.endswith(".pickle") else job_name + ".txt"
         return self.current_queue_directory / "logs" / log_name
+
+    def refresh_current_job(self):
+        """Show the last job started by this listener while its queue file remains active."""
+        path = self._current_log_path()
+        if path is None or not path.exists():
+            self.current_job_label.setText("Listener log not found")
+            self.current_job_label.setToolTip("")
+            return
+
+        job_name = None
+        for line in reversed(_read_tail_lines(path, 2000)):
+            match = re.match(r"^\*\* Starting job:\s*(.+\.pickle)\s*$", line.strip())
+            if match:
+                job_name = match.group(1)
+                break
+
+        if job_name and (self.current_queue_directory / job_name).is_file():
+            self.current_job_label.setText(job_name)
+            self.current_job_label.setToolTip(job_name)
+        else:
+            self.current_job_label.setText("No job running")
+            self.current_job_label.setToolTip("")
 
     def refresh_queue_list(self):
         current_selection = self.selected_job_name
@@ -1233,19 +1283,38 @@ class QueueTab(QtWidgets.QWidget):
                 self.prioritised_jobs_list.addItem(line)
 
     def _refresh_job_history_list(self, list_widget: QtWidgets.QListWidget, subdirectory: str):
-        list_widget.clear()
         history_dir = self.current_queue_directory / subdirectory
         if not history_dir.exists():
+            if list_widget.count():
+                list_widget.clear()
             return
         jobs = sorted(
             history_dir.glob("*.pickle"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )[:50]
+        job_names = [job_path.name for job_path in jobs]
+        current_job_names = [
+            self._job_name_from_item(list_widget.item(row))
+            for row in range(list_widget.count())
+        ]
+        # This method runs on a timer. Clearing/recreating unchanged rows can
+        # land between the two clicks of a double-click and make completed-job
+        # log opening appear unreliable.
+        if current_job_names == job_names:
+            return
+
+        selected_job_name = self._job_name_from_item(list_widget.currentItem())
+        list_widget.clear()
         for job_path in jobs:
             item = QtWidgets.QListWidgetItem(job_path.name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, job_path.name)
             list_widget.addItem(item)
+        if selected_job_name:
+            for row, job_name in enumerate(job_names):
+                if job_name == selected_job_name:
+                    list_widget.setCurrentRow(row)
+                    break
 
     def refresh_completed_failed_jobs(self):
         self._refresh_job_history_list(self.completed_jobs_list, "completed")

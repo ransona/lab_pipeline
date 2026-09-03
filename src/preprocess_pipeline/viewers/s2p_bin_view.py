@@ -40,18 +40,42 @@ class PlaneBinary:
     data: np.memmap
 
 
-def _load_ops_for_binary(bin_path: str):
+def _load_binary_metadata(bin_path: str):
+    """Load dimensions written before or after Suite2p plane completion.
+
+    `ops.npy` is normally the best source, but Suite2p 1.x writes `db.npy`
+    before it begins processing a plane.  Registered binaries can therefore
+    exist while the final ops/stat/F files do not.  The viewer only needs Ly/Lx
+    and must not make users wait for ROI extraction to finish.
+    """
     plane_dir = os.path.dirname(bin_path)
-    ops_path = os.path.join(plane_dir, "ops.npy")
-    if not os.path.exists(ops_path):
-        raise FileNotFoundError(f"Could not find ops.npy beside binary: {bin_path}")
-    return suite2p_npy.load_object_dict(ops_path)
+    attempted_paths = []
+    errors = []
+    for filename in ("ops.npy", "db.npy", "reg_outputs.npy", "settings.npy"):
+        metadata_path = os.path.join(plane_dir, filename)
+        attempted_paths.append(metadata_path)
+        if not os.path.exists(metadata_path):
+            continue
+        try:
+            metadata = suite2p_npy.load_object_dict(metadata_path)
+        except Exception as exc:
+            errors.append(f"{filename}: {exc}")
+            continue
+        if "Ly" in metadata and "Lx" in metadata:
+            return metadata, filename
+        errors.append(f"{filename}: missing Ly/Lx")
+
+    detail = "; ".join(errors) if errors else "no metadata file found"
+    raise FileNotFoundError(
+        "Could not determine binary dimensions beside "
+        f"{bin_path}. Tried: {', '.join(attempted_paths)}. {detail}"
+    )
 
 
 def _plane_binary_from_path(bin_path: str):
-    ops = _load_ops_for_binary(bin_path)
-    width = int(ops["Lx"])
-    height = int(ops["Ly"])
+    metadata, _metadata_source = _load_binary_metadata(bin_path)
+    width = int(metadata["Lx"])
+    height = int(metadata["Ly"])
     frame_size = width * height
     data = np.memmap(bin_path, dtype=np.int16, mode="r")
     if frame_size <= 0:
