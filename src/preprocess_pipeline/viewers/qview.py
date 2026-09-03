@@ -1288,9 +1288,24 @@ class QueueTab(QtWidgets.QWidget):
             if list_widget.count():
                 list_widget.clear()
             return
+
+        def history_time(job_path: Path) -> float:
+            """Use the final feedback-log write as the job's finish time.
+
+            Jobs are moved into ``completed`` with ``shutil.move``, which
+            preserves their original submission mtime. The feedback log is
+            written until the job ends, so its mtime is the useful timestamp
+            for ordering historical completed jobs.
+            """
+            feedback_log = self._job_feedback_log_path(job_path.name)
+            try:
+                return feedback_log.stat().st_mtime
+            except OSError:
+                return job_path.stat().st_mtime
+
         jobs = sorted(
             history_dir.glob("*.pickle"),
-            key=lambda path: path.stat().st_mtime,
+            key=history_time,
             reverse=True,
         )[:50]
         job_names = [job_path.name for job_path in jobs]
