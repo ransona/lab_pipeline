@@ -205,6 +205,13 @@ def main(debug=False, queue_path=None):
         queue_path = DEBUG_QUEUE_PATH if debug else DEFAULT_QUEUE_PATH
 
     os.makedirs(queue_path, exist_ok=True)
+    current_job_path = os.path.join(queue_path, "current_job.txt")
+    # A listener cannot resume an interrupted subprocess, so a marker left by
+    # a previous listener instance is stale at this point.
+    try:
+        os.remove(current_job_path)
+    except FileNotFoundError:
+        pass
     log_handle = open(queue_log_path(queue_path), 'a', encoding='utf-8', buffering=1)
     sys.stdout = TeeStream(sys.__stdout__, log_handle)
     sys.stderr = TeeStream(sys.__stderr__, log_handle)
@@ -310,6 +317,8 @@ def main(debug=False, queue_path=None):
                         with open(os.path.join(exp_dir_processed,'pipeline_config.pickle'), 'wb') as f: pickle.dump(queued_command, f) 
 
                         start_time = time.time()
+                        with open(current_job_path, "w", encoding="utf-8") as handle:
+                            handle.write(prioritised_jobs[ijob] + "\n")
                     # run command file
                         if queued_command.get('job_type') != 'step1_universal':
                             raise ValueError(f"Unsupported job_type in lab_pipeline queue: {queued_command.get('job_type')}")
@@ -321,6 +330,10 @@ def main(debug=False, queue_path=None):
                     # if it gets here it has somewhat worked
                     # move job to completed
                         shutil.move(os.path.join(queue_path,prioritised_jobs[ijob]),os.path.join(queue_path,'completed',prioritised_jobs[ijob]))
+                        try:
+                            os.remove(current_job_path)
+                        except FileNotFoundError:
+                            pass
                         print('#####################')
                         print(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} Completed ' + prioritised_jobs[ijob] + ' without errors')
                         print('Run time: ' + str(round((time.time()-start_time) / 60,2)) + ' mins')
@@ -341,6 +354,11 @@ def main(debug=False, queue_path=None):
                         time.sleep(60*2)
 
                 except Exception as e:
+
+                    try:
+                        os.remove(current_job_path)
+                    except FileNotFoundError:
+                        pass
 
                     matrix_notify.main(queued_command['userID'],'Error running ' + prioritised_jobs[ijob])
                     matrix_notify.main(queued_command['userID'],str(e))

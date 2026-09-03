@@ -104,6 +104,10 @@ def _queue_listener_log_path(queue_directory: Path) -> Path:
     return queue_directory / "qlistener-log.txt"
 
 
+def _current_queue_job_path(queue_directory: Path) -> Path:
+    return queue_directory / "current_job.txt"
+
+
 def cleanup_expired_srdtrans_tmux_sessions(ttl_seconds: int = SRDTRANS_TMUX_TTL_SECONDS) -> list[str]:
     try:
         result = subprocess.run(
@@ -1241,7 +1245,7 @@ class QueueTab(QtWidgets.QWidget):
         return self.current_queue_directory / "logs" / log_name
 
     def refresh_current_job(self):
-        """Show the last job started by this listener while its queue file remains active."""
+        """Show the job recorded by the listener, with a log-based fallback."""
         path = self._current_log_path()
         if path is None or not path.exists():
             self.current_job_label.setText("Listener log not found")
@@ -1249,13 +1253,41 @@ class QueueTab(QtWidgets.QWidget):
             return
 
         job_name = None
-        for line in reversed(_read_tail_lines(path, 2000)):
-            match = re.match(r"^\*\* Starting job:\s*(.+\.pickle)\s*$", line.strip())
-            if match:
-                job_name = match.group(1)
-                break
+        marker_path = _current_queue_job_path(self.current_queue_directory)
+        try:
+            marker_job_name = marker_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            marker_job_name = ""
+        if marker_job_name and (self.current_queue_directory / marker_job_name).is_file():
+            job_name = marker_job_name
 
-        if job_name and (self.current_queue_directory / job_name).is_file():
+        # Existing listeners do not yet write current_job.txt. Their active
+        # per-job raw log is the only queue file being updated, so it gives a
+        # reliable fallback even when verbose output pushes the start marker
+        # out of the global listener-log tail.
+        if job_name is None:
+            active_logs = []
+            for queued_job in self.current_queue_directory.glob("*.pickle"):
+                raw_log = self.current_queue_directory / "logs" / f"{queued_job.stem}.raw.txt"
+                if raw_log.exists():
+                    active_logs.append((raw_log.stat().st_mtime, queued_job.name))
+            if active_logs:
+                last_log_time, candidate = max(active_logs)
+                if time.time() - last_log_time < 120:
+                    job_name = candidate
+
+        # Retain the original tail-based approach as a final fallback for a
+        # quiet job that has not emitted per-job output yet.
+        if job_name is None:
+            for line in reversed(_read_tail_lines(path, 2000)):
+                match = re.match(r"^\*\* Starting job:\s*(.+\.pickle)\s*$", line.strip())
+                if match:
+                    candidate = match.group(1)
+                    if (self.current_queue_directory / candidate).is_file():
+                        job_name = candidate
+                    break
+
+        if job_name:
             display_name = job_name.removesuffix(".pickle")
             self.current_job_label.setText(display_name)
             self.current_job_label.setToolTip(job_name)
@@ -3678,6 +3710,7 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         left_layout.addLayout(button_row)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Groups / Experiments"])
+        self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         left_layout.addWidget(self.tree, 1)
         outer.addWidget(left, 1)
 
@@ -3712,6 +3745,7 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.save_notes_button.clicked.connect(self.save_notes)
         self.refresh_metadata_button.clicked.connect(lambda: self.show_selected(refresh=True))
         self.tree.itemSelectionChanged.connect(self.show_selected)
+        self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
     def selected_group_id(self) -> int:
         item = self.tree.currentItem()
@@ -3755,6 +3789,66 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             if selected_id == int(row["id"]):
                 self.tree.setCurrentItem(item)
         self.tree.expandToDepth(1)
+
+    @staticmethod
+    def _suite2p_stat_files(user_id: str, exp_id: str) -> list[Path]:
+        """Return GUI-loadable Suite2p results for an experiment."""
+        _, _, _, processed_experiment, _ = paths.find_paths(user_id, exp_id)
+        processed_root = Path(processed_experiment)
+        if not processed_root.is_dir():
+            return []
+        stat_files = []
+        for stat_path in processed_root.rglob("stat.npy"):
+            if not stat_path.parent.name.startswith("plane"):
+                continue
+            if any(parent.name == "suite2p" for parent in stat_path.parents):
+                stat_files.append(stat_path)
+        return sorted(stat_files)
+
+    def show_context_menu(self, position: QtCore.QPoint):
+        item = self.tree.itemAt(position)
+        if item is None:
+            return
+        self.tree.setCurrentItem(item)
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        node = self.store.get_node(node_id)
+        if node is None or node["node_type"] != "experiment":
+            return
+
+        menu = QtWidgets.QMenu(self)
+        stat_files = self._suite2p_stat_files(node["user_id"], node["exp_id"])
+        if len(stat_files) == 1:
+            action = menu.addAction("Open in new Suite2p")
+            action.triggered.connect(
+                lambda _checked=False, path=stat_files[0]: self.open_in_new_suite2p(path)
+            )
+        elif stat_files:
+            submenu = menu.addMenu("Open in new Suite2p")
+            _, _, _, processed_experiment, _ = paths.find_paths(node["user_id"], node["exp_id"])
+            processed_root = Path(processed_experiment)
+            for stat_path in stat_files:
+                action = submenu.addAction(str(stat_path.relative_to(processed_root)))
+                action.triggered.connect(
+                    lambda _checked=False, path=stat_path: self.open_in_new_suite2p(path)
+                )
+        else:
+            action = menu.addAction("Open in new Suite2p (no completed Suite2p result)")
+            action.setEnabled(False)
+        menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def open_in_new_suite2p(self, stat_path: Path):
+        launcher = APPS_ROOT / "open_suite2p.py"
+        started = QtCore.QProcess.startDetached(
+            "/opt/scripts/conda-run.sh",
+            ["suite2p_1.1.0", "python", str(launcher), str(stat_path)],
+            str(REPO_ROOT),
+        )
+        if not started:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Open in new Suite2p",
+                "Could not launch Suite2p in the suite2p_1.1.0 environment.",
+            )
 
     def add_group(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Add Group", "Group name:")
