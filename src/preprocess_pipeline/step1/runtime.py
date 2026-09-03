@@ -298,6 +298,13 @@ def _should_emit_progress_line(line, progress_state):
     if re.match(r'^(25|50|75|100)% complete$', stripped):
         return True
 
+    # DeepLabCut/tqdm may emit progress with no known total, for example
+    # ``13139it [02:00, 98.55it/s]``. These are repeated for nearly every
+    # batch, so keep them in the raw log but omit them from the queue-facing
+    # feedback log just as we do percentage progress updates above.
+    if re.match(r'^\d+(?:it|frames?|batches?)\s*\[', stripped, re.IGNORECASE):
+        return False
+
     suite2p_tqdm = re.match(r'^(\d+)%\|.*\|\s*(\d+)/(\d+)\s*\[', stripped)
     if suite2p_tqdm:
         percent = int(suite2p_tqdm.group(1))
