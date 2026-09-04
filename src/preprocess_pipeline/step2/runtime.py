@@ -69,7 +69,10 @@ def run_preprocess_step2(userID, expID, pre_secs, post_secs, run_bonvision, run_
         ###########################################################
         print('** Starting dlc timestamp section...')
         if preprocess_cam.preprocess_cam_run(userID, expID):
-            preprocess_pupil_timestamp.preprocess_pupil_timestamp_run(userID, expID)
+            if not preprocess_pupil_timestamp.preprocess_pupil_timestamp_run(userID, expID):
+                issues.append(
+                    'Pupil timestamping skipped because no usable DLC pupil output was available.'
+                )
         else:
             print('Skipping pupil timestamp processing because eye-camera timestamps are unavailable.')
             issues.append('Eye-camera/DLC timestamping skipped because usable camera metadata was unavailable.')

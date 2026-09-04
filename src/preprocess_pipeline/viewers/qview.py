@@ -3692,6 +3692,25 @@ class PickerStore:
         self.conn.commit()
         return True
 
+    def sort_experiments_by_id(self, parent_id: int) -> bool:
+        """Sort a group's direct experiment entries by their experiment ID."""
+        parent = self.get_node(parent_id)
+        if parent is None or parent["node_type"] != "group":
+            raise ValueError("Choose a valid group.")
+        experiments = [
+            node for node in self.children(parent_id) if node["node_type"] == "experiment"
+        ]
+        if len(experiments) < 2:
+            return False
+        now = time.time()
+        for sort_order, node in enumerate(sorted(experiments, key=lambda item: (item["exp_id"], item["id"]))):
+            self.conn.execute(
+                "UPDATE nodes SET sort_order=?, updated_at=? WHERE id=?",
+                (sort_order, now, node["id"]),
+            )
+        self.conn.commit()
+        return True
+
     def copy_subtree(self, node_id: int, new_parent_id: int) -> int:
         """Deep-copy an experiment or group (including all descendants)."""
         source = self.get_node(node_id)
@@ -3793,11 +3812,15 @@ class PickerSelectDialog(QtWidgets.QDialog):
         self.tree.clear()
 
         def add_children(parent_item, parent_id):
+            experiment_number = 0
             for row in self.store.children(parent_id):
                 if row["node_type"] == "group":
                     item = QtWidgets.QTreeWidgetItem([row["name"]])
                 else:
-                    item = QtWidgets.QTreeWidgetItem([f"{row['user_id']} / {row['exp_id']}"])
+                    experiment_number += 1
+                    item = QtWidgets.QTreeWidgetItem(
+                        [f"{experiment_number}. {row['user_id']} / {row['exp_id']}"]
+                    )
                 item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(row["id"]))
                 parent_item.addChild(item)
                 if row["node_type"] == "group":
@@ -3937,8 +3960,13 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.tree.clear()
 
         def add_children(parent_item, parent_id):
+            experiment_number = 0
             for row in self.store.children(parent_id):
-                text = row["name"] if row["node_type"] == "group" else f"{row['user_id']} / {row['exp_id']}"
+                if row["node_type"] == "group":
+                    text = row["name"]
+                else:
+                    experiment_number += 1
+                    text = f"{experiment_number}. {row['user_id']} / {row['exp_id']}"
                 item = QtWidgets.QTreeWidgetItem([text])
                 item.setData(0, QtCore.Qt.ItemDataRole.UserRole, int(row["id"]))
                 parent_item.addChild(item)
@@ -4048,10 +4076,37 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.tree.setCurrentItem(item)
         node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
         node = self.store.get_node(node_id)
-        if node is None or node["node_type"] != "experiment":
+        if node is None:
             return
 
         menu = QtWidgets.QMenu(self)
+        if node["node_type"] == "group":
+            experiment_ids = [
+                exp_id for _user_id, exp_id in self.store.experiments_under(node_id)
+            ]
+            copy_action = menu.addAction("Copy experiment IDs to clipboard")
+            copy_action.setEnabled(bool(experiment_ids))
+            copy_action.triggered.connect(
+                lambda _checked=False, group_id=node_id: self.copy_group_experiment_ids(group_id)
+            )
+            direct_experiments = [
+                child for child in self.store.children(node_id)
+                if child["node_type"] == "experiment"
+            ]
+            menu.addSeparator()
+            if direct_experiments:
+                action = menu.addAction("Sort experiments by experiment ID")
+                action.setEnabled(len(direct_experiments) > 1)
+                action.triggered.connect(
+                    lambda _checked=False, group_id=node_id: self.sort_group_experiments(group_id)
+                )
+            else:
+                action = menu.addAction("Sort experiments by experiment ID")
+                action.setEnabled(False)
+            menu.exec(self.tree.viewport().mapToGlobal(position))
+            return
+        if node["node_type"] != "experiment":
+            return
         stat_files = self._suite2p_stat_files(node["user_id"], node["exp_id"])
         if len(stat_files) == 1:
             action = menu.addAction("Open in new Suite2p")
@@ -4071,6 +4126,24 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             action = menu.addAction("Open in new Suite2p (no completed Suite2p result)")
             action.setEnabled(False)
         menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def sort_group_experiments(self, group_id: int):
+        try:
+            changed = self.store.sort_experiments_by_id(group_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Sort experiments", str(exc))
+            return
+        if changed:
+            self.current_node_id = group_id
+            self.refresh_tree()
+
+    def copy_group_experiment_ids(self, group_id: int):
+        experiment_ids = [
+            exp_id for _user_id, exp_id in self.store.experiments_under(group_id)
+        ]
+        if not experiment_ids:
+            return
+        QtWidgets.QApplication.clipboard().setText("\n".join(experiment_ids))
 
     def open_in_new_suite2p(self, stat_path: Path):
         launcher = APPS_ROOT / "open_suite2p.py"

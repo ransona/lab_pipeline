@@ -13,18 +13,39 @@ def preprocess_pupil_timestamp_run(userID, expID):
         exp_dir_raw = paths.find_paths(userID, expID)
     exp_dir_processed_recordings = os.path.join(exp_dir_processed,'recordings')
     print('** Starting ' + expID)
-    dlc_filenames = [expID + '_eye1_leftDLC_resnet50_Trial_newMay19shuffle1_1030000.csv',
-                expID + '_eye1_rightDLC_resnet50_Trial_newMay19shuffle1_1030000.csv']
+    eye_outputs = [
+        ('left', 'dlcEyeLeft.pickle', 'dlcEyeLeft_resampled.pickle'),
+        ('right', 'dlcEyeRight.pickle', 'dlcEyeRight_resampled.pickle'),
+    ]
+    logged_frame_times_path = os.path.join(exp_dir_processed_recordings, 'eye_frame_times.npy')
+    if not os.path.isfile(logged_frame_times_path):
+        print('Skipping pupil timestamp processing: eye-camera frame timestamps are unavailable.')
+        return False
 
-    for iVid in range(0, len(dlc_filenames)):
+    available_outputs = [
+        output for output in eye_outputs
+        if os.path.isfile(os.path.join(exp_dir_processed_recordings, output[1]))
+    ]
+    if not available_outputs:
+        print(
+            'Skipping pupil timestamp processing: no DLC pupil output was found '
+            '(expected dlcEyeLeft.pickle and/or dlcEyeRight.pickle).'
+        )
+        return False
+
+    # A failed/missing tracking pass for one eye should not discard usable
+    # tracking from the other eye.
+    for eye_name, input_filename, output_filename in eye_outputs:
+        input_path = os.path.join(exp_dir_processed_recordings, input_filename)
+        if not os.path.isfile(input_path):
+            print(f'Skipping {eye_name}-eye pupil timestamp processing: {input_filename} was not found.')
+            continue
         # load eyeDat which contains pupil position info derived from circles etc fit to dlc output
-        if iVid == 0:
-            eyeDat = pickle.load(open(os.path.join(exp_dir_processed_recordings,'dlcEyeLeft.pickle'), 'rb'))
-        else:
-            eyeDat = pickle.load(open(os.path.join(exp_dir_processed_recordings,'dlcEyeRight.pickle'), 'rb'))
+        with open(input_path, 'rb') as input_file:
+            eyeDat = pickle.load(input_file)
         # store detected eye details with timeline timestamps
         # load video timestamps
-        loggedFrameTimes = np.load(os.path.join(exp_dir_processed_recordings,'eye_frame_times.npy'))
+        loggedFrameTimes = np.load(logged_frame_times_path)
         # resample to 10Hz constant rate
         newTimeVector = np.arange(round(loggedFrameTimes[0]), round(loggedFrameTimes[-1]), 0.1)
         frameVector = np.arange(0,len(eyeDat['x']))
@@ -36,14 +57,8 @@ def preprocess_pupil_timestamp_run(userID, expID):
         eyeDat2['velocity'] = np.interp(newTimeVector, loggedFrameTimes, eyeDat['velocity'])
         eyeDat2['qc'] = np.interp(newTimeVector, loggedFrameTimes, eyeDat['qc'])
         eyeDat2['frame'] = np.round(np.interp(newTimeVector, loggedFrameTimes, frameVector))
-        if iVid == 0:
-            pickle_out = open(os.path.join(exp_dir_processed_recordings,'dlcEyeLeft_resampled.pickle'),"wb")
+        with open(os.path.join(exp_dir_processed_recordings, output_filename), "wb") as pickle_out:
             pickle.dump(eyeDat2, pickle_out)
-            pickle_out.close()
-        else:
-            pickle_out = open(os.path.join(exp_dir_processed_recordings,'dlcEyeRight_resampled.pickle'),"wb")
-            pickle.dump(eyeDat2, pickle_out)
-            pickle_out.close()           
         
     # check if there is a pix->degrees calibration file for the animal and if there is use it to convert
     # pupil xy position etc to degrees
@@ -56,6 +71,7 @@ def preprocess_pupil_timestamp_run(userID, expID):
         print('Warning: no eye position calibration file found')
     print()
     print('** Done without errors')
+    return True
 
 # for debugging:
 def main():
