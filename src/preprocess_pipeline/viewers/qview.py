@@ -3506,6 +3506,7 @@ class PickerStore:
                 user_id TEXT,
                 exp_id TEXT,
                 notes TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             );
@@ -3518,14 +3519,40 @@ class PickerStore:
             );
             """
         )
+        # Picker databases created before ordering was introduced do not have
+        # this column.  Keep their current alphabetical order as the initial
+        # manual order, rather than unexpectedly reshuffling existing trees.
+        columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(nodes)").fetchall()
+        }
+        if "sort_order" not in columns:
+            self.conn.execute("ALTER TABLE nodes ADD COLUMN sort_order INTEGER")
         count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
         if count == 0:
             now = time.time()
             self.conn.execute(
-                "INSERT INTO nodes(parent_id, node_type, name, created_at, updated_at) VALUES(NULL, 'group', 'Experiments', ?, ?)",
+                """
+                INSERT INTO nodes(parent_id, node_type, name, sort_order, created_at, updated_at)
+                VALUES(NULL, 'group', 'Experiments', 0, ?, ?)
+                """,
                 (now, now),
             )
+        self._fill_missing_sort_orders()
         self.conn.commit()
+
+    def _fill_missing_sort_orders(self):
+        """Give legacy and newly migrated nodes a stable initial sibling order."""
+        rows = self.conn.execute(
+            "SELECT id, parent_id, node_type, sort_order FROM nodes "
+            "ORDER BY node_type DESC, name, id"
+        ).fetchall()
+        next_order: dict[tuple[Optional[int], str], int] = {}
+        for row in rows:
+            key = (row["parent_id"], row["node_type"])
+            order = next_order.get(key, 0)
+            if row["sort_order"] is None:
+                self.conn.execute("UPDATE nodes SET sort_order=? WHERE id=?", (order, row["id"]))
+            next_order[key] = max(order + 1, int(row["sort_order"] or 0) + 1)
 
     def root_id(self) -> int:
         row = self.conn.execute("SELECT id FROM nodes WHERE parent_id IS NULL ORDER BY id LIMIT 1").fetchone()
@@ -3533,19 +3560,44 @@ class PickerStore:
 
     def children(self, parent_id: Optional[int]) -> list[sqlite3.Row]:
         if parent_id is None:
-            cursor = self.conn.execute("SELECT * FROM nodes WHERE parent_id IS NULL ORDER BY node_type DESC, name")
+            cursor = self.conn.execute(
+                "SELECT * FROM nodes WHERE parent_id IS NULL "
+                "ORDER BY node_type DESC, sort_order, name, id"
+            )
         else:
-            cursor = self.conn.execute("SELECT * FROM nodes WHERE parent_id=? ORDER BY node_type DESC, name", (parent_id,))
+            cursor = self.conn.execute(
+                "SELECT * FROM nodes WHERE parent_id=? "
+                "ORDER BY node_type DESC, sort_order, name, id",
+                (parent_id,),
+            )
         return list(cursor.fetchall())
 
     def get_node(self, node_id: int) -> Optional[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
 
+    def _next_sort_order(self, parent_id: Optional[int], node_type: str) -> int:
+        if parent_id is None:
+            row = self.conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) AS maximum FROM nodes "
+                "WHERE parent_id IS NULL AND node_type=?",
+                (node_type,),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) AS maximum FROM nodes "
+                "WHERE parent_id=? AND node_type=?",
+                (parent_id, node_type),
+            ).fetchone()
+        return int(row["maximum"]) + 1
+
     def add_group(self, parent_id: int, name: str) -> int:
         now = time.time()
         cursor = self.conn.execute(
-            "INSERT INTO nodes(parent_id, node_type, name, created_at, updated_at) VALUES(?, 'group', ?, ?, ?)",
-            (parent_id, name, now, now),
+            """
+            INSERT INTO nodes(parent_id, node_type, name, sort_order, created_at, updated_at)
+            VALUES(?, 'group', ?, ?, ?, ?)
+            """,
+            (parent_id, name, self._next_sort_order(parent_id, "group"), now, now),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -3554,10 +3606,13 @@ class PickerStore:
         now = time.time()
         cursor = self.conn.execute(
             """
-            INSERT INTO nodes(parent_id, node_type, name, user_id, exp_id, notes, created_at, updated_at)
-            VALUES(?, 'experiment', ?, ?, ?, ?, ?, ?)
+            INSERT INTO nodes(parent_id, node_type, name, user_id, exp_id, notes, sort_order, created_at, updated_at)
+            VALUES(?, 'experiment', ?, ?, ?, ?, ?, ?, ?)
             """,
-            (parent_id, f"{user_id} / {exp_id}", user_id, exp_id, notes, now, now),
+            (
+                parent_id, f"{user_id} / {exp_id}", user_id, exp_id, notes,
+                self._next_sort_order(parent_id, "experiment"), now, now,
+            ),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -3577,6 +3632,96 @@ class PickerStore:
         now = time.time()
         self.conn.execute("UPDATE nodes SET notes=?, updated_at=? WHERE id=?", (notes, now, node_id))
         self.conn.commit()
+
+    def _is_descendant(self, node_id: int, possible_ancestor_id: int) -> bool:
+        """Return whether ``node_id`` belongs to the specified group subtree."""
+        current_id = node_id
+        while current_id is not None:
+            if current_id == possible_ancestor_id:
+                return True
+            row = self.get_node(current_id)
+            current_id = int(row["parent_id"]) if row and row["parent_id"] is not None else None
+        return False
+
+    def move_node(self, node_id: int, new_parent_id: int):
+        if node_id == self.root_id():
+            raise ValueError("Cannot move the root group.")
+        node = self.get_node(node_id)
+        parent = self.get_node(new_parent_id)
+        if node is None or parent is None or parent["node_type"] != "group":
+            raise ValueError("Choose a valid destination group.")
+        if node["node_type"] == "group" and self._is_descendant(new_parent_id, node_id):
+            raise ValueError("Cannot move a group into itself or one of its subgroups.")
+        self.conn.execute(
+            "UPDATE nodes SET parent_id=?, sort_order=?, updated_at=? WHERE id=?",
+            (
+                new_parent_id, self._next_sort_order(new_parent_id, node["node_type"]),
+                time.time(), node_id,
+            ),
+        )
+        self.conn.commit()
+
+    def move_node_within_parent(self, node_id: int, direction: int) -> bool:
+        """Swap a node with its preceding/following same-type sibling."""
+        if direction not in (-1, 1) or node_id == self.root_id():
+            return False
+        node = self.get_node(node_id)
+        if node is None:
+            return False
+        siblings = [
+            sibling for sibling in self.children(node["parent_id"])
+            if sibling["node_type"] == node["node_type"]
+        ]
+        try:
+            index = next(i for i, sibling in enumerate(siblings) if sibling["id"] == node_id)
+        except StopIteration:
+            return False
+        other_index = index + direction
+        if not 0 <= other_index < len(siblings):
+            return False
+        other = siblings[other_index]
+        now = time.time()
+        self.conn.execute(
+            "UPDATE nodes SET sort_order=?, updated_at=? WHERE id=?",
+            (other["sort_order"], now, node_id),
+        )
+        self.conn.execute(
+            "UPDATE nodes SET sort_order=?, updated_at=? WHERE id=?",
+            (node["sort_order"], now, other["id"]),
+        )
+        self.conn.commit()
+        return True
+
+    def copy_subtree(self, node_id: int, new_parent_id: int) -> int:
+        """Deep-copy an experiment or group (including all descendants)."""
+        source = self.get_node(node_id)
+        parent = self.get_node(new_parent_id)
+        if source is None or parent is None or parent["node_type"] != "group":
+            raise ValueError("Choose a valid item and destination group.")
+
+        def copy_node(source_id: int, destination_parent_id: int) -> int:
+            source_node = self.get_node(source_id)
+            now = time.time()
+            cursor = self.conn.execute(
+                """
+                INSERT INTO nodes(parent_id, node_type, name, user_id, exp_id, notes, sort_order, created_at, updated_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    destination_parent_id, source_node["node_type"], source_node["name"],
+                    source_node["user_id"], source_node["exp_id"], source_node["notes"],
+                    self._next_sort_order(destination_parent_id, source_node["node_type"]), now, now,
+                ),
+            )
+            copied_id = int(cursor.lastrowid)
+            if source_node["node_type"] == "group":
+                for child in self.children(source_id):
+                    copy_node(int(child["id"]), copied_id)
+            return copied_id
+
+        copied_id = copy_node(node_id, new_parent_id)
+        self.conn.commit()
+        return copied_id
 
     def cached_metadata(self, user_id: str, exp_id: str) -> Optional[dict]:
         row = self.conn.execute(
@@ -3684,6 +3829,7 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         super().__init__(parent)
         self.store = PickerStore()
         self.current_node_id: Optional[int] = None
+        self.clipboard_node: Optional[dict] = None
         self._build_ui()
         self.refresh_tree()
 
@@ -3698,6 +3844,9 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.add_folder_button = QtWidgets.QPushButton("Add From Folder")
         self.rename_button = QtWidgets.QPushButton("Rename")
         self.delete_button = QtWidgets.QPushButton("Delete")
+        self.cut_button = QtWidgets.QPushButton("Cut")
+        self.copy_button = QtWidgets.QPushButton("Copy")
+        self.paste_button = QtWidgets.QPushButton("Paste")
         for button in (
             self.add_group_button,
             self.add_subgroup_button,
@@ -3705,12 +3854,16 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             self.add_folder_button,
             self.rename_button,
             self.delete_button,
+            self.cut_button,
+            self.copy_button,
+            self.paste_button,
         ):
             button_row.addWidget(button)
         left_layout.addLayout(button_row)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Groups / Experiments"])
         self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.installEventFilter(self)
         left_layout.addWidget(self.tree, 1)
         outer.addWidget(left, 1)
 
@@ -3742,10 +3895,15 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.add_folder_button.clicked.connect(self.add_from_folder)
         self.rename_button.clicked.connect(self.rename_selected)
         self.delete_button.clicked.connect(self.delete_selected)
+        self.cut_button.clicked.connect(lambda: self.copy_or_cut_selected("cut"))
+        self.copy_button.clicked.connect(lambda: self.copy_or_cut_selected("copy"))
+        self.paste_button.clicked.connect(self.paste_into_selected_group)
         self.save_notes_button.clicked.connect(self.save_notes)
         self.refresh_metadata_button.clicked.connect(lambda: self.show_selected(refresh=True))
         self.tree.itemSelectionChanged.connect(self.show_selected)
+        self.tree.itemSelectionChanged.connect(self.update_clipboard_buttons)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
+        self.update_clipboard_buttons()
 
     def selected_group_id(self) -> int:
         item = self.tree.currentItem()
@@ -3759,8 +3917,23 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             return node_id
         return int(node["parent_id"] or self.store.root_id())
 
+    def _expanded_group_ids(self) -> set[int]:
+        expanded: set[int] = set()
+
+        def visit(item: QtWidgets.QTreeWidgetItem):
+            node_id = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if node_id is not None and item.isExpanded():
+                expanded.add(int(node_id))
+            for index in range(item.childCount()):
+                visit(item.child(index))
+
+        for index in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(index))
+        return expanded
+
     def refresh_tree(self):
         selected_id = self.current_node_id
+        expanded_ids = self._expanded_group_ids()
         self.tree.clear()
 
         def add_children(parent_item, parent_id):
@@ -3774,6 +3947,7 @@ class ExperimentPickerTab(QtWidgets.QWidget):
                     font.setBold(True)
                     item.setFont(0, font)
                     add_children(item, int(row["id"]))
+                    item.setExpanded(int(row["id"]) in expanded_ids)
                 if selected_id == int(row["id"]):
                     self.tree.setCurrentItem(item)
 
@@ -3788,7 +3962,69 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             item.setExpanded(True)
             if selected_id == int(row["id"]):
                 self.tree.setCurrentItem(item)
-        self.tree.expandToDepth(1)
+        self.update_clipboard_buttons()
+
+    def eventFilter(self, watched, event):
+        if (
+            watched is self.tree
+            and event.type() == QtCore.QEvent.Type.KeyPress
+            and event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier
+            and event.key() in (QtCore.Qt.Key.Key_Up, QtCore.Qt.Key.Key_Down)
+        ):
+            item = self.tree.currentItem()
+            if item is None:
+                return False
+            node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+            direction = -1 if event.key() == QtCore.Qt.Key.Key_Up else 1
+            if self.store.move_node_within_parent(node_id, direction):
+                self.current_node_id = node_id
+                self.refresh_tree()
+            # Arrow keys reorder once an item is selected, rather than moving
+            # the selection to another item.
+            return True
+        return super().eventFilter(watched, event)
+
+    def update_clipboard_buttons(self):
+        item = self.tree.currentItem()
+        can_copy_or_cut = False
+        if item is not None:
+            node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+            can_copy_or_cut = node_id != self.store.root_id() and self.store.get_node(node_id) is not None
+        self.cut_button.setEnabled(can_copy_or_cut)
+        self.copy_button.setEnabled(can_copy_or_cut)
+        self.paste_button.setEnabled(self.clipboard_node is not None and item is not None)
+
+    def copy_or_cut_selected(self, mode: str):
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        if node_id == self.store.root_id():
+            QtWidgets.QMessageBox.information(self, "Picker", "The root group cannot be copied or moved.")
+            return
+        self.clipboard_node = {"mode": mode, "node_id": node_id}
+        self.update_clipboard_buttons()
+
+    def paste_into_selected_group(self):
+        if self.clipboard_node is None:
+            return
+        source_id = int(self.clipboard_node["node_id"])
+        if self.store.get_node(source_id) is None:
+            self.clipboard_node = None
+            self.update_clipboard_buttons()
+            return
+        destination_id = self.selected_group_id()
+        try:
+            if self.clipboard_node["mode"] == "cut":
+                self.store.move_node(source_id, destination_id)
+                self.current_node_id = source_id
+                self.clipboard_node = None
+            else:
+                self.current_node_id = self.store.copy_subtree(source_id, destination_id)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Paste", str(exc))
+            return
+        self.refresh_tree()
 
     @staticmethod
     def _suite2p_stat_files(user_id: str, exp_id: str) -> list[Path]:

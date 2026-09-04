@@ -6,23 +6,28 @@ from pathlib import Path
 
 
 def _send_to_running_suite2p(stat_path: Path) -> bool:
-    """Ask an existing Suite2p GUI for this user to load ``stat_path``."""
+    """Ask an existing Suite2p GUI for this user to load ``stat_path``.
+
+    A successful connection identifies a live GUI control endpoint.  Do not
+    wait for the GUI to finish loading and reply: that operation can take
+    seconds and previously caused the launcher to start a duplicate instance.
+    """
     from qtpy import QtCore, QtNetwork
 
     app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
     socket = QtNetwork.QLocalSocket()
     socket.connectToServer(f"suite2p-gui-{getpass.getuser()}")
-    if not socket.waitForConnected(300):
+    if not socket.waitForConnected(1000):
         return False
-    socket.write(f"{stat_path}\n".encode("utf-8"))
+    request = f"{stat_path}\n".encode("utf-8")
+    queued_bytes = socket.write(request)
     socket.flush()
-    if not socket.waitForBytesWritten(500):
-        return False
-    if not socket.waitForReadyRead(1000):
-        return False
-    response = bytes(socket.readAll()).decode("utf-8", errors="replace").strip()
     socket.disconnectFromServer()
-    return response == "OK"
+    # A live endpoint has already accepted this local connection.  Some Qt
+    # platform backends report waitForBytesWritten() as false while still
+    # delivering the queued request; treating that as failure launched a
+    # duplicate GUI even though the existing one loaded the experiment.
+    return queued_bytes == len(request)
 
 
 def main():
