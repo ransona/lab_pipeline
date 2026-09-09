@@ -52,6 +52,7 @@ DEFAULT_SRDTRANS_STEP1_JSON = (
     '"overlap_factor": 0.5, "gpu": "0", '
     '"channels": ["ch1"]}'
 )
+SUITE2P_GUI_ENV_CANDIDATES = ("suite2p_lab", "suite2p_1.1.0")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APPS_ROOT = REPO_ROOT / "apps"
@@ -106,6 +107,29 @@ def _queue_listener_log_path(queue_directory: Path) -> Path:
 
 def _current_queue_job_path(queue_directory: Path) -> Path:
     return queue_directory / "current_job.txt"
+
+
+def _suite2p_gui_environment() -> str:
+    preferred = SUITE2P_GUI_ENV_CANDIDATES[0]
+    try:
+        probe = subprocess.run(
+            [
+                "/opt/scripts/conda-run.sh",
+                preferred,
+                "python",
+                "-c",
+                "import suite2p, qtpy",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=20,
+        )
+        if probe.returncode == 0:
+            return preferred
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return SUITE2P_GUI_ENV_CANDIDATES[1]
 
 
 def cleanup_expired_srdtrans_tmux_sessions(ttl_seconds: int = SRDTRANS_TMUX_TTL_SECONDS) -> list[str]:
@@ -4147,16 +4171,17 @@ class ExperimentPickerTab(QtWidgets.QWidget):
 
     def open_in_new_suite2p(self, stat_path: Path):
         launcher = APPS_ROOT / "open_suite2p.py"
+        environment = _suite2p_gui_environment()
         started = QtCore.QProcess.startDetached(
             "/opt/scripts/conda-run.sh",
-            ["suite2p_1.1.0", "python", str(launcher), str(stat_path)],
+            [environment, "python", str(launcher), str(stat_path)],
             str(REPO_ROOT),
         )
         if not started:
             QtWidgets.QMessageBox.critical(
                 self,
                 "Open in new Suite2p",
-                "Could not launch Suite2p in the suite2p_1.1.0 environment.",
+                f"Could not launch Suite2p in the {environment} environment.",
             )
 
     def add_group(self):
