@@ -132,6 +132,33 @@ def _suite2p_gui_environment() -> str:
     return SUITE2P_GUI_ENV_CANDIDATES[1]
 
 
+def _suite2p_gui_launch_command(environment: str, launcher: Path, stat_path: Path) -> str:
+    """Launch through activated Conda first, then retain the legacy fallback.
+
+    Activating the environment gives Conda a chance to establish its normal
+    Qt/DLL environment.  The existing conda-run invocation remains a fallback
+    when activation or the first GUI launch fails.
+    """
+    conda_setup = Path.home() / "miniconda3" / "etc" / "profile.d" / "conda.sh"
+    activated_launch = " && ".join(
+        (
+            f"source {shlex.quote(str(conda_setup))}",
+            f"conda activate {shlex.quote(environment)}",
+            f"python {shlex.quote(str(launcher))} {shlex.quote(str(stat_path))}",
+        )
+    )
+    fallback_launch = " ".join(
+        (
+            "/opt/scripts/conda-run.sh",
+            shlex.quote(environment),
+            "python",
+            shlex.quote(str(launcher)),
+            shlex.quote(str(stat_path)),
+        )
+    )
+    return f"if {activated_launch}; then exit 0; fi; exec {fallback_launch}"
+
+
 def cleanup_expired_srdtrans_tmux_sessions(ttl_seconds: int = SRDTRANS_TMUX_TTL_SECONDS) -> list[str]:
     try:
         result = subprocess.run(
@@ -4172,9 +4199,10 @@ class ExperimentPickerTab(QtWidgets.QWidget):
     def open_in_new_suite2p(self, stat_path: Path):
         launcher = APPS_ROOT / "open_suite2p.py"
         environment = _suite2p_gui_environment()
+        command = _suite2p_gui_launch_command(environment, launcher, stat_path)
         started = QtCore.QProcess.startDetached(
-            "/opt/scripts/conda-run.sh",
-            [environment, "python", str(launcher), str(stat_path)],
+            "/bin/bash",
+            ["-lc", command],
             str(REPO_ROOT),
         )
         if not started:
