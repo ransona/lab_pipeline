@@ -37,6 +37,7 @@ class Suite2pGuiEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(_suite2p_gui_environment(), "suite2p_lab")
         self.assertEqual(run.call_args.args[0][1], "suite2p_lab")
+        self.assertEqual(run.call_args.args[0][-1], "import suite2p")
 
     @mock.patch("preprocess_pipeline.viewers.qview.subprocess.run")
     def test_falls_back_to_existing_environment_when_probe_fails(self, run):

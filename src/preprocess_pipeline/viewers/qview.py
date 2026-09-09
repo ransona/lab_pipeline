@@ -118,7 +118,7 @@ def _suite2p_gui_environment() -> str:
                 preferred,
                 "python",
                 "-c",
-                "import suite2p, qtpy",
+                "import suite2p",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

@@ -12,7 +12,10 @@ def _send_to_running_suite2p(stat_path: Path) -> bool:
     wait for the GUI to finish loading and reply: that operation can take
     seconds and previously caused the launcher to start a duplicate instance.
     """
-    from qtpy import QtCore, QtNetwork
+    try:
+        from qtpy import QtCore, QtNetwork
+    except ImportError:
+        return False
 
     app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
     socket = QtNetwork.QLocalSocket()
