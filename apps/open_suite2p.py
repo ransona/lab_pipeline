@@ -12,10 +12,16 @@ def _send_to_running_suite2p(stat_path: Path) -> bool:
     wait for the GUI to finish loading and reply: that operation can take
     seconds and previously caused the launcher to start a duplicate instance.
     """
+    # The shared Suite2p environment may use PyQt6 directly and deliberately
+    # not install qtpy.  qtpy remains the compatibility route for our custom
+    # Suite2p checkout, which exposes the control endpoint.
     try:
-        from qtpy import QtCore, QtNetwork
+        from PyQt6 import QtCore, QtNetwork
     except ImportError:
-        return False
+        try:
+            from qtpy import QtCore, QtNetwork
+        except ImportError:
+            return False
 
     app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
     socket = QtNetwork.QLocalSocket()

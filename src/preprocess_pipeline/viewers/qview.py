@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 import tifffile
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtNetwork, QtWidgets
 from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths, suite2p_npy
@@ -52,6 +52,9 @@ DEFAULT_SRDTRANS_STEP1_JSON = (
     '"overlap_factor": 0.5, "gpu": "0", '
     '"channels": ["ch1"]}'
 )
+# Use the shared lab environment where it is available.  ``suite2p_1.1.0``
+# is the editable environment for this lab's custom Suite2p checkout and is
+# retained as the compatible fallback on machines without ``suite2p_lab``.
 SUITE2P_GUI_ENV_CANDIDATES = ("suite2p_lab", "suite2p_1.1.0")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -109,27 +112,45 @@ def _current_queue_job_path(queue_directory: Path) -> Path:
     return queue_directory / "current_job.txt"
 
 
-def _suite2p_gui_environment() -> str:
-    preferred = SUITE2P_GUI_ENV_CANDIDATES[0]
-    try:
-        probe = subprocess.run(
-            [
-                "/opt/scripts/conda-run.sh",
-                preferred,
-                "python",
-                "-c",
-                "import suite2p",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=20,
-        )
-        if probe.returncode == 0:
-            return preferred
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return SUITE2P_GUI_ENV_CANDIDATES[1]
+def _suite2p_gui_environment() -> Optional[str]:
+    """Return the first usable GUI environment in preference order."""
+    conda_setup = Path.home() / "miniconda3" / "etc" / "profile.d" / "conda.sh"
+    for environment in SUITE2P_GUI_ENV_CANDIDATES:
+        try:
+            probe = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-lc",
+                    " && ".join(
+                        (
+                            f"source {shlex.quote(str(conda_setup))}",
+                            f"conda activate {shlex.quote(environment)}",
+                            # Import the GUI too: an environment containing
+                            # only Suite2p's batch dependencies cannot open a
+                            # Picker selection (for example if qtpy is absent).
+                            "python -c 'from suite2p import gui'",
+                        )
+                    ),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=20,
+            )
+            if probe.returncode == 0:
+                return environment
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
+def _suite2p_gui_control_endpoint_live() -> bool:
+    """Whether a custom Suite2p GUI is ready to receive a Picker request."""
+    socket = QtNetwork.QLocalSocket()
+    socket.connectToServer(f"suite2p-gui-{getpass.getuser()}")
+    connected = socket.waitForConnected(75)
+    socket.abort()
+    return connected
 
 
 def _suite2p_gui_launch_command(environment: str, launcher: Path, stat_path: Path) -> str:
@@ -3904,6 +3925,7 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.store = PickerStore()
         self.current_node_id: Optional[int] = None
         self.clipboard_node: Optional[dict] = None
+        self._suite2p_launches: list[tuple[QtCore.QProcess, QtWidgets.QMessageBox, QtCore.QTimer]] = []
         self._build_ui()
         self.refresh_tree()
 
@@ -4199,18 +4221,73 @@ class ExperimentPickerTab(QtWidgets.QWidget):
     def open_in_new_suite2p(self, stat_path: Path):
         launcher = APPS_ROOT / "open_suite2p.py"
         environment = _suite2p_gui_environment()
-        command = _suite2p_gui_launch_command(environment, launcher, stat_path)
-        started = QtCore.QProcess.startDetached(
-            "/bin/bash",
-            ["-lc", command],
-            str(REPO_ROOT),
-        )
-        if not started:
+        if environment is None:
             QtWidgets.QMessageBox.critical(
                 self,
-                "Open in new Suite2p",
-                f"Could not launch Suite2p in the {environment} environment.",
+                "Open in Suite2p",
+                "Could not find a usable Suite2p environment. Tried: "
+                + ", ".join(SUITE2P_GUI_ENV_CANDIDATES),
             )
+            return
+
+        launch_message = QtWidgets.QMessageBox(self)
+        launch_message.setWindowTitle("Launching Suite2p")
+        launch_message.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        launch_message.setText(f"Launching Suite2p in the {environment} environment…")
+        launch_message.setInformativeText("Waiting for the Suite2p GUI to become ready.")
+        launch_message.setStandardButtons(QtWidgets.QMessageBox.StandardButton.NoButton)
+        launch_message.setWindowModality(QtCore.Qt.WindowModality.NonModal)
+        launch_message.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        launch_message.show()
+
+        command = _suite2p_gui_launch_command(environment, launcher, stat_path)
+        process = QtCore.QProcess(self)
+        process.setWorkingDirectory(str(REPO_ROOT))
+        timer = QtCore.QTimer(self)
+        timer.setInterval(150)
+        launch = (process, launch_message, timer)
+        self._suite2p_launches.append(launch)
+
+        def finish_launch(error: Optional[str] = None):
+            if launch not in self._suite2p_launches:
+                return
+            timer.stop()
+            self._suite2p_launches.remove(launch)
+            if launch_message.isVisible():
+                launch_message.close()
+            if error:
+                QtWidgets.QMessageBox.critical(self, "Open in Suite2p", error)
+            process.deleteLater()
+            timer.deleteLater()
+            launch_message.deleteLater()
+
+        def check_ready():
+            if _suite2p_gui_control_endpoint_live():
+                launch_message.setText(f"Suite2p is running in the {environment} environment.")
+                launch_message.setInformativeText("Opening the selected experiment.")
+                QtCore.QTimer.singleShot(500, finish_launch)
+
+        def process_finished(exit_code: int, _exit_status):
+            # The launcher exits immediately when it handed the request to an
+            # existing Suite2p instance.  Give that endpoint one short turn to
+            # be observed before treating the exit as a launch failure.
+            if _suite2p_gui_control_endpoint_live():
+                check_ready()
+            else:
+                stderr = bytes(process.readAllStandardError()).decode(errors="replace").strip()
+                detail = f"\n\n{stderr}" if stderr else ""
+                finish_launch(
+                    f"Suite2p exited before its GUI became ready in the {environment} environment."
+                    f"{detail}"
+                )
+
+        timer.timeout.connect(check_ready)
+        process.finished.connect(process_finished)
+        process.start("/bin/bash", ["-lc", command])
+        if not process.waitForStarted(3000):
+            finish_launch(f"Could not launch Suite2p in the {environment} environment.")
+            return
+        timer.start()
 
     def add_group(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Add Group", "Group name:")
