@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 import tifffile
-from PyQt6 import QtCore, QtGui, QtNetwork, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 from scipy.io import loadmat
 
 from preprocess_pipeline.shared import paths, suite2p_npy
@@ -142,15 +142,6 @@ def _suite2p_gui_environment() -> Optional[str]:
         except (OSError, subprocess.TimeoutExpired):
             continue
     return None
-
-
-def _suite2p_gui_control_endpoint_live() -> bool:
-    """Whether a custom Suite2p GUI is ready to receive a Picker request."""
-    socket = QtNetwork.QLocalSocket()
-    socket.connectToServer(f"suite2p-gui-{getpass.getuser()}")
-    connected = socket.waitForConnected(75)
-    socket.abort()
-    return connected
 
 
 def _suite2p_gui_launch_command(environment: str, launcher: Path, stat_path: Path) -> str:
@@ -4262,17 +4253,22 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             launch_message.deleteLater()
 
         def check_ready():
-            if _suite2p_gui_control_endpoint_live():
+            # Keep QtNetwork out of LabQ Manager's environment.  On some
+            # Linux hosts its transitive Kerberos library conflicts with the
+            # system copy and prevents the manager itself from starting.  The
+            # separate launcher owns the optional local-socket handoff.
+            if process.state() == QtCore.QProcess.ProcessState.Running:
                 launch_message.setText(f"Suite2p is running in the {environment} environment.")
                 launch_message.setInformativeText("Opening the selected experiment.")
                 QtCore.QTimer.singleShot(500, finish_launch)
 
         def process_finished(exit_code: int, _exit_status):
-            # The launcher exits immediately when it handed the request to an
-            # existing Suite2p instance.  Give that endpoint one short turn to
-            # be observed before treating the exit as a launch failure.
-            if _suite2p_gui_control_endpoint_live():
-                check_ready()
+            # A zero exit is expected when the launcher handed the requested
+            # experiment to an existing Suite2p instance.
+            if exit_code == 0:
+                launch_message.setText(f"Suite2p is running in the {environment} environment.")
+                launch_message.setInformativeText("Opening the selected experiment.")
+                QtCore.QTimer.singleShot(500, finish_launch)
             else:
                 stderr = bytes(process.readAllStandardError()).decode(errors="replace").strip()
                 detail = f"\n\n{stderr}" if stderr else ""
