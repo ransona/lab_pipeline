@@ -3931,6 +3931,8 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.add_folder_button = QtWidgets.QPushButton("Add From Folder")
         self.rename_button = QtWidgets.QPushButton("Rename")
         self.delete_button = QtWidgets.QPushButton("Delete")
+        self.move_up_button = QtWidgets.QPushButton("Move Up")
+        self.move_down_button = QtWidgets.QPushButton("Move Down")
         self.cut_button = QtWidgets.QPushButton("Cut")
         self.copy_button = QtWidgets.QPushButton("Copy")
         self.paste_button = QtWidgets.QPushButton("Paste")
@@ -3941,6 +3943,8 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             self.add_folder_button,
             self.rename_button,
             self.delete_button,
+            self.move_up_button,
+            self.move_down_button,
             self.cut_button,
             self.copy_button,
             self.paste_button,
@@ -3982,6 +3986,8 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.add_folder_button.clicked.connect(self.add_from_folder)
         self.rename_button.clicked.connect(self.rename_selected)
         self.delete_button.clicked.connect(self.delete_selected)
+        self.move_up_button.clicked.connect(lambda: self.move_selected_within_parent(-1))
+        self.move_down_button.clicked.connect(lambda: self.move_selected_within_parent(1))
         self.cut_button.clicked.connect(lambda: self.copy_or_cut_selected("cut"))
         self.copy_button.clicked.connect(lambda: self.copy_or_cut_selected("copy"))
         self.paste_button.clicked.connect(self.paste_into_selected_group)
@@ -4066,15 +4072,22 @@ class ExperimentPickerTab(QtWidgets.QWidget):
             item = self.tree.currentItem()
             if item is None:
                 return False
-            node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
             direction = -1 if event.key() == QtCore.Qt.Key.Key_Up else 1
-            if self.store.move_node_within_parent(node_id, direction):
-                self.current_node_id = node_id
-                self.refresh_tree()
+            self.move_selected_within_parent(direction)
             # Arrow keys reorder once an item is selected, rather than moving
             # the selection to another item.
             return True
         return super().eventFilter(watched, event)
+
+    def move_selected_within_parent(self, direction: int):
+        """Move the selected experiment or group among matching siblings."""
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        node_id = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        if self.store.move_node_within_parent(node_id, direction):
+            self.current_node_id = node_id
+            self.refresh_tree()
 
     def update_clipboard_buttons(self):
         item = self.tree.currentItem()
