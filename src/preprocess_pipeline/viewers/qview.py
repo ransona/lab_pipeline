@@ -3916,7 +3916,6 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         self.store = PickerStore()
         self.current_node_id: Optional[int] = None
         self.clipboard_node: Optional[dict] = None
-        self._suite2p_launches: list[tuple[QtCore.QProcess, QtWidgets.QMessageBox, QtCore.QTimer]] = []
         self._build_ui()
         self.refresh_tree()
 
@@ -4245,58 +4244,36 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         launch_message.show()
 
         command = _suite2p_gui_launch_command(environment, launcher, stat_path)
-        process = QtCore.QProcess(self)
-        process.setWorkingDirectory(str(REPO_ROOT))
-        timer = QtCore.QTimer(self)
-        timer.setInterval(150)
-        launch = (process, launch_message, timer)
-        self._suite2p_launches.append(launch)
+        started = QtCore.QProcess.startDetached(
+            "/bin/bash",
+            ["-lc", command],
+            str(REPO_ROOT),
+        )
+        if not started:
+            launch_message.close()
+            launch_message.deleteLater()
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Open in Suite2p",
+                f"Could not launch Suite2p in the {environment} environment.",
+            )
+            return
 
-        def finish_launch(error: Optional[str] = None):
-            if launch not in self._suite2p_launches:
-                return
-            timer.stop()
-            self._suite2p_launches.remove(launch)
-            if launch_message.isVisible():
-                launch_message.close()
-            if error:
-                QtWidgets.QMessageBox.critical(self, "Open in Suite2p", error)
-            process.deleteLater()
-            timer.deleteLater()
+        # A detached process owns the GUI for its full lifetime, avoiding a
+        # QProcess callback after its C++ wrapper has been deleted.  The
+        # launcher itself handles handoff to an already-running Suite2p.
+        launch_message.setText(f"Suite2p is launching in the {environment} environment…")
+        dismiss_timer = QtCore.QTimer(launch_message)
+        dismiss_timer.setSingleShot(True)
+
+        def dismiss_launch_message():
+            # QMessageBox with no standard buttons is more reliably dismissed
+            # with done() than close() on some Qt platform themes.
+            launch_message.done(0)
             launch_message.deleteLater()
 
-        def check_ready():
-            # Keep QtNetwork out of LabQ Manager's environment.  On some
-            # Linux hosts its transitive Kerberos library conflicts with the
-            # system copy and prevents the manager itself from starting.  The
-            # separate launcher owns the optional local-socket handoff.
-            if process.state() == QtCore.QProcess.ProcessState.Running:
-                launch_message.setText(f"Suite2p is running in the {environment} environment.")
-                launch_message.setInformativeText("Opening the selected experiment.")
-                QtCore.QTimer.singleShot(500, finish_launch)
-
-        def process_finished(exit_code: int, _exit_status):
-            # A zero exit is expected when the launcher handed the requested
-            # experiment to an existing Suite2p instance.
-            if exit_code == 0:
-                launch_message.setText(f"Suite2p is running in the {environment} environment.")
-                launch_message.setInformativeText("Opening the selected experiment.")
-                QtCore.QTimer.singleShot(500, finish_launch)
-            else:
-                stderr = bytes(process.readAllStandardError()).decode(errors="replace").strip()
-                detail = f"\n\n{stderr}" if stderr else ""
-                finish_launch(
-                    f"Suite2p exited before its GUI became ready in the {environment} environment."
-                    f"{detail}"
-                )
-
-        timer.timeout.connect(check_ready)
-        process.finished.connect(process_finished)
-        process.start("/bin/bash", ["-lc", command])
-        if not process.waitForStarted(3000):
-            finish_launch(f"Could not launch Suite2p in the {environment} environment.")
-            return
-        timer.start()
+        dismiss_timer.timeout.connect(dismiss_launch_message)
+        dismiss_timer.start(1200)
 
     def add_group(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Add Group", "Group name:")
