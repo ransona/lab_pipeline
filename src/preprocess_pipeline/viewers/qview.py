@@ -4223,8 +4223,23 @@ class ExperimentPickerTab(QtWidgets.QWidget):
 
     def open_in_new_suite2p(self, stat_path: Path):
         launcher = APPS_ROOT / "open_suite2p.py"
+        launch_message = QtWidgets.QMessageBox(self)
+        launch_message.setWindowTitle("Launching Suite2p")
+        launch_message.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        launch_message.setText("Opening Suite2p…")
+        launch_message.setInformativeText("Checking the Suite2p environment.")
+        launch_message.setStandardButtons(QtWidgets.QMessageBox.StandardButton.NoButton)
+        launch_message.setWindowModality(QtCore.Qt.WindowModality.NonModal)
+        launch_message.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        launch_message.show()
+        # The environment probe below can take a few seconds.  Flush the
+        # non-modal notification now, rather than waiting for it to finish.
+        QtWidgets.QApplication.processEvents()
+
         environment = _suite2p_gui_environment()
         if environment is None:
+            launch_message.done(0)
+            launch_message.deleteLater()
             QtWidgets.QMessageBox.critical(
                 self,
                 "Open in Suite2p",
@@ -4232,16 +4247,8 @@ class ExperimentPickerTab(QtWidgets.QWidget):
                 + ", ".join(SUITE2P_GUI_ENV_CANDIDATES),
             )
             return
-
-        launch_message = QtWidgets.QMessageBox(self)
-        launch_message.setWindowTitle("Launching Suite2p")
-        launch_message.setIcon(QtWidgets.QMessageBox.Icon.Information)
         launch_message.setText(f"Launching Suite2p in the {environment} environment…")
         launch_message.setInformativeText("Waiting for the Suite2p GUI to become ready.")
-        launch_message.setStandardButtons(QtWidgets.QMessageBox.StandardButton.NoButton)
-        launch_message.setWindowModality(QtCore.Qt.WindowModality.NonModal)
-        launch_message.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        launch_message.show()
 
         command = _suite2p_gui_launch_command(environment, launcher, stat_path)
         started = QtCore.QProcess.startDetached(
