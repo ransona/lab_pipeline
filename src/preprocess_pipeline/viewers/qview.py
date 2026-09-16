@@ -112,81 +112,64 @@ def _current_queue_job_path(queue_directory: Path) -> Path:
     return queue_directory / "current_job.txt"
 
 
-def _suite2p_gui_environment_probe() -> tuple[Optional[str], list[str]]:
-    """Return the first usable GUI environment and diagnostic failures."""
-    conda_setup = Path.home() / "miniconda3" / "etc" / "profile.d" / "conda.sh"
-    failures: list[str] = []
-    for environment in SUITE2P_GUI_ENV_CANDIDATES:
-        try:
-            probe = subprocess.run(
-                [
-                    "/bin/bash",
-                    "-lc",
-                    " && ".join(
-                        (
-                            f"source {shlex.quote(str(conda_setup))}",
-                            f"conda activate {shlex.quote(environment)}",
-                            # Import the GUI too: an environment containing
-                            # only Suite2p's batch dependencies cannot open a
-                            # Picker selection (for example if qtpy is absent).
-                            "python -c 'from suite2p import gui'",
-                        )
-                    ),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=20,
-            )
-            if probe.returncode == 0:
-                return environment, failures
-            error = (probe.stderr or "").strip()
-            if error:
-                # Conda's useful explanation is normally its final line; do
-                # not make the GUI error dialog unwieldy with a full traceback.
-                error = error.splitlines()[-1]
-            else:
-                error = f"GUI import exited with status {probe.returncode}"
-            failures.append(f"{environment}: {error}")
-        except subprocess.TimeoutExpired:
-            failures.append(f"{environment}: GUI import timed out after 20 seconds")
-        except OSError as exc:
-            failures.append(f"{environment}: could not run Conda ({exc})")
-    return None, failures
+def _suite2p_gui_environment_probe() -> tuple[list[str], list[str]]:
+    """Find configured Suite2p environments without importing their GUI.
+
+    Importing Suite2p imports Torch and can legitimately exceed 20 seconds on
+    a busy workstation.  It must therefore not be used as an availability
+    probe: a valid environment would be rejected before it ever gets a chance
+    to launch.  The detached launcher below attempts available environments in
+    order and falls through if a GUI actually fails to start.
+    """
+    conda = Path.home() / "miniconda3" / "bin" / "conda"
+    try:
+        probe = subprocess.run(
+            [str(conda), "env", "list", "--json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return [], ["Conda environment listing timed out after 10 seconds"]
+    except OSError as exc:
+        return [], [f"Could not run Conda ({exc})"]
+
+    if probe.returncode != 0:
+        error = (probe.stderr or "").strip().splitlines()
+        return [], [error[-1] if error else f"Conda exited with status {probe.returncode}"]
+    try:
+        environment_paths = json.loads(probe.stdout).get("envs", [])
+    except (json.JSONDecodeError, AttributeError):
+        return [], ["Conda returned an unreadable environment list"]
+
+    names = {Path(path).name for path in environment_paths}
+    available = [name for name in SUITE2P_GUI_ENV_CANDIDATES if name in names]
+    missing = [f"{name}: environment not found" for name in SUITE2P_GUI_ENV_CANDIDATES if name not in names]
+    return available, missing
 
 
 def _suite2p_gui_environment() -> Optional[str]:
-    """Return the first usable GUI environment in preference order."""
-    environment, _failures = _suite2p_gui_environment_probe()
-    return environment
+    """Return the first installed GUI environment in preference order."""
+    environments, _failures = _suite2p_gui_environment_probe()
+    return environments[0] if environments else None
 
 
-def _suite2p_gui_launch_command(environment: str, launcher: Path, stat_path: Path) -> str:
-    """Launch through activated Conda first, then retain the legacy fallback.
-
-    Activating the environment gives Conda a chance to establish its normal
-    Qt/DLL environment.  The existing conda-run invocation remains a fallback
-    when activation or the first GUI launch fails.
-    """
+def _suite2p_gui_launch_command(environments: list[str], launcher: Path, stat_path: Path) -> str:
+    """Try available Suite2p GUI environments in preference order."""
     conda_setup = Path.home() / "miniconda3" / "etc" / "profile.d" / "conda.sh"
-    activated_launch = " && ".join(
-        (
-            f"source {shlex.quote(str(conda_setup))}",
-            f"conda activate {shlex.quote(environment)}",
-            f"python {shlex.quote(str(launcher))} {shlex.quote(str(stat_path))}",
+    attempts = []
+    for environment in environments:
+        activated_launch = " && ".join(
+            (
+                f"source {shlex.quote(str(conda_setup))}",
+                f"conda activate {shlex.quote(environment)}",
+                f"python {shlex.quote(str(launcher))} {shlex.quote(str(stat_path))}",
+            )
         )
-    )
-    fallback_launch = " ".join(
-        (
-            "/opt/scripts/conda-run.sh",
-            shlex.quote(environment),
-            "python",
-            shlex.quote(str(launcher)),
-            shlex.quote(str(stat_path)),
-        )
-    )
-    return f"if {activated_launch}; then exit 0; fi; exec {fallback_launch}"
+        attempts.append(f"if {activated_launch}; then exit 0; fi")
+    return "; ".join(attempts + ["exit 1"])
 
 
 def cleanup_expired_srdtrans_tmux_sessions(ttl_seconds: int = SRDTRANS_TMUX_TTL_SECONDS) -> list[str]:
@@ -4254,8 +4237,8 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         # non-modal notification now, rather than waiting for it to finish.
         QtWidgets.QApplication.processEvents()
 
-        environment, environment_failures = _suite2p_gui_environment_probe()
-        if environment is None:
+        environments, environment_failures = _suite2p_gui_environment_probe()
+        if not environments:
             launch_message.done(0)
             launch_message.deleteLater()
             details = "\n".join(environment_failures) or "No diagnostic output was returned."
@@ -4268,10 +4251,11 @@ class ExperimentPickerTab(QtWidgets.QWidget):
                 + details,
             )
             return
+        environment = environments[0]
         launch_message.setText(f"Launching Suite2p in the {environment} environment…")
         launch_message.setInformativeText("Waiting for the Suite2p GUI to become ready.")
 
-        command = _suite2p_gui_launch_command(environment, launcher, stat_path)
+        command = _suite2p_gui_launch_command(environments, launcher, stat_path)
         started = QtCore.QProcess.startDetached(
             "/bin/bash",
             ["-lc", command],
