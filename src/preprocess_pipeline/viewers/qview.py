@@ -112,9 +112,10 @@ def _current_queue_job_path(queue_directory: Path) -> Path:
     return queue_directory / "current_job.txt"
 
 
-def _suite2p_gui_environment() -> Optional[str]:
-    """Return the first usable GUI environment in preference order."""
+def _suite2p_gui_environment_probe() -> tuple[Optional[str], list[str]]:
+    """Return the first usable GUI environment and diagnostic failures."""
     conda_setup = Path.home() / "miniconda3" / "etc" / "profile.d" / "conda.sh"
+    failures: list[str] = []
     for environment in SUITE2P_GUI_ENV_CANDIDATES:
         try:
             probe = subprocess.run(
@@ -133,15 +134,32 @@ def _suite2p_gui_environment() -> Optional[str]:
                     ),
                 ],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
                 check=False,
                 timeout=20,
             )
             if probe.returncode == 0:
-                return environment
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-    return None
+                return environment, failures
+            error = (probe.stderr or "").strip()
+            if error:
+                # Conda's useful explanation is normally its final line; do
+                # not make the GUI error dialog unwieldy with a full traceback.
+                error = error.splitlines()[-1]
+            else:
+                error = f"GUI import exited with status {probe.returncode}"
+            failures.append(f"{environment}: {error}")
+        except subprocess.TimeoutExpired:
+            failures.append(f"{environment}: GUI import timed out after 20 seconds")
+        except OSError as exc:
+            failures.append(f"{environment}: could not run Conda ({exc})")
+    return None, failures
+
+
+def _suite2p_gui_environment() -> Optional[str]:
+    """Return the first usable GUI environment in preference order."""
+    environment, _failures = _suite2p_gui_environment_probe()
+    return environment
 
 
 def _suite2p_gui_launch_command(environment: str, launcher: Path, stat_path: Path) -> str:
@@ -4236,15 +4254,18 @@ class ExperimentPickerTab(QtWidgets.QWidget):
         # non-modal notification now, rather than waiting for it to finish.
         QtWidgets.QApplication.processEvents()
 
-        environment = _suite2p_gui_environment()
+        environment, environment_failures = _suite2p_gui_environment_probe()
         if environment is None:
             launch_message.done(0)
             launch_message.deleteLater()
+            details = "\n".join(environment_failures) or "No diagnostic output was returned."
             QtWidgets.QMessageBox.critical(
                 self,
                 "Open in Suite2p",
                 "Could not find a usable Suite2p environment. Tried: "
-                + ", ".join(SUITE2P_GUI_ENV_CANDIDATES),
+                + ", ".join(SUITE2P_GUI_ENV_CANDIDATES)
+                + "\n\n"
+                + details,
             )
             return
         launch_message.setText(f"Launching Suite2p in the {environment} environment…")
