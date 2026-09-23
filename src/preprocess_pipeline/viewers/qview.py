@@ -898,6 +898,53 @@ class CommandWorker(QtCore.QObject):
         self.finished.emit()
 
 
+class AdaptiveCurrentJobLabel(QtWidgets.QLabel):
+    """One-line job label that preserves its full text in a narrow toolbar."""
+
+    def __init__(self, text: str = "", parent=None):
+        self._minimum_point_size = 8.0
+        self._maximum_point_size: Optional[float] = None
+        super().__init__(text, parent)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+
+    def set_adaptive_font_range(self, minimum: float, maximum: float):
+        self._minimum_point_size = float(minimum)
+        self._maximum_point_size = float(maximum)
+        self._adjust_font_size()
+
+    def setText(self, text: str):
+        super().setText(text)
+        self._adjust_font_size()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adjust_font_size()
+
+    def _adjust_font_size(self):
+        if self._maximum_point_size is None or not self.text():
+            return
+        available_width = self.contentsRect().width()
+        if available_width <= 0:
+            return
+        font = self.font()
+        font.setPointSizeF(self._maximum_point_size)
+        text_width = QtGui.QFontMetricsF(font).horizontalAdvance(self.text())
+        if text_width > available_width:
+            scale = available_width / text_width
+            font.setPointSizeF(max(self._minimum_point_size, self._maximum_point_size * scale))
+            # Font metrics are not perfectly proportional after Qt rounds a
+            # fractional point size, so finish with small reductions if needed.
+            while (
+                font.pointSizeF() > self._minimum_point_size
+                and QtGui.QFontMetricsF(font).horizontalAdvance(self.text()) > available_width
+            ):
+                font.setPointSizeF(max(self._minimum_point_size, font.pointSizeF() - 0.25))
+        self.setFont(font)
+
+
 class QueueTab(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -927,19 +974,19 @@ class QueueTab(QtWidgets.QWidget):
             button.setVisible(self.username == "adamranson")
             controls.addWidget(button)
         self.current_job_title = QtWidgets.QLabel("Current Job:")
-        self.current_job_label = QtWidgets.QLabel("No job running")
+        self.current_job_label = AdaptiveCurrentJobLabel("No job running")
         current_job_font = self.current_job_label.font()
         current_job_font.setPointSizeF(current_job_font.pointSizeF() * 2)
         self.current_job_title.setFont(current_job_font)
         self.current_job_label.setFont(current_job_font)
+        self.current_job_label.set_adaptive_font_range(8, current_job_font.pointSizeF())
         self.current_job_label.setStyleSheet("color: #168c2c;")
         self.current_job_label.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.current_job_label.setMinimumWidth(320)
+        self.current_job_label.setMinimumWidth(520)
         controls.addWidget(self.current_job_title)
         controls.addWidget(self.current_job_label, 1)
-        controls.addStretch(1)
         self.remove_button = QtWidgets.QPushButton("Remove Selected Job")
         controls.addWidget(self.remove_button)
         layout.addLayout(controls)
@@ -4146,6 +4193,24 @@ class ExperimentPickerTab(QtWidgets.QWidget):
                 stat_files.append(stat_path)
         return sorted(stat_files)
 
+    @staticmethod
+    def _suite2p_bin_files(user_id: str, exp_id: str) -> list[Path]:
+        """Return registered Suite2p movies, including incomplete plane outputs."""
+        _, _, _, processed_experiment, _ = paths.find_paths(user_id, exp_id)
+        processed_root = Path(processed_experiment)
+        if not processed_root.is_dir():
+            return []
+        bin_files = []
+        for bin_path in processed_root.rglob("*.bin"):
+            if bin_path.name not in {"data.bin", "data_chan2.bin"}:
+                continue
+            if not bin_path.parent.name.startswith("plane"):
+                continue
+            if not any(parent.name in {"suite2p", "suite2p_combined"} for parent in bin_path.parents):
+                continue
+            bin_files.append(bin_path)
+        return sorted(bin_files)
+
     def show_context_menu(self, position: QtCore.QPoint):
         item = self.tree.itemAt(position)
         if item is None:
@@ -4201,6 +4266,25 @@ class ExperimentPickerTab(QtWidgets.QWidget):
                 )
         else:
             action = menu.addAction("Open in new Suite2p (no completed Suite2p result)")
+            action.setEnabled(False)
+
+        bin_files = self._suite2p_bin_files(node["user_id"], node["exp_id"])
+        if len(bin_files) == 1:
+            action = menu.addAction("Load in video viewer")
+            action.triggered.connect(
+                lambda _checked=False, path=bin_files[0]: self.open_in_video_viewer([path])
+            )
+        elif bin_files:
+            submenu = menu.addMenu("Load in video viewer")
+            _, _, _, processed_experiment, _ = paths.find_paths(node["user_id"], node["exp_id"])
+            processed_root = Path(processed_experiment)
+            for bin_path in bin_files:
+                action = submenu.addAction(str(bin_path.relative_to(processed_root)))
+                action.triggered.connect(
+                    lambda _checked=False, path=bin_path: self.open_in_video_viewer([path])
+                )
+        else:
+            action = menu.addAction("Load in video viewer (no registered binary)")
             action.setEnabled(False)
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
@@ -4286,6 +4370,24 @@ class ExperimentPickerTab(QtWidgets.QWidget):
 
         dismiss_timer.timeout.connect(dismiss_launch_message)
         dismiss_timer.start(1200)
+
+    def open_in_video_viewer(self, bin_paths: list[Path]):
+        """Launch the pipeline imaging viewer directly into selected binary movies."""
+        launcher = APPS_ROOT / "imaging_view.py"
+        if not launcher.is_file() or not bin_paths:
+            QtWidgets.QMessageBox.critical(self, "Video viewer", "Could not locate the imaging viewer.")
+            return
+        started, _process_id = QtCore.QProcess.startDetached(
+            sys.executable,
+            [str(launcher), "--bin", *(str(path) for path in bin_paths)],
+            str(REPO_ROOT),
+        )
+        if not started:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Video viewer",
+                "Could not launch the imaging viewer.",
+            )
 
     def add_group(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Add Group", "Group name:")

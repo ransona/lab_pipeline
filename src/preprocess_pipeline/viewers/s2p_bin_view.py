@@ -95,7 +95,7 @@ def _plane_binary_from_path(bin_path: str):
 
 
 class S2PBinViewer(QMainWindow):
-    def __init__(self):
+    def __init__(self, initial_bin_paths=None):
         super().__init__()
         self.setWindowTitle("Suite2p Binary Viewer")
         self.resize(1400, 900)
@@ -113,6 +113,10 @@ class S2PBinViewer(QMainWindow):
         self.view_y_frac = 0.0
         self.autos_vmin = []
         self.autos_vmax = []
+        self.raw_autos_vmin = []
+        self.raw_autos_vmax = []
+        self.video_vmin = []
+        self.video_vmax = []
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -306,6 +310,11 @@ class S2PBinViewer(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
         self.on_filter_mode_changed()
+        if initial_bin_paths:
+            paths_to_load = [str(path) for path in initial_bin_paths]
+            # Defer file mapping until the containing window is shown so a
+            # Picker request opens a responsive viewer immediately.
+            QTimer.singleShot(0, lambda: self.load_paths(paths_to_load, "Picker selection"))
 
     def populate_users(self):
         homes = [d for d in os.listdir("/home") if os.path.isdir(os.path.join("/home", d))]
@@ -395,9 +404,68 @@ class S2PBinViewer(QMainWindow):
         self.max_slider.blockSignals(False)
         self.update_intensity_labels()
 
+    def set_intensity_slider_range(self, minimum, maximum):
+        """Limit manual contrast controls to intensities present in the video."""
+        minimum, maximum = int(minimum), int(maximum)
+        if maximum <= minimum:
+            maximum = minimum + 1
+        self.min_slider.blockSignals(True)
+        self.max_slider.blockSignals(True)
+        self.min_slider.setRange(minimum, maximum)
+        self.max_slider.setRange(minimum, maximum)
+        self.min_slider.blockSignals(False)
+        self.max_slider.blockSignals(False)
+
+    @staticmethod
+    def _binary_value_range(plane, sample_frames=20):
+        """Estimate the video intensity range from a small random frame sample."""
+        frame_indices = np.random.default_rng().choice(
+            plane.nframes, size=min(sample_frames, plane.nframes), replace=False
+        )
+        minimum = maximum = None
+        for frame_index in frame_indices:
+            frame_size = plane.width * plane.height
+            start = int(frame_index) * frame_size
+            frame = plane.data[start:start + frame_size]
+            frame_min, frame_max = int(np.min(frame)), int(np.max(frame))
+            minimum = frame_min if minimum is None else min(minimum, frame_min)
+            maximum = frame_max if maximum is None else max(maximum, frame_max)
+        return minimum, maximum
+
     def update_autoscale_slider_values(self):
         if self.autos_vmin and self.autos_vmax:
             self.set_intensity_sliders(min(self.autos_vmin), max(self.autos_vmax))
+
+    def update_autoscale_ranges_for_filter(self):
+        """Estimate display limits from the currently selected filtering mode."""
+        if not self.loaded_planes:
+            return
+        if not (self.time_filter_cb.isChecked() or self.space_filter_cb.isChecked()):
+            self.autos_vmin = list(self.raw_autos_vmin)
+            self.autos_vmax = list(self.raw_autos_vmax)
+            return
+
+        sample_count = min(20, self.total_frames)
+        sample_indices = np.linspace(0, self.total_frames - 1, sample_count, dtype=int)
+        filtered_vmin, filtered_vmax = [], []
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        for pidx in range(len(self.loaded_planes)):
+            self.status_label.setText(
+                f"Estimating filtered contrast ({pidx + 1}/{len(self.loaded_planes)})…"
+            )
+            QApplication.processEvents()
+            sampled_frames = [self.get_filtered_frame(pidx, int(frame_index)) for frame_index in sample_indices]
+            sampled_values = np.concatenate([frame.ravel() for frame in sampled_frames])
+            vmin, vmax = np.percentile(sampled_values, [1, 99])
+            filtered_vmin.append(float(vmin))
+            filtered_vmax.append(float(vmax))
+            self.progress_bar.setValue(int((pidx + 1) / len(self.loaded_planes) * 100))
+            QApplication.processEvents()
+        self.progress_bar.setVisible(False)
+        self.autos_vmin = filtered_vmin
+        self.autos_vmax = filtered_vmax
+        self.status_label.setText("Autoscale estimated from 20 filtered frames per plane.")
 
     def update_intensity_labels(self):
         self.min_value_label.setText(str(self.min_slider.value()))
@@ -413,6 +481,7 @@ class S2PBinViewer(QMainWindow):
 
     def on_autoscale_changed(self):
         if self.autoscale_cb.isChecked():
+            self.update_autoscale_ranges_for_filter()
             self.update_autoscale_slider_values()
         self.update_display()
 
@@ -429,6 +498,9 @@ class S2PBinViewer(QMainWindow):
         if using_space:
             parts.append(f"Spatial median: {self.space_k.value()} px kernel")
         self.filter_state_label.setText(" + ".join(parts) if parts else "Off")
+        if self.loaded_planes and self.autoscale_cb.isChecked():
+            self.update_autoscale_ranges_for_filter()
+            self.update_autoscale_slider_values()
         self.update_display()
 
     def on_fps_changed(self, value):
@@ -468,6 +540,10 @@ class S2PBinViewer(QMainWindow):
         self.loaded_planes.clear()
         self.autos_vmin.clear()
         self.autos_vmax.clear()
+        self.raw_autos_vmin.clear()
+        self.raw_autos_vmax.clear()
+        self.video_vmin.clear()
+        self.video_vmax.clear()
 
         try:
             for path in found_paths:
@@ -485,15 +561,25 @@ class S2PBinViewer(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         for i, plane in enumerate(self.loaded_planes):
+            self.status_label.setText(
+                f"Sampling video intensity range ({i + 1}/{len(self.loaded_planes)})…"
+            )
+            QApplication.processEvents()
+            vmin_exact, vmax_exact = self._binary_value_range(plane)
+            self.video_vmin.append(vmin_exact)
+            self.video_vmax.append(vmax_exact)
             n_samp = min(200, plane.nframes)
             frame_size = plane.width * plane.height
             arr = plane.data[: n_samp * frame_size].reshape(n_samp, plane.height, plane.width)
             vmin, vmax = np.percentile(arr, [1, 99])
-            self.autos_vmin.append(float(vmin))
-            self.autos_vmax.append(float(vmax))
+            self.raw_autos_vmin.append(float(vmin))
+            self.raw_autos_vmax.append(float(vmax))
             self.progress_bar.setValue(int((i + 1) / len(self.loaded_planes) * 100))
             QApplication.processEvents()
         self.progress_bar.setVisible(False)
+
+        self.set_intensity_slider_range(min(self.video_vmin), max(self.video_vmax))
+        self.update_autoscale_ranges_for_filter()
 
         if self.autoscale_cb.isChecked():
             self.update_autoscale_slider_values()
