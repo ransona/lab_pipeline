@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+from preprocess_pipeline.viewers.retinotopy_tab import RetinotopyTab
 
 
 APP_ROOT = Path(__file__).resolve().parents[3] / "apps"
@@ -157,7 +158,10 @@ class LocalRunWindow(QtWidgets.QMainWindow):
 
     def _build_ui(self):
         central = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(central)
+        central_layout = QtWidgets.QVBoxLayout(central)
+        tabs = QtWidgets.QTabWidget()
+        pipeline_tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(pipeline_tab)
 
         roots = QtWidgets.QGroupBox("Local paths")
         roots_form = QtWidgets.QFormLayout(roots)
@@ -243,6 +247,17 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         layout.addWidget(QtWidgets.QLabel("Command output"))
         layout.addWidget(self.output, 1)
 
+        tabs.addTab(pipeline_tab, "Run Pipeline")
+        self.retinotopy_tab = RetinotopyTab(
+            lambda: self.exp_id_edit.text().strip(),
+            lambda: self.processed_root_edit.text().strip(),
+            self,
+        )
+        tabs.addTab(self.retinotopy_tab, "Analyze Retinotopy")
+        tabs.currentChanged.connect(
+            lambda index: self.retinotopy_tab.load_existing() if index == 1 else None
+        )
+        central_layout.addWidget(tabs)
         self.setCentralWidget(central)
         self.resize(1000, 850)
 
