@@ -193,8 +193,8 @@ class RetinotopyTab(QtWidgets.QWidget):
         self.exp_id_display = QtWidgets.QLineEdit(); self.exp_id_display.editingFinished.connect(self._exp_id_edited)
         load_existing = QtWidgets.QPushButton("Load"); load_existing.clicked.connect(self._load_from_folder)
         browse = QtWidgets.QPushButton("Browse"); browse.clicked.connect(self._browse_test_path)
-        self.pre = self._seconds_spin(2.0); self.post = self._seconds_spin(5.0)
-        self.blink_pre = self._seconds_spin(0.5); self.blink_post = self._seconds_spin(1.0)
+        self.pre = self._seconds_spin(1.0); self.post = self._seconds_spin(3.0)
+        self.blink_pre = self._seconds_spin(1.0); self.blink_post = self._seconds_spin(1.0)
         self.meso_window = QtWidgets.QCheckBox("Meso"); self.meso_window.setChecked(True)
         self.prepare_button = QtWidgets.QPushButton("Process"); self.prepare_button.clicked.connect(self.prepare)
         self.status = QtWidgets.QLabel("No montage loaded.")
@@ -238,6 +238,15 @@ class RetinotopyTab(QtWidgets.QWidget):
         top.setStretchFactor(0, 0); top.setStretchFactor(1, 1); outer.addWidget(top, 2)
         lower = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         left = QtWidgets.QWidget(); left_layout = QtWidgets.QVBoxLayout(left); self.canvas = MontageCanvas(); self.canvas.position_changed.connect(self._queue_trace_update); self.canvas.probe_frozen_changed.connect(self._set_probe_frozen)
+        # The mean-frame viewer must be allowed to shrink with the lower pane.
+        # MontageCanvas letterboxes its image in paintEvent, so an ignored size
+        # hint keeps the whole image visible rather than forcing the splitter
+        # to crop the widget at its former 420 x 360 minimum size.
+        self.canvas.setMinimumSize(1, 1)
+        self.canvas.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Ignored,
+        )
         self.tool_toggle = QtWidgets.QPushButton("Enable sampling tool"); self.tool_toggle.setCheckable(True); self.tool_toggle.toggled.connect(self._set_tool_enabled)
         self.tool_size = QtWidgets.QSpinBox(); self.tool_size.setRange(1, 1000); self.tool_size.setValue(50); self.tool_size.valueChanged.connect(self._set_tool_size)
         probe_controls = QtWidgets.QHBoxLayout(); probe_controls.addWidget(self.tool_toggle); probe_controls.addWidget(QtWidgets.QLabel("Square size (px)")); probe_controls.addWidget(self.tool_size); probe_controls.addStretch()
@@ -275,11 +284,15 @@ class RetinotopyTab(QtWidgets.QWidget):
 
     def _load_from_folder(self):
         if not self.load_existing():
-            QtWidgets.QMessageBox.information(
+            answer = QtWidgets.QMessageBox.question(
                 self,
-                "No retinotopy outputs",
-                "No saved retinotopy montages were found. Use ‘Produce retinotopy montages’ first.",
+                "Generate retinotopy outputs?",
+                "No saved retinotopy outputs were found for this experiment. Generate them now?",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.Yes,
             )
+            if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+                self.prepare()
 
     def _experiment_dir(self):
         path = self.test_path.text().strip()
