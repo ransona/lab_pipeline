@@ -2,11 +2,13 @@ import os
 import re
 import sys
 import tempfile
+import getpass
 from pathlib import Path
 from typing import Dict, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from preprocess_pipeline.viewers.retinotopy_tab import RetinotopyTab
+from preprocess_pipeline.viewers.periodic_tab import PeriodicTab
 
 
 APP_ROOT = Path(__file__).resolve().parents[3] / "apps"
@@ -17,6 +19,34 @@ DEFAULT_PROCESSED_ROOT = r"F:\Local_Repository_Processed"
 DEFAULT_NAS_ROOT = r"\\ar-lab-nas1\DataServer\Remote_Repository"
 DEFAULT_S2P_CONFIG_ROOT = r"F:\s2p_ops"
 DEFAULT_SUITE2P_ENV = "suite2p_lab"
+
+
+def _retinotopy_processed_root(configured_root: str, user: str | None = None) -> str:
+    """Use portable local outputs on Windows and the user's Repository on Linux.
+
+    This is intentionally confined to analysis tabs: pipeline execution still
+    uses its user-configured roots exactly as before.
+    """
+    if os.name == "nt":
+        return configured_root
+    return str(Path.home().parent / (user or getpass.getuser()) / "data" / "Repository")
+
+
+def _analysis_users() -> list[str]:
+    """Linux users with a processed Repository, current user first."""
+    current = getpass.getuser()
+    if os.name == "nt":
+        return [current]
+    homes = Path.home().parent
+    users = []
+    for path in homes.iterdir():
+        try:
+            if (path / "data" / "Repository").is_dir():
+                users.append(path.name)
+        except PermissionError:
+            # Some shared-home entries are deliberately not traversable.
+            continue
+    return [current, *sorted(user for user in users if user != current)]
 
 
 def _conda_executable() -> str:
@@ -250,14 +280,29 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         tabs.addTab(pipeline_tab, "Run Pipeline")
         self.retinotopy_tab = RetinotopyTab(
             lambda: self.exp_id_edit.text().strip(),
-            lambda: self.processed_root_edit.text().strip(),
+            lambda: _retinotopy_processed_root(self.processed_root_edit.text().strip()),
             lambda exp_id: self.exp_id_edit.setText(exp_id),
             self,
         )
         tabs.addTab(self.retinotopy_tab, "Analyze Retinotopy")
-        tabs.currentChanged.connect(
-            lambda index: self.retinotopy_tab.load_existing() if index == 1 else None
+        self.periodic_tab = PeriodicTab(
+            lambda: self.exp_id_edit.text().strip(),
+            lambda: _retinotopy_processed_root(self.processed_root_edit.text().strip()),
+            lambda exp_id: self.exp_id_edit.setText(exp_id),
+            self,
         )
+        tabs.addTab(self.periodic_tab, "Periodic")
+        tabs.currentChanged.connect(self._analysis_tab_changed)
+        self.analysis_user_combo = QtWidgets.QComboBox()
+        self.analysis_user_combo.addItems(_analysis_users())
+        self.analysis_user_combo.setCurrentText(getpass.getuser())
+        self.analysis_user_combo.currentTextChanged.connect(self._sync_retinotopy_experiment)
+        if os.name != "nt":
+            analysis_user_row = QtWidgets.QHBoxLayout()
+            analysis_user_row.addWidget(QtWidgets.QLabel("Retinotopy / Periodic data user"))
+            analysis_user_row.addWidget(self.analysis_user_combo)
+            analysis_user_row.addStretch(1)
+            central_layout.addLayout(analysis_user_row)
         self.exp_id_edit.textChanged.connect(self._sync_retinotopy_experiment)
         self.processed_root_edit.textChanged.connect(self._sync_retinotopy_experiment)
         self._sync_retinotopy_experiment()
@@ -267,10 +312,18 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         self.resize(1000, 850)
 
     def _sync_retinotopy_experiment(self, _unused=None):
+        processed_root = _retinotopy_processed_root(
+            self.processed_root_edit.text().strip(), self.analysis_user_combo.currentText()
+        )
         self.retinotopy_tab.set_experiment(
             self.exp_id_edit.text().strip(),
-            self.processed_root_edit.text().strip(),
+            processed_root,
         )
+        self.periodic_tab.set_experiment(self.exp_id_edit.text().strip(), processed_root)
+
+    def _analysis_tab_changed(self, index):
+        if index == 1:
+            self.retinotopy_tab.load_existing()
 
     def _browse_folder(self, edit: QtWidgets.QLineEdit):
         selected = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", edit.text())
