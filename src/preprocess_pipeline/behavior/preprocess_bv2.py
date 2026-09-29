@@ -721,41 +721,31 @@ def run_preprocess_bv2(
         # harp encoder log was later dif and so do cumsum of difs
         harp_encoder = np.cumsum(data_read_np[:,1])
     else:
-        print('*** Warning: Harp data file not found. Falling back to Timeline Bonvision sync and Bonvision encoder data. ***')
-        data_read_np = None
-        harp_encoder = np.array([])
-
-    if data_read_np is not None:
-        harp_pd = data_read_np[:,0]
-        harp_time = _sample_times(len(harp_pd), 1000)
-    else:
-        harp_pd = np.array([])
-        harp_time = np.array([])
+        raise Exception('Harp data file not found')
+    
+    harp_pd = data_read_np[:,0]
+    harp_time = _sample_times(len(harp_pd), 1000)
 
     # /////////////// DETECTING TIMING PULSES ///////////////
 
     # Find Harp times when PD flip
     #  Threshold the Harp PD signal and detect flips
-    if len(harp_pd) > 0:
-        harp_pd_smoothed = pd.Series(harp_pd).rolling(window=20, min_periods=1).mean().values
-        harp_pd_smoothed = harp_pd_smoothed - np.min(harp_pd_smoothed)
-        harp_pd_high = np.percentile(harp_pd_smoothed, 99)
-        harp_pd_low = np.percentile(harp_pd_smoothed, 1)
-        # calculate 'signal to noise' ratio - this will be low if the signal is just noise
-        harp_pd_on_off_ratio = (harp_pd_high - harp_pd_low) / harp_pd_low
-        if harp_pd_on_off_ratio > 10:
-            harp_pd_valid = True
-        else:
-            harp_pd_valid = False
-
-        harp_pd_threshold = harp_pd_low + ((harp_pd_high - harp_pd_low)*0.5)
-        harp_pd_thresholded = np.where(harp_pd_smoothed < harp_pd_threshold, 0, 1)
-        transitions = np.diff(harp_pd_thresholded)
-        flip_samples = np.where(transitions == 1)[0]
-        flip_times_harp = harp_time[flip_samples]
+    harp_pd_smoothed = pd.Series(harp_pd).rolling(window=20, min_periods=1).mean().values
+    harp_pd_smoothed = harp_pd_smoothed - np.min(harp_pd_smoothed)
+    harp_pd_high = np.percentile(harp_pd_smoothed, 99)
+    harp_pd_low = np.percentile(harp_pd_smoothed, 1)   
+    # calculate 'signal to noise' ratio - this will be low if the signal is just noise
+    harp_pd_on_off_ratio = (harp_pd_high - harp_pd_low) / harp_pd_low 
+    if harp_pd_on_off_ratio > 10:
+        harp_pd_valid = True  
     else:
-        harp_pd_valid = False
-        flip_times_harp = np.array([])
+        harp_pd_valid = False   
+
+    harp_pd_threshold = harp_pd_low + ((harp_pd_high - harp_pd_low)*0.5)
+    harp_pd_thresholded = np.where(harp_pd_smoothed < harp_pd_threshold, 0, 1)
+    transitions = np.diff(harp_pd_thresholded)
+    flip_samples = np.where(transitions == 1)[0]
+    flip_times_harp = harp_time[flip_samples]
     
     # Find BV times when digital flips
     Timestamp = frame_events['Timestamp'].values
@@ -1287,44 +1277,41 @@ def run_preprocess_bv2(
         wheel_pos = bv_encoder['Encoder'].values
         wheel_timestamps = linear_interpolator_bv_2_tl(bv_encoder['Timestamp'].values)
 
-    if len(wheel_pos) < 2 or len(wheel_timestamps) < 2:
-        print('*** Warning: Encoder data not found. Skipping wheel recording output. ***')
-    else:
-        # deal with wrap around of rotary encoder position
-        wheel_pos_dif = np.diff(wheel_pos)
-        wheel_pos_dif[wheel_pos_dif > 50000] -= 2**16
-        wheel_pos_dif[wheel_pos_dif < -50000] += 2**16
-        wheel_pos = np.cumsum(wheel_pos_dif)
-        wheel_pos = np.append(wheel_pos,wheel_pos[-1])
-
-        # Resample wheel to 20Hz
-        resample_freq = 20
-        wheel_linear_timescale = np.arange(0, np.floor(wheel_timestamps[-1]), 1/resample_freq)
-        # Create the interpolater for resampling
-        wheel_resampler = interpolate.interp1d(wheel_timestamps, wheel_pos, kind='linear',fill_value=(wheel_pos[0], wheel_pos[-1]), bounds_error=False)
-        # Infer the wheel pos at each point on linear timescale
-        wheel_pos_resampled = wheel_resampler(wheel_linear_timescale)
-        # smooth this position data to deal with the rotary encoder encoding discrete steps
-        smooth_window = 10 # window size for smoothing (10 = 0.5 secs)
-        wheel_pos_smooth = np.convolve(wheel_pos_resampled, np.ones(smooth_window)/smooth_window, mode='same')
-        # set smooth_window at start and end to the first and last value of the unsmoothed data
-        wheel_pos_smooth[0:smooth_window] = wheel_pos_resampled[0]
-        wheel_pos_smooth[-smooth_window:] = wheel_pos_resampled[-1]
-        # Calc diff between position samples (already in units oyf meters)
-        # mouse velocity in cm/sample (at 20Hz)
-        wheel_velocity = np.diff(wheel_pos_smooth)
-        wheel_velocity = np.append(wheel_velocity, wheel_velocity[-1])
-        # mouse velocity in m/s
-        wheel_velocity = wheel_velocity * resample_freq
-        # Save data
-        wheel = {}
-        wheel['position'] = np.array(wheel_pos_resampled)
-        wheel['position_smoothed'] = np.array(wheel_pos_smooth)
-        wheel['speed'] = np.array(wheel_velocity)
-        wheel['t'] = np.array(wheel_linear_timescale)
-        if not debug:
-            with open(os.path.join(exp_dir_processed_recordings, 'wheel.pickle'), 'wb') as f:
-                pickle.dump(wheel, f)
+    # deal with wrap around of rotary encoder position
+    wheel_pos_dif = np.diff(wheel_pos)
+    wheel_pos_dif[wheel_pos_dif > 50000] -= 2**16
+    wheel_pos_dif[wheel_pos_dif < -50000] += 2**16
+    wheel_pos = np.cumsum(wheel_pos_dif)
+    wheel_pos = np.append(wheel_pos,wheel_pos[-1])
+    
+    # Resample wheel to 20Hz
+    resample_freq = 20
+    wheel_linear_timescale = np.arange(0, np.floor(wheel_timestamps[-1]), 1/resample_freq)
+    # Create the interpolater for resampling
+    wheel_resampler = interpolate.interp1d(wheel_timestamps, wheel_pos, kind='linear',fill_value=(wheel_pos[0], wheel_pos[-1]), bounds_error=False)
+    # Infer the wheel pos at each point on linear timescale 
+    wheel_pos_resampled = wheel_resampler(wheel_linear_timescale)
+    # smooth this position data to deal with the rotary encoder encoding discrete steps
+    smooth_window = 10 # window size for smoothing (10 = 0.5 secs)
+    wheel_pos_smooth = np.convolve(wheel_pos_resampled, np.ones(smooth_window)/smooth_window, mode='same')
+    # set smooth_window at start and end to the first and last value of the unsmoothed data
+    wheel_pos_smooth[0:smooth_window] = wheel_pos_resampled[0]
+    wheel_pos_smooth[-smooth_window:] = wheel_pos_resampled[-1]
+    # Calc diff between position samples (already in units oyf meters)
+    # mouse velocity in cm/sample (at 20Hz)
+    wheel_velocity = np.diff(wheel_pos_smooth) 
+    wheel_velocity = np.append(wheel_velocity, wheel_velocity[-1])
+    # mouse velocity in m/s
+    wheel_velocity = wheel_velocity * resample_freq
+    # Save data
+    wheel = {}
+    wheel['position'] = np.array(wheel_pos_resampled)
+    wheel['position_smoothed'] = np.array(wheel_pos_smooth)
+    wheel['speed'] = np.array(wheel_velocity)
+    wheel['t'] = np.array(wheel_linear_timescale)
+    if not debug:
+        with open(os.path.join(exp_dir_processed_recordings, 'wheel.pickle'), 'wb') as f:
+            pickle.dump(wheel, f)
 
     # output a csv file which contains dataframe of all trials with first column showing trial onset time
     # read the all trials file, append trial onset times to first column (trialOnsetTimesTL)
