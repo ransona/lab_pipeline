@@ -181,6 +181,15 @@ def prepare_plane(
     dff = (montage - baseline[None, :, :]) / denominator[None, :, :]
     post = montage[(offsets >= 0) & (offsets <= blink_post_seconds)].mean(axis=0)
     blink = np.stack((baseline, post)).astype(np.float32)
+    # The blink product is useful both in raw fluorescence and ΔF/F.  Keep
+    # both periods so it remains directly comparable with blink_map.npy:
+    # frame 0 is the configured baseline and frame 1 is the active period.
+    dff_blink = np.stack(
+        (
+            (baseline - baseline) / denominator,
+            (post - baseline) / denominator,
+        )
+    ).astype(np.float32)
 
     # Plane numbers repeat for independently acquired ScanImage ROIs, so the
     # ROI directory is part of the persistent output identity.
@@ -195,6 +204,7 @@ def prepare_plane(
     np.save(destination / "pixel_average_video.npy", encoded_montage)
     np.save(destination / "dff_video.npy", dff.astype(np.float16))
     np.save(destination / "blink_map.npy", encoded_blink)
+    np.save(destination / "dff_blink_map.npy", dff_blink.astype(np.float16))
     np.save(destination / "time_seconds.npy", offsets)
     with (destination / "metadata.json").open("w", encoding="utf-8") as handle:
         json.dump({
@@ -240,17 +250,22 @@ def _make_meso_window(output_root: Path, sources_and_outputs: list[tuple[PlaneSo
         destination = output_root / f"{acquisition + '_' if acquisition else ''}Meso_plane{plane}_channel{channel}"
         destination.mkdir(parents=True, exist_ok=True)
         combined_encoding = None
-        for filename in ("pixel_average_video.npy", "dff_video.npy", "blink_map.npy"):
+        for filename in (
+            "pixel_average_video.npy",
+            "dff_video.npy",
+            "blink_map.npy",
+            "dff_blink_map.npy",
+        ):
             left, right = np.load(first / filename), np.load(second / filename)
             if left.shape != right.shape:
                 break
-            if filename != "dff_video.npy":
+            if filename not in {"dff_video.npy", "dff_blink_map.npy"}:
                 left = _decode_pixel_video(left, first_metadata)
                 right = _decode_pixel_video(right, second_metadata)
             frames = left.reshape(left.shape[0], ny, ly, nx, lx)
             frames_right = right.reshape(right.shape[0], ny, ly, nx, lx)
             combined = np.concatenate((frames, frames_right), axis=4).reshape(left.shape[0], ny * ly, nx * 2 * lx)
-            if filename == "dff_video.npy":
+            if filename in {"dff_video.npy", "dff_blink_map.npy"}:
                 np.save(destination / filename, combined.astype(np.float16, copy=False))
             elif filename == "pixel_average_video.npy":
                 encoded, combined_encoding = _encode_pixel_video(combined)

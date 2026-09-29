@@ -199,7 +199,7 @@ class RetinotopyTab(QtWidgets.QWidget):
         self.prepare_button = QtWidgets.QPushButton("Process"); self.prepare_button.clicked.connect(self.prepare)
         self.status = QtWidgets.QLabel("No montage loaded.")
         self.source_combo = QtWidgets.QComboBox(); self.source_combo.currentIndexChanged.connect(self.load_selected_source)
-        self.movie_combo = QtWidgets.QComboBox(); self.movie_combo.addItems(["Pixel average video", "Blink map", "ΔF/F video"]); self.movie_combo.currentIndexChanged.connect(self._display_movie)
+        self.movie_combo = QtWidgets.QComboBox(); self.movie_combo.addItems(["Pixel average video", "Blink map", "ΔF/F video", "ΔF/F blink map"]); self.movie_combo.currentIndexChanged.connect(self._display_movie)
         self.play_button = QtWidgets.QPushButton("Play"); self.play_button.setFixedWidth(70); self.play_button.clicked.connect(self._toggle_play)
         self.fps = QtWidgets.QSpinBox(); self.fps.setRange(1, 120); self.fps.setValue(15); self.fps.valueChanged.connect(self._set_play_interval)
         self.frame_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal); self.frame_slider.valueChanged.connect(self._display_frame)
@@ -368,7 +368,7 @@ class RetinotopyTab(QtWidgets.QWidget):
     def _display_movie(self):
         path_text = self.source_combo.currentData()
         if not path_text: return
-        names = ["pixel_average_video.npy", "blink_map.npy", "dff_video.npy"]
+        names = ["pixel_average_video.npy", "blink_map.npy", "dff_video.npy", "dff_blink_map.npy"]
         self.status.setText(f"Loading {self.movie_combo.currentText()}…")
         QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         try:
@@ -401,7 +401,7 @@ class RetinotopyTab(QtWidgets.QWidget):
         if self._movie_uses_pixel_encoding:
             frame = retinotopy._decode_pixel_video(frame, self.metadata)
         self.movie_canvas.set_image(frame, self.minimum.value(), self.maximum.value())
-        if self.times is not None and self.movie_combo.currentIndex() != 1 and index < len(self.times):
+        if self.times is not None and self.movie_combo.currentIndex() == 0 and index < len(self.times):
             self.time_label.setText(f"t = {self.times[index]:+.2f} s")
         else:
             self.time_label.setText(f"frame {index + 1}/{len(self.movie)}")
