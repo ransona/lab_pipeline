@@ -60,8 +60,16 @@ class MontageCanvas(QtWidgets.QWidget):
         if self.image is None:
             return QtCore.QRectF()
         h, w = self.image.shape
-        scale = min(self.width() / w, self.height() / h)
-        return QtCore.QRectF((self.width() - w * scale) / 2, (self.height() - h * scale) / 2, w * scale, h * scale)
+        bounds = QtCore.QRectF(self.contentsRect())
+        # Preserve the movie aspect ratio and use the limiting dimension. This
+        # deliberately leaves letterbox/pillarbox space instead of cropping.
+        scale = min(bounds.width() / w, bounds.height() / h)
+        return QtCore.QRectF(
+            bounds.left() + (bounds.width() - w * scale) / 2,
+            bounds.top() + (bounds.height() - h * scale) / 2,
+            w * scale,
+            h * scale,
+        )
 
     def paintEvent(self, _event):
         painter = QtGui.QPainter(self)
@@ -177,6 +185,7 @@ class RetinotopyTab(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         top = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls = QtWidgets.QGroupBox("Retinotopy")
+        controls.setMinimumWidth(330)
         controls.setMaximumWidth(330)
         controls.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
         grid = QtWidgets.QGridLayout(controls)
@@ -222,7 +231,11 @@ class RetinotopyTab(QtWidgets.QWidget):
         self.movie_canvas.setToolTip("Retinotopy montage movie")
         video_panel = QtWidgets.QWidget(); video_layout = QtWidgets.QVBoxLayout(video_panel); video_layout.addWidget(self.movie_canvas, 1)
         video_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-        top.addWidget(controls); top.addWidget(video_panel); top.setSizes([290, 1010]); top.setStretchFactor(0, 0); top.setStretchFactor(1, 1); outer.addWidget(top, 2)
+        top.addWidget(controls); top.addWidget(video_panel)
+        top.setChildrenCollapsible(False)
+        top.setCollapsible(0, False)
+        top.setSizes([330, 1010])
+        top.setStretchFactor(0, 0); top.setStretchFactor(1, 1); outer.addWidget(top, 2)
         lower = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         left = QtWidgets.QWidget(); left_layout = QtWidgets.QVBoxLayout(left); self.canvas = MontageCanvas(); self.canvas.position_changed.connect(self._queue_trace_update); self.canvas.probe_frozen_changed.connect(self._set_probe_frozen)
         self.tool_toggle = QtWidgets.QPushButton("Enable sampling tool"); self.tool_toggle.setCheckable(True); self.tool_toggle.toggled.connect(self._set_tool_enabled)
