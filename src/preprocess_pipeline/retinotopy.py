@@ -28,6 +28,25 @@ class PlaneSource:
     acquisition: str | None
 
 
+def _encode_pixel_video(values: np.ndarray, low: float | None = None, high: float | None = None) -> tuple[np.ndarray, dict]:
+    """Clip a pixel movie to robust bounds and use the complete uint16 range."""
+    if low is None or high is None:
+        low, high = (float(value) for value in np.nanpercentile(values, (1, 99)))
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        low, high = float(np.nanmin(values)), float(np.nanmax(values))
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        high = low + 1.0
+    scaled = np.rint(np.clip((values - low) / (high - low), 0, 1) * np.iinfo(np.uint16).max).astype(np.uint16)
+    return scaled, {"dtype": "uint16", "low": low, "high": high, "percentiles": [1, 99]}
+
+
+def _decode_pixel_video(values: np.ndarray, metadata: dict) -> np.ndarray:
+    encoding = metadata.get("pixel_encoding")
+    if not encoding or encoding.get("dtype") != "uint16":
+        return np.asarray(values, dtype=np.float32)
+    return np.asarray(values, dtype=np.float32) / np.iinfo(np.uint16).max * (float(encoding["high"]) - float(encoding["low"])) + float(encoding["low"])
+
+
 def find_experiment(processed_root: str | Path, exp_id: str, test_path: str | Path | None = None) -> Path:
     """Resolve an experiment directory, with a direct path for offline testing."""
     if test_path:
@@ -168,9 +187,14 @@ def prepare_plane(
     label = f"{source.acquisition + '_' if source.acquisition else ''}{source.roi + '_' if source.roi else ''}plane{source.plane}_channel{source.channel}"
     destination = output_root / label
     destination.mkdir(parents=True, exist_ok=True)
-    np.save(destination / "pixel_average_video.npy", montage)
-    np.save(destination / "dff_video.npy", dff.astype(np.float32))
-    np.save(destination / "blink_map.npy", blink)
+    # Pixel maps are display products. Robust percentile clipping lets uint16
+    # retain visual detail at half float16's disk footprint. ΔF/F is fractional
+    # and consequently remains float16.
+    encoded_montage, pixel_encoding = _encode_pixel_video(montage)
+    encoded_blink, _ = _encode_pixel_video(blink, pixel_encoding["low"], pixel_encoding["high"])
+    np.save(destination / "pixel_average_video.npy", encoded_montage)
+    np.save(destination / "dff_video.npy", dff.astype(np.float16))
+    np.save(destination / "blink_map.npy", encoded_blink)
     np.save(destination / "time_seconds.npy", offsets)
     with (destination / "metadata.json").open("w", encoding="utf-8") as handle:
         json.dump({
@@ -180,6 +204,7 @@ def prepare_plane(
             "pre_seconds": pre_seconds, "post_seconds": post_seconds,
             "blink_pre_seconds": blink_pre_seconds, "blink_post_seconds": blink_post_seconds,
             "tile_height": ly, "tile_width": lx,
+            "pixel_encoding": pixel_encoding,
         }, handle, indent=2)
     return destination
 
@@ -214,14 +239,25 @@ def _make_meso_window(output_root: Path, sources_and_outputs: list[tuple[PlaneSo
         ly, lx = first_metadata["tile_height"], first_metadata["tile_width"]
         destination = output_root / f"{acquisition + '_' if acquisition else ''}Meso_plane{plane}_channel{channel}"
         destination.mkdir(parents=True, exist_ok=True)
+        combined_encoding = None
         for filename in ("pixel_average_video.npy", "dff_video.npy", "blink_map.npy"):
             left, right = np.load(first / filename), np.load(second / filename)
             if left.shape != right.shape:
                 break
+            if filename != "dff_video.npy":
+                left = _decode_pixel_video(left, first_metadata)
+                right = _decode_pixel_video(right, second_metadata)
             frames = left.reshape(left.shape[0], ny, ly, nx, lx)
             frames_right = right.reshape(right.shape[0], ny, ly, nx, lx)
             combined = np.concatenate((frames, frames_right), axis=4).reshape(left.shape[0], ny * ly, nx * 2 * lx)
-            np.save(destination / filename, combined.astype(np.float32, copy=False))
+            if filename == "dff_video.npy":
+                np.save(destination / filename, combined.astype(np.float16, copy=False))
+            elif filename == "pixel_average_video.npy":
+                encoded, combined_encoding = _encode_pixel_video(combined)
+                np.save(destination / filename, encoded)
+            else:
+                encoded, _ = _encode_pixel_video(combined, combined_encoding["low"], combined_encoding["high"])
+                np.save(destination / filename, encoded)
         else:
             np.save(destination / "time_seconds.npy", np.load(first / "time_seconds.npy"))
             metadata = dict(first_metadata)
@@ -229,6 +265,7 @@ def _make_meso_window(output_root: Path, sources_and_outputs: list[tuple[PlaneSo
                 "roi": "Meso", "meso_window": ["R001", "R002"],
                 "tile_width": lx * 2,
                 "bin": [first_metadata["bin"], second_metadata["bin"]],
+                "pixel_encoding": combined_encoding,
             })
             (destination / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             results.append(destination)

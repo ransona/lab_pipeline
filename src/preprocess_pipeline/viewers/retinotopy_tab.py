@@ -157,10 +157,12 @@ class TraceGrid(QtWidgets.QWidget):
 
 class RetinotopyTab(QtWidgets.QWidget):
     """Preparation controls, movie player, and non-blocking spatial probe."""
-    def __init__(self, exp_id_getter, processed_root_getter, parent=None):
+    def __init__(self, exp_id_getter, processed_root_getter, exp_id_setter=None, parent=None):
         super().__init__(parent)
         self._exp_id_getter, self._processed_root_getter = exp_id_getter, processed_root_getter
+        self._exp_id_setter = exp_id_setter
         self.movie: np.ndarray | None = None
+        self._movie_uses_pixel_encoding = False
         self.pixel_average: np.ndarray | None = None
         self.dff: np.ndarray | None = None
         self.times: np.ndarray | None = None
@@ -173,17 +175,19 @@ class RetinotopyTab(QtWidgets.QWidget):
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
-        controls = QtWidgets.QGroupBox("Retinotopy montage preparation and playback")
+        top = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        controls = QtWidgets.QGroupBox("Retinotopy")
+        controls.setMaximumWidth(330)
+        controls.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
         grid = QtWidgets.QGridLayout(controls)
-        self.test_mode = QtWidgets.QCheckBox("Test mode (use experiment folder)")
-        self.test_path = QtWidgets.QLineEdit(); self.test_path.setEnabled(False)
+        self.test_path = QtWidgets.QLineEdit()
+        self.exp_id_display = QtWidgets.QLineEdit(); self.exp_id_display.editingFinished.connect(self._exp_id_edited)
         load_existing = QtWidgets.QPushButton("Load"); load_existing.clicked.connect(self._load_from_folder)
         browse = QtWidgets.QPushButton("Browse"); browse.clicked.connect(self._browse_test_path)
-        self.test_mode.toggled.connect(self.test_path.setEnabled); self.test_mode.toggled.connect(browse.setEnabled)
         self.pre = self._seconds_spin(2.0); self.post = self._seconds_spin(5.0)
         self.blink_pre = self._seconds_spin(0.5); self.blink_post = self._seconds_spin(1.0)
-        self.meso_window = QtWidgets.QCheckBox("Meso window (combine R001 + R002)"); self.meso_window.setChecked(True)
-        self.prepare_button = QtWidgets.QPushButton("Produce retinotopy montages"); self.prepare_button.clicked.connect(self.prepare)
+        self.meso_window = QtWidgets.QCheckBox("Meso"); self.meso_window.setChecked(True)
+        self.prepare_button = QtWidgets.QPushButton("Process"); self.prepare_button.clicked.connect(self.prepare)
         self.status = QtWidgets.QLabel("No montage loaded.")
         self.source_combo = QtWidgets.QComboBox(); self.source_combo.currentIndexChanged.connect(self.load_selected_source)
         self.movie_combo = QtWidgets.QComboBox(); self.movie_combo.addItems(["Pixel average video", "Blink map", "ΔF/F video"]); self.movie_combo.currentIndexChanged.connect(self._display_movie)
@@ -194,19 +198,31 @@ class RetinotopyTab(QtWidgets.QWidget):
         self.time_label.setMinimumWidth(82)
         self.minimum = QtWidgets.QDoubleSpinBox(); self.maximum = QtWidgets.QDoubleSpinBox()
         for spinner in (self.minimum, self.maximum): spinner.setRange(-1e8, 1e8); spinner.setDecimals(4); spinner.valueChanged.connect(self._redraw)
-        grid.addWidget(self.test_mode, 0, 0); grid.addWidget(self.test_path, 0, 1, 1, 4); grid.addWidget(load_existing, 0, 5); grid.addWidget(browse, 0, 6)
-        grid.addWidget(QtWidgets.QLabel("Video pre (s)"), 1, 0); grid.addWidget(self.pre, 1, 1); grid.addWidget(QtWidgets.QLabel("Video post (s)"), 1, 2); grid.addWidget(self.post, 1, 3)
-        grid.addWidget(QtWidgets.QLabel("Blink pre (s)"), 1, 4); grid.addWidget(self.blink_pre, 1, 5); grid.addWidget(QtWidgets.QLabel("Blink post (s)"), 1, 6); grid.addWidget(self.blink_post, 1, 7)
-        grid.addWidget(self.meso_window, 2, 0, 1, 3)
-        grid.addWidget(self.prepare_button, 2, 3, 1, 2); grid.addWidget(self.status, 2, 5, 1, 3)
-        grid.addWidget(QtWidgets.QLabel("Source"), 3, 0); grid.addWidget(self.source_combo, 3, 1, 1, 2); grid.addWidget(QtWidgets.QLabel("Show"), 3, 3); grid.addWidget(self.movie_combo, 3, 4, 1, 2)
-        grid.addWidget(self.play_button, 4, 0); grid.addWidget(QtWidgets.QLabel("FPS"), 4, 1); grid.addWidget(self.fps, 4, 2); grid.addWidget(self.frame_slider, 4, 3, 1, 4); grid.addWidget(self.time_label, 4, 7)
-        grid.addWidget(QtWidgets.QLabel("Contrast min"), 5, 0); grid.addWidget(self.minimum, 5, 1); grid.addWidget(QtWidgets.QLabel("max"), 5, 2); grid.addWidget(self.maximum, 5, 3)
-        outer.addWidget(controls)
+        grid.addWidget(QtWidgets.QLabel("EXP ID"), 0, 0); grid.addWidget(self.exp_id_display, 0, 1)
+        grid.addWidget(QtWidgets.QLabel("Folder"), 1, 0); grid.addWidget(self.test_path, 1, 1)
+        grid.addWidget(browse, 2, 1)
+        grid.addWidget(load_existing, 3, 1)
+        process_row = QtWidgets.QHBoxLayout(); process_row.addWidget(self.prepare_button); process_row.addWidget(self.meso_window)
+        grid.addLayout(process_row, 4, 1)
+        pre_post = QtWidgets.QHBoxLayout(); pre_post.addWidget(QtWidgets.QLabel("Pre")); pre_post.addWidget(self.pre); pre_post.addWidget(QtWidgets.QLabel("Post")); pre_post.addWidget(self.post)
+        grid.addLayout(pre_post, 5, 1)
+        blink = QtWidgets.QHBoxLayout(); blink.addWidget(QtWidgets.QLabel("Blink pre")); blink.addWidget(self.blink_pre); blink.addWidget(QtWidgets.QLabel("post")); blink.addWidget(self.blink_post)
+        grid.addLayout(blink, 6, 1)
+        grid.addWidget(QtWidgets.QLabel("Source"), 7, 0); grid.addWidget(self.source_combo, 7, 1)
+        grid.addWidget(QtWidgets.QLabel("Show"), 8, 0); grid.addWidget(self.movie_combo, 8, 1)
+        playback = QtWidgets.QHBoxLayout(); playback.addWidget(self.play_button); playback.addWidget(QtWidgets.QLabel("FPS")); playback.addWidget(self.fps); playback.addWidget(self.time_label); playback.addStretch()
+        grid.addLayout(playback, 9, 0, 1, 2)
+        grid.addWidget(self.frame_slider, 10, 0, 1, 2)
+        contrast = QtWidgets.QHBoxLayout(); contrast.addWidget(QtWidgets.QLabel("Contrast min")); contrast.addWidget(self.minimum); contrast.addWidget(QtWidgets.QLabel("max")); contrast.addWidget(self.maximum)
+        grid.addLayout(contrast, 11, 0, 1, 2)
+        self.status.setWordWrap(True); grid.addWidget(self.status, 12, 0, 1, 2)
+        grid.setColumnStretch(1, 1)
         self.movie_canvas = MontageCanvas()
-        self.movie_canvas.setMinimumHeight(300)
+        self.movie_canvas.setMinimumHeight(450)
         self.movie_canvas.setToolTip("Retinotopy montage movie")
-        outer.addWidget(self.movie_canvas, 2)
+        video_panel = QtWidgets.QWidget(); video_layout = QtWidgets.QVBoxLayout(video_panel); video_layout.addWidget(self.movie_canvas, 1)
+        video_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+        top.addWidget(controls); top.addWidget(video_panel); top.setSizes([290, 1010]); top.setStretchFactor(0, 0); top.setStretchFactor(1, 1); outer.addWidget(top, 2)
         lower = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         left = QtWidgets.QWidget(); left_layout = QtWidgets.QVBoxLayout(left); self.canvas = MontageCanvas(); self.canvas.position_changed.connect(self._queue_trace_update); self.canvas.probe_frozen_changed.connect(self._set_probe_frozen)
         self.tool_toggle = QtWidgets.QPushButton("Enable sampling tool"); self.tool_toggle.setCheckable(True); self.tool_toggle.toggled.connect(self._set_tool_enabled)
@@ -219,7 +235,7 @@ class RetinotopyTab(QtWidgets.QWidget):
             control.setRange(-1000, 1000); control.setDecimals(3); control.setValue(value); control.valueChanged.connect(self._update_traces)
         trace_controls = QtWidgets.QHBoxLayout(); trace_controls.addWidget(QtWidgets.QLabel("ΔF/F y min")); trace_controls.addWidget(self.trace_min); trace_controls.addWidget(QtWidgets.QLabel("max")); trace_controls.addWidget(self.trace_max); trace_controls.addStretch()
         right_layout.addLayout(trace_controls); right_layout.addWidget(self.trace_grid, 1)
-        lower.addWidget(left); lower.addWidget(right); lower.setSizes([650, 650]); outer.addWidget(lower, 1)
+        lower.addWidget(left); lower.addWidget(right); lower.setSizes([650, 650]); lower.setStretchFactor(0, 1); lower.setStretchFactor(1, 1); outer.addWidget(lower, 1)
 
     @staticmethod
     def _seconds_spin(value):
@@ -229,11 +245,22 @@ class RetinotopyTab(QtWidgets.QWidget):
         directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Select processed experiment folder", self.test_path.text())
         if directory: self.test_path.setText(directory)
 
+    def set_experiment(self, exp_id: str, processed_root: str):
+        """Synchronise Tab 1's experiment selection into this tab."""
+        if self.exp_id_display.text() != exp_id:
+            self.exp_id_display.setText(exp_id)
+        if not exp_id:
+            return
+        animal = exp_id.rsplit("_", 1)[-1]
+        self.test_path.setText(str(Path(processed_root) / animal / exp_id))
+
+    def _exp_id_edited(self):
+        exp_id = self.exp_id_display.text().strip()
+        if self._exp_id_setter:
+            self._exp_id_setter(exp_id)
+        self.set_experiment(exp_id, self._processed_root_getter())
+
     def _load_from_folder(self):
-        # A supplied folder is unambiguously an offline/test experiment; make
-        # the intent explicit so the path is used even if its checkbox was not.
-        if self.test_path.text().strip():
-            self.test_mode.setChecked(True)
         if not self.load_existing():
             QtWidgets.QMessageBox.information(
                 self,
@@ -242,7 +269,10 @@ class RetinotopyTab(QtWidgets.QWidget):
             )
 
     def _experiment_dir(self):
-        return retinotopy.find_experiment(self._processed_root_getter(), self._exp_id_getter(), self.test_path.text().strip() if self.test_mode.isChecked() else None)
+        path = self.test_path.text().strip()
+        if path:
+            return retinotopy.find_experiment(self._processed_root_getter(), self.exp_id_display.text().strip(), path)
+        return retinotopy.find_experiment(self._processed_root_getter(), self.exp_id_display.text().strip())
 
     def prepare(self):
         if self._worker_thread:
@@ -321,8 +351,9 @@ class RetinotopyTab(QtWidgets.QWidget):
             self.status.setText("Could not load selected video.")
             QtWidgets.QMessageBox.warning(self, "Retinotopy", f"Could not load video: {exc}")
             return
+        self._movie_uses_pixel_encoding = self.movie_combo.currentIndex() in (0, 1)
         self.frame_slider.blockSignals(True); self.frame_slider.setRange(0, len(self.movie) - 1); self.frame_slider.setValue(0); self.frame_slider.blockSignals(False)
-        values = self._contrast_sample(self.movie)
+        values = self._contrast_sample(self.movie, self._movie_uses_pixel_encoding)
         self.minimum.blockSignals(True); self.maximum.blockSignals(True)
         self.minimum.setValue(float(np.nanpercentile(values, 1))); self.maximum.setValue(float(np.nanpercentile(values, 99)))
         self.minimum.blockSignals(False); self.maximum.blockSignals(False)
@@ -330,15 +361,20 @@ class RetinotopyTab(QtWidgets.QWidget):
         self._set_average_image()
         self.status.setText(f"Loaded {self.movie_combo.currentText()}.")
 
-    @staticmethod
-    def _contrast_sample(movie: np.ndarray, max_frames: int = 20) -> np.ndarray:
+    def _contrast_sample(self, movie: np.ndarray, decode_pixel_values: bool = False, max_frames: int = 20) -> np.ndarray:
         """Use representative frames so a selection change does not materialise a whole video."""
         indices = np.linspace(0, len(movie) - 1, min(len(movie), max_frames), dtype=int)
-        return np.stack([np.asarray(movie[index]) for index in indices])
+        frames = [np.asarray(movie[index]) for index in indices]
+        if decode_pixel_values:
+            frames = [retinotopy._decode_pixel_video(frame, self.metadata) for frame in frames]
+        return np.stack(frames)
 
     def _display_frame(self, index):
         if self.movie is None: return
-        self.movie_canvas.set_image(np.asarray(self.movie[index]), self.minimum.value(), self.maximum.value())
+        frame = np.asarray(self.movie[index])
+        if self._movie_uses_pixel_encoding:
+            frame = retinotopy._decode_pixel_video(frame, self.metadata)
+        self.movie_canvas.set_image(frame, self.minimum.value(), self.maximum.value())
         if self.times is not None and self.movie_combo.currentIndex() != 1 and index < len(self.times):
             self.time_label.setText(f"t = {self.times[index]:+.2f} s")
         else:
@@ -361,7 +397,7 @@ class RetinotopyTab(QtWidgets.QWidget):
         # This deliberately always uses raw pixel averages, not the selected
         # display map.  The sampling square therefore stays spatially legible
         # when the top viewer is switched to ΔF/F or blink.
-        sampled = self._contrast_sample(self.pixel_average)
+        sampled = self._contrast_sample(self.pixel_average, True)
         image = sampled.mean(axis=0).reshape(ny, ly, nx, lx).mean(axis=(0, 2))
         self.canvas.tool_position = (lx // 2, ly // 2)
         self._average_image = image

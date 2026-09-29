@@ -251,15 +251,26 @@ class LocalRunWindow(QtWidgets.QMainWindow):
         self.retinotopy_tab = RetinotopyTab(
             lambda: self.exp_id_edit.text().strip(),
             lambda: self.processed_root_edit.text().strip(),
+            lambda exp_id: self.exp_id_edit.setText(exp_id),
             self,
         )
         tabs.addTab(self.retinotopy_tab, "Analyze Retinotopy")
         tabs.currentChanged.connect(
             lambda index: self.retinotopy_tab.load_existing() if index == 1 else None
         )
+        self.exp_id_edit.textChanged.connect(self._sync_retinotopy_experiment)
+        self.processed_root_edit.textChanged.connect(self._sync_retinotopy_experiment)
+        self._sync_retinotopy_experiment()
         central_layout.addWidget(tabs)
         self.setCentralWidget(central)
+        self.setMinimumSize(950, 700)
         self.resize(1000, 850)
+
+    def _sync_retinotopy_experiment(self, _unused=None):
+        self.retinotopy_tab.set_experiment(
+            self.exp_id_edit.text().strip(),
+            self.processed_root_edit.text().strip(),
+        )
 
     def _browse_folder(self, edit: QtWidgets.QLineEdit):
         selected = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", edit.text())
