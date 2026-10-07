@@ -709,14 +709,14 @@ def run_preprocess_bv2(
     if os.path.exists(behavior_event44):
         data_read = harp.io.read(behavior_event44)
         data_read_np = np.array(data_read)
-        # remove first 400 samples of data as they can contain initiatation random signals
+        # remove first 400 samples of data as they can contain initialization random signals
         data_read_np[0:200,0] = data_read_np[200,0]
         # harp encoder log was previously summed
         harp_encoder = data_read_np[:,1]
     elif os.path.exists(behavior_44):
         data_read = harp.io.read(behavior_44)
         data_read_np = np.array(data_read)
-        # remove first 400 samples of data as they can contain initiatation random signals
+        # remove first 400 samples of data as they can contain initialization random signals
         data_read_np[0:200,0] = data_read_np[200,0]        
         # harp encoder log was later dif and so do cumsum of difs
         harp_encoder = np.cumsum(data_read_np[:,1])
