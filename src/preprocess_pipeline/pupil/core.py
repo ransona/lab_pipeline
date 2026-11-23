@@ -1,5 +1,6 @@
 # take dlc pipil output and fits circle to pupil etc
 import sys
+import glob
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +13,28 @@ import pandas as pd
 import pickle
 import shutil
 from preprocess_pipeline.shared import paths
+
+
+PREFERRED_DLC_SHUFFLE = 12
+LEGACY_DLC_SHUFFLES = (5,)
+
+
+def _find_dlc_csv(exp_dir_processed, expID, eye_label):
+    """Find the current DLC CSV, retaining support for already-processed data."""
+    for shuffle in (PREFERRED_DLC_SHUFFLE, *LEGACY_DLC_SHUFFLES):
+        candidates = sorted(
+            glob.glob(
+                os.path.join(
+                    exp_dir_processed,
+                    f"{expID}_{eye_label}DLC_*_all_setupsDec10shuffle{shuffle}_*.csv",
+                )
+            )
+        )
+        if candidates:
+            # A rerun can leave multiple snapshots; the most recently written
+            # CSV is the one produced by the current successful DLC run.
+            return max(candidates, key=os.path.getmtime)
+    return None
 
 # quality control key:
 # 0: passed
@@ -45,27 +68,26 @@ def preprocess_pupil_run(userID, expID):
     # dlc_filenames = [expID + '_eye1_leftDLC_resnet50_Trial_newMay19shuffle1_1030000.csv',
     #                 expID + '_eye1_rightDLC_resnet50_Trial_newMay19shuffle1_1030000.csv']
     
-    # 05.02.26 - new model
-    dlc_filenames = [expID + '_eye1_leftDLC_Resnet50_all_setupsDec10shuffle5_snapshot_best-110.csv',
-                    expID + '_eye1_rightDLC_Resnet50_all_setupsDec10shuffle5_snapshot_best-110.csv']    
+    eye_labels = ('eye1_left', 'eye1_right')
 
     vid_filenames = [expID + '_eye1_left.avi',
                     expID + '_eye1_right.avi']
 
-    dlc_paths = [os.path.join(exp_dir_processed, filename) for filename in dlc_filenames]
-    missing_dlc = [path for path in dlc_paths if not os.path.isfile(path)]
+    dlc_paths = [_find_dlc_csv(exp_dir_processed, expID, eye_label) for eye_label in eye_labels]
+    missing_dlc = [eye_label for eye_label, path in zip(eye_labels, dlc_paths) if path is None]
     if missing_dlc:
         print(
-            'Pupil fitting skipped: the expected DeepLabCut CSV output is unavailable. '
+            'Pupil fitting skipped: the expected DeepLabCut CSV output is unavailable '
+            f'(shuffle {PREFERRED_DLC_SHUFFLE}). '
             'This usually means DLC was skipped because the raw eye video could not be read.\n'
-            + '\n'.join(f'  Missing: {path}' for path in missing_dlc)
+            + '\n'.join(f'  Missing: {eye_label}' for eye_label in missing_dlc)
         )
         return False
     
      
     pupil_keypoint_angles = [0,180,90,270,315,45,135,225]
 
-    for iVid in range(0, len(dlc_filenames)):
+    for iVid in range(0, len(eye_labels)):
         print()
         print('** Starting video ' + str(iVid))
 

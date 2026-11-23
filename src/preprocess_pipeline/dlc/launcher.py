@@ -11,6 +11,10 @@ from preprocess_pipeline.shared import paths
 
 
 STANDARD_CONFIG_PATH = '/data/common/dlc_models/all_setups-rubencorreia-2025-12-10/config.yaml'
+# Index within the GPUs made visible by the Step 1 DLC launcher command.
+DLC_GPU_INDEX = 0
+# Trained model selected from STANDARD_CONFIG_PATH.
+DLC_MODEL_SHUFFLE = 12
 
 
 def crop_vids(userID, expID):
@@ -153,7 +157,7 @@ def analyze_if_present(config_path, exp_dir_processed, expID, eye_label, shuffle
         video_path,
         videotype='avi',
         shuffle=shuffle,
-        gputouse=0,
+        gputouse=DLC_GPU_INDEX,
         save_as_csv=True,
         destfolder=exp_dir_processed,
     )
@@ -170,7 +174,7 @@ def dlc_launcher_run(userID, expID):
         return False
 
     config_path = STANDARD_CONFIG_PATH
-    shuffle = 5
+    shuffle = DLC_MODEL_SHUFFLE
 
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_left', shuffle)
     analyze_if_present(config_path, exp_dir_processed, expID, 'eye1_right', shuffle)

@@ -452,7 +452,9 @@ def _run_suite2p_plan(job_id, user_id, exp_id, queued_command, queue_path=DEFAUL
 def _run_dlc(job_id, user_id, exp_id, topology, queue_path=DEFAULT_QUEUE_PATH):
     env_name = 'DLC_05_02_2026'
     launcher = str(APP_ROOT / 'dlc_launcher.py')
-    cmd = ['/opt/scripts/conda-run.sh', env_name, 'python', launcher, user_id, exp_id]
+    # The queue listener may reserve a device for itself; DLC needs both GPUs
+    # visible so its launcher-level DLC_GPU_INDEX setting chooses the device.
+    cmd = ['env', 'CUDA_VISIBLE_DEVICES=0,1', '/opt/scripts/conda-run.sh', env_name, 'python', launcher, user_id, exp_id]
     _stream_subprocess_for_job(cmd, job_id, queue_path)
 
 
