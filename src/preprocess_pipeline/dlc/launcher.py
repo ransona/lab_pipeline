@@ -151,15 +151,18 @@ def analyze_if_present(config_path, exp_dir_processed, expID, eye_label, shuffle
         print(f'Skipping {eye_label} video (file not found).')
         return
 
-    print(f'** Starting {eye_label} video...')
+    print(
+        f'** Starting {eye_label} video with DLC shuffle {shuffle} '
+        f'on cuda:{DLC_GPU_INDEX}...'
+    )
     deeplabcut.analyze_videos(
         config_path,
-        video_path,
-        videotype='avi',
+        [video_path],
+        video_extensions='avi',
         shuffle=shuffle,
-        gputouse=DLC_GPU_INDEX,
         save_as_csv=True,
         destfolder=exp_dir_processed,
+        device=f'cuda:{DLC_GPU_INDEX}',
     )
 
 
